@@ -40,9 +40,10 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    self.miner_uids = await get_random_uids(
-        self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-    )
+    # self.miner_uids = await get_random_uids(
+    #     self, dendrite=self.dendrite, k=self.config.neuron.sample_size
+    # )
+    self.miner_uids = torch.tensor([193, 217, 219, 243, 247])
     bt.logging.info(f"UIDs:  {self.miner_uids}")
     datapoints_per_group = self.config.neuron.training_examples_per_miner
     self.dataset_indices_list = self.dataset_common_state.get_dataset_indices(
@@ -91,7 +92,7 @@ async def forward(self):
     )
     
     # Adjust the scores based on responses from miners.
-    rewards = get_rewards(self, uids=self.miner_uids, responses=responses)
+    rewards = await get_rewards(self, uids=self.miner_uids, responses=responses)
 
     bt.logging.info(f"Scored responses: {rewards}")
     

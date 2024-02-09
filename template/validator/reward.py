@@ -24,6 +24,7 @@ import bittensor as bt
 import torch
 from template.data.dataset import SubsetFalconLoader
 from hivemind.utils.timed_storage import get_dht_time
+import time
 
 def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
 
@@ -97,8 +98,35 @@ def get_local_score(self, synapse):
 
     return score
     
+async def score_blacklist(self, uids):
 
-def get_rewards(
+    rewards = torch.zeros(len(uids))
+    peer_ids = []
+    peer_list = await self._p2p.list_peers()
+
+    for i, uid in enumerate(uids):
+        peer_id = await self.get_uid_peerid(peer_list, uid)
+        if peer_id == []:
+            rewards[i] = 0.0
+        else:
+            rewards[i] = 1.0
+        peer_ids.append(peer_id)
+
+    return peer_ids, rewards
+
+async def score_bandwith(self, peer_ids):
+
+    rewards = torch.zeros(len(peer_ids))
+
+    for i, peer in enumerate(peer_ids):
+        start_time = time.perf_counter()
+        _ = self.load_state_from_peers(peer[0])
+        end_time = time.perf_counter()
+        rewards[i] = end_time - start_time
+
+    return rewards
+                     
+async def get_rewards(
     self,
     uids: List[int],
     responses: list
@@ -114,15 +142,19 @@ def get_rewards(
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
 
-    load_state_from_peers_status = False
-    retries = 0
-    while load_state_from_peers_status is False:
-        try:
-            load_state_from_peers_status = self.state_averager.load_state_from_peers()
-        except Exception as e:
-            bt.logging.error(f"Attempt {retries + 1} to write to the load state from peers failed: {e}")
-            retries += 1
-            bt.logging.error(f"Retrying ...")
+    # load_state_from_peers_status = False
+    # retries = 0
+    # while load_state_from_peers_status is False:
+    #     try:
+    #         load_state_from_peers_status = self.state_averager.load_state_from_peers()
+    #     except Exception as e:
+    #         bt.logging.error(f"Attempt {retries + 1} to write to the load state from peers failed: {e}")
+    #         retries += 1
+    #         bt.logging.error(f"Retrying ...")
+
+    peer_ids, rewards = await score_blacklist(self, uids)
+    rewards = await score_bandwith(self, peer_ids)
+    breakpoint()
 
     global_step = self.dataset_common_state.get_dht("step")
     if global_step is not None:

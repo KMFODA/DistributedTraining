@@ -41,6 +41,27 @@ from template.validator.validator_core import DatasetState
 from bitarray import bitarray
 
 
+import asyncio
+import multiprocessing as mp
+from typing import Any, Dict, Optional, Sequence, Tuple
+from hivemind.utils import MPFuture, get_logger
+from hivemind.proto import averaging_pb2
+from hivemind.utils.asyncio import (
+    achain,
+    aiter_with_timeout,
+    anext,
+    as_aiter,
+    azip,
+    enter_asynchronously,
+    switch_to_uvloop,
+)
+from hivemind.p2p import P2P, P2PContext, P2PDaemonError, P2PHandlerError, PeerID, ServicerBase
+import random
+from hivemind.compression import CompressionBase, CompressionInfo, NoCompression, deserialize_torch_tensor
+from hivemind.utils.streaming import combine_from_streaming, split_for_streaming
+from hivemind.utils.timed_storage import DHTExpiration, ValueWithExpiration, get_dht_time
+logger = get_logger(__name__)
+
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
@@ -108,15 +129,127 @@ class Validator(BaseValidatorNeuron):
             allow_state_sharing=False,
             start=True,
             prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Float16Compression(),
+            state_compression=hivemind.Uniform8BitQuantization(),
             # **asdict(averager_args),
         )
-        
+
+        # Init UID
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+
+        self.loop = asyncio.new_event_loop()
+        # self._inner_pipe = self.state_averager._inner_pipe
+        # self._outer_pipe = self.state_averager._outer_pipe
+        self._inner_pipe, self._outer_pipe = mp.Pipe(duplex=True) 
+        self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
+        self.state_averager.prefix = self.state_averager.matchmaking_kwargs["prefix"]
+        self.peer_id = self.dht.peer_id
+        self.training_progress_key = f"{self.config.neuron.run_id}_progress"
+        self.get_stub = self.state_averager.get_stub
+        self.serializer = self.state_averager.serializer
+
+        # breakpoint()
+        # future = MPFuture()
+        # metadata, _expiration = self.dht.get(self.training_progress_key, latest=True) or (None, -float("inf"))
+        # self.loop = asyncio.new_event_loop()
+        # self.loop.run_until_complete(self._load_state_from_peers(peer_list[0].peer_id, future))
+        # self.loop.close()
+
         # Get Current Epoch
         self.current_epoch = 1 # Dummy fix need to swithc to self.opt.tracker.global_progress.epoch
         
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+    
+    def get_miner_info(self):
+        return {
+            "block": self.metagraph.block.item(),
+            "stake": self.metagraph.stake[self.uid],
+            "trust": self.metagraph.trust[self.uid],
+            "consensus": self.metagraph.consensus[self.uid],
+            "incentive": self.metagraph.incentive[self.uid],
+            "emissions": self.metagraph.emission[self.uid],
+        }
+
+    def get_validator_info(self):
+        return {
+            "block": self.metagraph.block.item(),
+            "stake": self.metagraph.stake[self.uid],
+            "rank": self.metagraph.ranks[self.uid],
+            "vtrust": self.metagraph.validator_trust[self.uid],
+            "dividends": self.metagraph.dividends[self.uid],
+            "emissions": self.metagraph.emission[self.uid],
+        }
+
+    async def get_uid_peerid(self, peer_list, uid):
+        miner_ip = self.metagraph.axons[uid].ip
+        return [peer.peer_id for peer in peer_list if str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] == miner_ip]
+
+    def load_state_from_peers(
+        self, peer, wait: bool = True, timeout: Optional[float] = None,
+    ) -> Optional[Tuple[Any, Sequence[torch.Tensor]]]:
+        """
+        Try to download the latest optimizer state one of the existing peer.
+        :returns: on success, return a 2-tuple with (metadata, tensors), where
+
+        - metadata is a small object containing metadata (e.g. hyperparameters, scalars, etc)
+        - tensors is a sequence of pytorch tensors meant to contain peer's model weights and optimizer statistics
+
+        The exact contents of both metadata and tensors are determined by get_current_state method
+        """
+        future = MPFuture()
+        self._outer_pipe.send(("_load_state_from_peers", [], dict(peer = peer, timeout=timeout, future=future)))
+        return future.result(timeout=timeout) if wait else future
+
+    async def _load_state_from_peers(self, peer, timeout: Optional[float] = None):
+        if timeout is not None:
+            timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
+        # try:
+            # peer_priority, _ = self.dht.get(f"{self.state_averager.prefix}.all_averagers", latest=True) or ({}, None)
+            # peer_priority = {
+            #     PeerID(peer_id): (float(info.value), random.random())  # using randomness as a tie breaker
+            #     for peer_id, info in peer_priority.items()
+            #     if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))
+            # }
+
+            # if not isinstance(peer_priority, dict) or len(peer_priority) == 0:
+            #     logger.info(f"Averager could not load state from peers: peer dict empty or corrupted {peer_priority}")
+            #     future.set_result(None)
+            #     return
+
+        metadata = None
+        # for peer in sorted(peer_priority.keys(), key=peer_priority.get, reverse=True):
+        #     if peer == peer_id:
+        logger.info(f"Downloading parameters from peer {peer}")
+        try:
+            stub = self.get_stub(self._p2p, peer, namespace=self.state_averager.prefix)
+            stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
+            current_tensor_parts, tensors = [], []
+
+            # TODO merge this with hivemind.compression.deserialize_tensor_stream
+            async for message in aiter_with_timeout(stream, timeout=timeout):
+                if message.metadata:
+                    metadata = self.serializer.loads(message.metadata)
+                if message.tensor_part.dtype and current_tensor_parts:
+                    # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
+                    tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+                    current_tensor_parts = []
+                current_tensor_parts.append(message.tensor_part)
+            if current_tensor_parts:
+                tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+
+            if not metadata:
+                logger.exception(f"Peer {peer} did not send its state")
+                return
+
+            logger.info(f"Finished downloading state from {peer}")
+            # future.set_result((metadata, tensors))
+            return (metadata, tensors)
+        except Exception as e:
+            logger.exception(f"Failed to download state from {peer} - {repr(e)}")
+
+        # finally:
+        #     if not future.done():
+        #         future.set_result(None)
 
     # Define encoding function
     def encode(self, examples):
