@@ -120,32 +120,58 @@ class Validator(BaseValidatorNeuron):
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Init State Averager
-        self.state_averager = TrainingStateAverager(
-            dht=self.dht,
-            optimizer=partial(torch.optim.AdamW, lr=self.config.neuron.lr),
-            scheduler=None,
-            params=self.model.parameters(),
-            allow_state_sharing=False,
-            start=True,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            # **asdict(averager_args),
-        )
+        # # Init State Averager
+        # self.state_averager = TrainingStateAverager(
+        #     dht=self.dht,
+        #     optimizer=partial(torch.optim.AdamW, lr=self.config.neuron.lr),
+        #     scheduler=None,
+        #     params=self.model.parameters(),
+        #     allow_state_sharing=False,
+        #     start=True,
+        #     prefix=f"{self.config.neuron.run_id}_state_averager",
+        #     state_compression=hivemind.Uniform8BitQuantization(),
+        #     # **asdict(averager_args),
+        # )
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+
+        opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = hivemind.Optimizer(
+            dht=self.dht,  # use a DHT that is connected with other peers
+            run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
+            scheduler=None,
+            batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
+            target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
+            optimizer=opt,  # wrap the SGD optimizer defined above
+            use_local_updates=True,  # perform optimizer steps with local gradients, average parameters in background
+            matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
+            averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
+            verbose=False,  # print logs incessently
+            grad_compression=hivemind.Uniform8BitQuantization(),
+            state_averaging_compression=hivemind.Uniform8BitQuantization(),
+        )
 
         self.loop = asyncio.new_event_loop()
         # self._inner_pipe = self.state_averager._inner_pipe
         # self._outer_pipe = self.state_averager._outer_pipe
         self._inner_pipe, self._outer_pipe = mp.Pipe(duplex=True) 
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.state_averager.prefix = self.state_averager.matchmaking_kwargs["prefix"]
+        self.opt.state_averager.prefix = self.opt.state_averager.matchmaking_kwargs["prefix"]
         self.peer_id = self.dht.peer_id
         self.training_progress_key = f"{self.config.neuron.run_id}_progress"
-        self.get_stub = self.state_averager.get_stub
-        self.serializer = self.state_averager.serializer
+        self.get_stub = self.opt.state_averager.get_stub
+        self.serializer = self.opt.state_averager.serializer
+
+        self.loop.close()
+        self.loop = asyncio.new_event_loop()
+        peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+
+        metadata, _expiration = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
+        valid_peer_entries = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
+        breakpoint()
+        # metadata, _expiration = 
+        breakpoint()
 
         # breakpoint()
         # future = MPFuture()
@@ -159,16 +185,6 @@ class Validator(BaseValidatorNeuron):
         
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
-    
-    def get_miner_info(self):
-        return {
-            "block": self.metagraph.block.item(),
-            "stake": self.metagraph.stake[self.uid],
-            "trust": self.metagraph.trust[self.uid],
-            "consensus": self.metagraph.consensus[self.uid],
-            "incentive": self.metagraph.incentive[self.uid],
-            "emissions": self.metagraph.emission[self.uid],
-        }
 
     def get_validator_info(self):
         return {
@@ -180,7 +196,7 @@ class Validator(BaseValidatorNeuron):
             "emissions": self.metagraph.emission[self.uid],
         }
 
-    async def get_uid_peerid(self, peer_list, uid):
+    async def map_uid_peerid(self, peer_list, uid):
         miner_ip = self.metagraph.axons[uid].ip
         return [peer.peer_id for peer in peer_list if str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] == miner_ip]
 

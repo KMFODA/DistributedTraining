@@ -40,11 +40,14 @@ from transformers import (
 
 # Bittensor Miner Template:
 import template
+import bitarray  
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth
 from template.data.dataset import SubsetFalconLoader
+
+import random
 
 
 class Miner(BaseMinerNeuron):
@@ -143,6 +146,8 @@ class Miner(BaseMinerNeuron):
         #     self.config.neuron.dataset_name, "wikitext-2-v1", split="train"
         # )
         self.dataset_loader = ()
+        dataset_length = 968000015
+        self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -153,6 +158,16 @@ class Miner(BaseMinerNeuron):
         return self.tokenizer(
             examples["text"], truncation=True, max_length=512, padding="max_length"
         )
+
+    def get_miner_info(self):
+        return {
+            "block": self.metagraph.block.item(),
+            "stake": self.metagraph.stake[self.uid],
+            "trust": self.metagraph.trust[self.uid],
+            "consensus": self.metagraph.consensus[self.uid],
+            "incentive": self.metagraph.incentive[self.uid],
+            "emissions": self.metagraph.emission[self.uid],
+        }
 
     async def is_alive(
         self, synapse: template.protocol.IsAlive
@@ -173,10 +188,15 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
+       
+        search_start = random.choice(range(len(self.dataset_indices_train) -  self.config.neuron.training_examples_per_miner + 1))
+        start = self.dataset_indices_train.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
+        group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
+        self.dataset_indices_train[group] = True
 
         # Create Dataloader
         dataloader = SubsetFalconLoader(
-            batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=synapse.dataset_indices
+            batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
         )
 
         total_loss = 0
@@ -228,6 +248,15 @@ class Miner(BaseMinerNeuron):
 
         bt.logging.info(f"Final Loss: {outputs.loss.detach().item()}")
         bt.logging.info(f"Average Loss: {average_loss}")
+
+        event = {}
+        event.update(self.get_miner_info())
+        event.update(get_bandwidth())
+        bt.logging.debug(f"Events: {str(event)}")
+        bt.logging.info("EVENTS", "events", **event)
+
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log(event)
 
         return synapse
 

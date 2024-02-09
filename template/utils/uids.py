@@ -60,19 +60,28 @@ async def get_random_uids(
     Notes:
         If `k` is larger than the number of available `uids`, set `k` to the number of available `uids`.
     """
+
     candidate_uids = []
     avail_uids = []
 
+    tasks = []
     for uid in range(self.metagraph.n.item()):
-        uid_is_available = await check_uid_availability(
-            dendrite, self.metagraph, uid, self.config.neuron.vpermit_tao_limit
+        # The dendrite client queries the network.
+        tasks.append(
+            check_uid_availability(
+                dendrite, self.metagraph, uid, self.config.neuron.vpermit_tao_limit
+            )
         )
-        uid_is_not_excluded = exclude is None or uid not in exclude
 
+    responses = await asyncio.gather(*tasks)
+
+    for uid, uid_is_available in zip(range(self.metagraph.n.item()), (responses)):
+        uid_is_not_excluded = exclude is None or uid not in exclude
         if uid_is_available:
             avail_uids.append(uid)
             if uid_is_not_excluded:
                 candidate_uids.append(uid)
+
 
     # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
     available_uids = candidate_uids

@@ -30,7 +30,7 @@ import wandb
 import logging
 from loguru import logger as bt_logger
 from hivemind.utils.logging import use_hivemind_log_handler
-
+import speedtest
 
 
 # LRU Cache with TTL
@@ -164,31 +164,6 @@ def load_wandb(config, wallet, neuron_type, peer_id):
     config.signature = signature
     wandb_run.config.update(config, allow_val_change=True)
     return wandb_run
-## 
-# Subnet 9 like wandb signature for extra security?
-#     config = bt.config()
-#     config.uid = my_uid
-#     config.hotkey = wallet.hotkey.ss58_address
-#     config.run_name = run_name
-#     config.version = pt.__version__
-#     config.type = 'miner'
-
-#     # Initialize wandb run
-#     wandb_run = wandb.init(
-#         id = _run_id,
-#         name=run_name,
-#         anonymous="allow",
-#         project=pt.WANDB_PROJECT,
-#         entity='opentensor-dev',
-#         config=config,
-#         dir=config.full_path,
-#         allow_val_change=True,
-#     )
-
-#     # Creating a signature for security
-#     signature = wallet.hotkey.sign(wandb_run.id.encode()).hex()
-#     config.signature = signature
-#     wandb.config.update(config, allow_val_change=True)
 
 class BittensorLogHandler(logging.Handler):
     def emit(self, record):
@@ -223,3 +198,20 @@ def setup_logging():
     formatter = logging.Formatter('%(message)s')
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
+
+def get_bandwidth():
+    # Get speedtest results
+    s = speedtest.Speedtest()
+    s.get_servers()
+    s.get_best_server()
+    s.download()
+    s.upload()
+    results = s.results.dict()
+    
+    # Copy key metrics to a formatted badnwidth_dict
+    bandwidth_dict = {}
+    keys = ["download", "upload", "ping"]
+    for key in keys:
+        bandwidth_dict[key] = f"{results[key]/ 1e6:.2f}"
+
+    return bandwidth_dict

@@ -23,8 +23,10 @@ from typing import List
 import bittensor as bt
 import torch
 from template.data.dataset import SubsetFalconLoader
+from template.utils.misc import get_bandwidth
 from hivemind.utils.timed_storage import get_dht_time
 import time
+
 
 def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
 
@@ -153,6 +155,7 @@ async def get_rewards(
     #         bt.logging.error(f"Retrying ...")
 
     peer_ids, rewards = await score_blacklist(self, uids)
+    breakpoint()
     rewards = await score_bandwith(self, peer_ids)
     breakpoint()
 
@@ -169,8 +172,15 @@ async def get_rewards(
     # Get loss on randomly selected test dataset to be used for the Global Score
     loss = get_loss(self, self.dataset_indices_list_test, self.config.neuron.local_batch_size_test, self.config.neuron.local_gradient_accumilation_steps_test)
 
+    event = {}
+    event.update({"loss": loss, "previous_loss": self.previous_loss})
+    event.update(self.get_validator_info())
+    event.update(get_bandwidth())
+    bt.logging.debug(f"Events: {str(event)}")
+    bt.logging.info("EVENTS", "events", **event)
+
     if not self.config.neuron.dont_wandb_log:
-        self.wandb.log({"loss": loss, "previous_loss": self.previous_loss})
+        self.wandb.log(event)
 
     # Get latest previous loss from DHT
     # self.previous_loss = self.dataset_common_state.get_dht("loss")
