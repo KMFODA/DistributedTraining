@@ -103,12 +103,12 @@ def get_local_score(self, synapse):
 async def score_blacklist(self, uids):
 
     rewards = torch.zeros(len(uids))
+    
     peer_ids = []
-    peer_list = await self._p2p.list_peers()
 
     for i, uid in enumerate(uids):
-        peer_id = await self.get_uid_peerid(peer_list, uid)
-        if peer_id == []:
+        peer_id = await self.map_uid_to_peerid(uid)
+        if peer_id == None:
             rewards[i] = 0.0
         else:
             rewards[i] = 1.0
