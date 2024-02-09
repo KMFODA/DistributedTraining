@@ -40,7 +40,7 @@ from transformers import (
 
 # Bittensor Miner Template:
 import template
-import bitarray  
+from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
