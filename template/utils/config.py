@@ -22,7 +22,7 @@ import os
 import bittensor as bt
 import torch
 from loguru import logger
-from template import __version__
+from template import __version__, __run__
 
 
 def check_config(cls, config: "bt.Config"):
@@ -116,7 +116,6 @@ def add_args(cls, parser):
         help="The addresses for the DHT",
         default=[
             "/ip4/161.97.156.125/tcp/8001/p2p/12D3KooWNrfkQ8DX2RHW4c98c8As11wMNA425WTNohijyJQdA84Y",
-            "/ip4/54.205.54.19/tcp/8008/p2p/12D3KooWMY4YGYZ6JkWaCNKUeKQHAuxeQcMeoNfKHbbRXVoBaMiZ"
         ],
     )
 
@@ -166,7 +165,7 @@ def add_args(cls, parser):
         "--neuron.run_id",
         type=str,
         help="The DHT run_id",
-        default=f"s25_run_v{__version__.replace('.','_')}",
+        default=f"s25_run_v{__version__.replace('.','_')}_r{__run__}",
     )
 
     parser.add_argument(
@@ -180,14 +179,14 @@ def add_args(cls, parser):
         "--neuron.wandb_project",
         type=str,
         help="The wandb project to log to",
-        default="subnet25",
+        default="distributed_training",
     )
 
     parser.add_argument(
         "--neuron.wandb_entity",
         type=str,
         help="The wandb project to log to",
-        default="azawahry",
+        default="kmfoda",
     )
 
     parser.add_argument(
