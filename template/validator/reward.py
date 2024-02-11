@@ -137,6 +137,7 @@ def score_gradients(self, response):
     gradients = []
     for layer in self.model.parameters():
         gradients.append(layer.grad)
+        
     score = 1-(abs(gradients-response.loss))
 
     return score
