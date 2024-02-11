@@ -1,0 +1,38 @@
+# PLEASE READ THIS 
+# THE FASTER YOU CAN DO THE COMPUTATION, THE MORE INCENTIVE YOUR MINER WILL RECEIVE
+# IT'S UP TO YOU HOW MUCH YOU WANT TO SPEND, AND WHERE YOU THINK THE COST / REWARD THRESHOLD IS
+
+# RTX 4090'S PERFORM VERY WELL. YOU MIGHT BE ABLE TO GET AWAY WITH A 4000 ADA TOO :)
+
+version: '1.0' # update this version key as needed, ideally should match your release version
+
+compute_spec:
+
+  miner:
+
+    gpu:
+      required: True                       
+      min_vram: 16                             
+      recommended_gpu: "RTX A4000"      
+
+    os:
+      name: "Ubuntu" 
+      version: 20.04 
+
+  validator:
+
+    gpu:
+      required: True                       
+      min_vram: 16                             
+      recommended_gpu: "RTX A4000"      
+
+    os:
+      name: "Ubuntu" 
+      version: 20.04 
+
+network_spec:
+  bandwidth:  # THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER. UNITS ARE GBPS.
+    min_download : 1
+    recommended_download: 5
+    min_upload: 1
+    recommended_upload: 5

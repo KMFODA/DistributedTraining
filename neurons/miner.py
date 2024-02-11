@@ -252,10 +252,11 @@ class Miner(BaseMinerNeuron):
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
 
-        synapse.gradients = []
         # Store gradients
+        synapse.gradients = []
         for layer in self.model.parameters():
             synapse.gradients.append(layer.grad)
+            
         synapse.gradients = [gradient.tolist() for gradient in synapse.gradients]
 
         average_loss = total_loss / step

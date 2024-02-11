@@ -135,6 +135,8 @@ def score_gradients(self, response):
             self.wandb.log({"loss": outputs.loss.detach().item()})
 
     gradients = []
+    for layer in self.model.parameters():
+        gradients.append(layer.grad)
     score = 1-(abs(gradients-response.loss))
 
     return score
@@ -204,7 +206,7 @@ async def get_rewards(
 
     scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
     peer_ids, scores = await score_blacklist(self, uids)
-    
+
     if all_reduce:
         scores = await score_bandwith(self, peer_ids)
     else:
