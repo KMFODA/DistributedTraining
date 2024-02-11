@@ -5,3 +5,4 @@ transformers
 hivemind
 wandb
 bitarray
+speedtest-cli

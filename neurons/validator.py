@@ -144,7 +144,8 @@ class Validator(BaseValidatorNeuron):
             batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
             target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
             optimizer=opt,  # wrap the SGD optimizer defined above
-            use_local_updates=True,  # perform optimizer steps with local gradients, average parameters in background
+            use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
+            load_state_timeout=240,
             matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
             averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
             verbose=False,  # print logs incessently
@@ -167,9 +168,9 @@ class Validator(BaseValidatorNeuron):
         self.loop.close()
         self.loop = asyncio.new_event_loop()
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        breakpoint()
-        _ = self.load_state_from_peers(self.peer_list [0])
-        breakpoint()
+        # breakpoint()
+        # _ = self.loop.run_until_complete(self._load_state_from_peers(self.peer_list[1].peer_id))
+        # breakpoint()
         
         # metadata, _expiration = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
         # valid_peer_entries = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
@@ -215,7 +216,7 @@ class Validator(BaseValidatorNeuron):
         if miner_ip not in peer_list_dht_addrs:
             return None
         else:
-            peer_id = peer_list_dht[peer_list_dht.index(miner_ip)].peer_id
+            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
         
         # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
         if str(peer_id) not in peer_list_run:
@@ -260,7 +261,7 @@ class Validator(BaseValidatorNeuron):
         #     if peer == peer_id:
         logger.info(f"Downloading parameters from peer {peer}")
         try:
-            stub = self.get_stub(self._p2p, peer, namespace=self.state_averager.prefix)
+            stub = self.get_stub(self._p2p, peer, namespace=self.opt.state_averager.prefix)
             stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
             current_tensor_parts, tensors = [], []
 
@@ -282,10 +283,10 @@ class Validator(BaseValidatorNeuron):
 
             logger.info(f"Finished downloading state from {peer}")
             # future.set_result((metadata, tensors))
-            return (metadata, tensors)
+            return metadata, tensors
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
-
+            return None, None
         # finally:
         #     if not future.done():
         #         future.set_result(None)

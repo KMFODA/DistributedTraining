@@ -130,7 +130,7 @@ class Miner(BaseMinerNeuron):
             batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
             target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
             optimizer=opt,  # wrap the SGD optimizer defined above
-            use_local_updates=True,  # perform optimizer steps with local gradients, average parameters in background
+            use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
             matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
             averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
             verbose=False,  # print logs incessently
@@ -189,10 +189,10 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
        
-        search_start = random.choice(range(len(self.dataset_indices_train) -  self.config.neuron.training_examples_per_miner + 1))
-        start = self.dataset_indices_train.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
+        search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
+        start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
         group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
-        self.dataset_indices_train[group] = True
+        self.dataset_indices[group] = True
 
         # Create Dataloader
         dataloader = SubsetFalconLoader(
@@ -241,6 +241,12 @@ class Miner(BaseMinerNeuron):
         
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
+
+        synapse.gradients = []
+        # Store gradients
+        for layer in self.model.parameters():
+            synapse.gradients.append(layer.grad)
+        synapse.gradients = [gradient.tolist() for gradient in synapse.gradients]
 
         average_loss = total_loss / step
         synapse.loss = average_loss

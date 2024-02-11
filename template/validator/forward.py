@@ -23,6 +23,7 @@ from template.protocol import Train
 from template.utils.misc import AsyncDendritePool
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
+from hivemind.utils.timed_storage import get_dht_time
 
 import template
 import asyncio
@@ -41,33 +42,38 @@ async def forward(self):
 
     """
     event = {}
-    self.miner_uids = await get_random_uids(
-        self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-    )
-    event.update({"uids":self.miner_uids})
-
-    # self.miner_uids = torch.tensor([0])
-    bt.logging.info(f"UIDs:  {self.miner_uids}")
-    datapoints_per_group = self.config.neuron.training_examples_per_miner
-    self.dataset_indices_list = self.dataset_common_state.get_dataset_indices(
-            groups_count=len(self.miner_uids),
-            items_per_group=datapoints_per_group,
-    )
-
-    query_tasks = []
-
-    queries = []
-    for uid, uid_dataset in zip(self.miner_uids, self.dataset_indices_list):
-        #TODO get the hashes of the groups
-        # Make miners return the group hashes with their losses as well.
-        queries.append(
-            template.protocol.Train( 
-                dataset_indices = uid_dataset,
-                run_id = self.config.neuron.run_id,
-                batch_size = self.config.neuron.local_batch_size_train,
-                gradient_accumilation_steps = self.config.neuron.local_gradient_accumilation_steps_train
-            )
+    # if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
+    if False:
+        # TODO ALL REDUCE DENTRITE CALL
+        a = 1
+    else:
+        self.miner_uids = await get_random_uids(
+            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
         )
+        event.update({"uids":self.miner_uids})
+
+        # self.miner_uids = torch.tensor([0])
+        bt.logging.info(f"UIDs:  {self.miner_uids}")
+        datapoints_per_group = self.config.neuron.training_examples_per_miner
+        self.dataset_indices_list = self.dataset_common_state.get_dataset_indices(
+                groups_count=len(self.miner_uids),
+                items_per_group=datapoints_per_group,
+        )
+
+        query_tasks = []
+
+        queries = []
+        for uid, uid_dataset in zip(self.miner_uids, self.dataset_indices_list):
+            #TODO get the hashes of the groups
+            # Make miners return the group hashes with their losses as well.
+            queries.append(
+                template.protocol.Train( 
+                    dataset_indices = uid_dataset,
+                    run_id = self.config.neuron.run_id,
+                    batch_size = self.config.neuron.local_batch_size_train,
+                    gradient_accumilation_steps = self.config.neuron.local_gradient_accumilation_steps_train
+                )
+            )
 
     # The dendrite client queries the network.
     query_tasks.append(
@@ -76,20 +82,22 @@ async def forward(self):
             queries
         )
     )
-    responses = await asyncio.gather(*query_tasks)
+    responses = []
+    # responses = await asyncio.gather(*query_tasks)
+    # self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
 
     # Log the results for monitoring purposes.
-    bt.logging.info(
-        "Received responses: " + str([
-            {
-                'Loss': response.loss,
-                'Dataset Indices': (min(response.dataset_indices), max(response.dataset_indices)),
-                'IP': self.metagraph.axons[uid].ip,
-                'Port': self.metagraph.axons[uid].port,
-                'Hotkey': self.metagraph.axons[uid].hotkey
-            } for response, uid in zip(responses[0],self.miner_uids) if response.dendrite.status_code == 200
-        ])
-    )
+    # bt.logging.info(
+    #     "Received responses: " + str([
+    #         {
+    #             'Loss': response.loss,
+    #             'Dataset Indices': (min(response.dataset_indices), max(response.dataset_indices)),
+    #             'IP': self.metagraph.axons[uid].ip,
+    #             'Port': self.metagraph.axons[uid].port,
+    #             'Hotkey': self.metagraph.axons[uid].hotkey
+    #         } for response, uid in zip(responses[0],self.miner_uids) if response.dendrite.status_code == 200
+    #     ])
+    # )
     
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(self, uids=self.miner_uids, responses=responses)

@@ -100,6 +100,46 @@ def get_local_score(self, synapse):
 
     return score
     
+
+def score_gradients(self, response):
+    
+    # Create Dataloader
+    dataloader = SubsetFalconLoader(
+        batch_size=response.batch_size, sequence_length=1024, rows=response.dataset_indices
+    )
+
+    # Train data for one epoch
+    for step, batch in enumerate(dataloader):
+
+        inputs = batch.to(self.device)
+
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=inputs)
+        
+        # Zero gradients
+        # self.opt.zero_grad()
+
+        # Normalize loss to account for batch accumulation
+        # loss = outputs.loss / accumulation_steps 
+        loss = outputs.loss
+
+        # Accumulate Total Loss
+        total_loss += outputs.loss.detach().item() 
+
+        # Backward Pass
+        loss.backward()
+
+        bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
+    
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log({"loss": outputs.loss.detach().item()})
+
+    gradients = []
+    score = 1-(abs(gradients-response.loss))
+
+    return score
+
+
 async def score_blacklist(self, uids):
 
     rewards = torch.zeros(len(uids))
@@ -121,10 +161,27 @@ async def score_bandwith(self, peer_ids):
     rewards = torch.zeros(len(peer_ids))
 
     for i, peer in enumerate(peer_ids):
-        start_time = time.perf_counter()
-        _ = self.load_state_from_peers(peer[0])
-        end_time = time.perf_counter()
-        rewards[i] = end_time - start_time
+        
+        try:
+            start_time = time.perf_counter()
+            # metadata, tensors = await self._load_state_from_peers(peer.peer_id)
+            import asyncio
+            metadata, tensors = await asyncio.wait_for(self._load_state_from_peers(peer.peer_id), timeout=60)
+
+            end_time = time.perf_counter()
+
+            if (metadata is None) or (tensors is None):
+                rewards[i] = 0
+            else:
+                rewards[i] = end_time - start_time
+
+            bt.logging.info(f"Reward for peer {peer} is {rewards[i]}")
+
+        except Exception as e:
+
+            bt.logging.info(f"Failed to download state from {peer} - {repr(e)}")
+            rewards[i] = 0
+            bt.logging.info(f"Reward for peer {peer} is {rewards[i]}")
 
     return rewards
                      
@@ -154,75 +211,90 @@ async def get_rewards(
     #         retries += 1
     #         bt.logging.error(f"Retrying ...")
 
-    peer_ids, rewards = await score_blacklist(self, uids)
-    breakpoint()
-    rewards = await score_bandwith(self, peer_ids)
-    breakpoint()
-
-    global_step = self.dataset_common_state.get_dht("step")
-    if global_step is not None:
-        self.global_step = global_step
-    bt.logging.info(f"Global Step:   {self.global_step}")
-    if (self.global_step % 100 == 0) and (self.global_step != 0):
-        self.dataset_indices_list_test = (
-            self.dataset_common_state.get_dataset_indices_test(
-                self.config.neuron.local_batch_size_test
-            )
-        )
-    # Get loss on randomly selected test dataset to be used for the Global Score
-    loss = get_loss(self, self.dataset_indices_list_test, self.config.neuron.local_batch_size_test, self.config.neuron.local_gradient_accumilation_steps_test)
-
-    event = {}
-    event.update({"loss": loss, "previous_loss": self.previous_loss})
-    event.update(self.get_validator_info())
-    event.update(get_bandwidth())
-    bt.logging.debug(f"Events: {str(event)}")
-    bt.logging.info("EVENTS", "events", **event)
-
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log(event)
-
-    # Get latest previous loss from DHT
-    # self.previous_loss = self.dataset_common_state.get_dht("loss")
-    previous_loss = self.dataset_common_state.get_dht("loss")
-    if previous_loss is not None:
-        self.previous_loss = previous_loss
-    bt.logging.info(f"Previous Global Loss:    {self.previous_loss}")
-    bt.logging.info(f"Current Global Loss:     {loss}")
-
-    # Compute Global Score
-    if ((self.previous_loss is None) or ((loss - self.previous_loss) < 0)) and (responses[0] != []):
-        score = 1
-        # self.dataset_common_state.set_dht("loss", float(loss))
-        self.dataset_common_state.set_dht("loss", loss)
+    scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
+    peer_ids, scores = await score_blacklist(self, uids)
+    if ALL_REDUCE_STEP:
+        # _ = await self._load_state_from_peers(self.peer_list[1].peer_id)
+        scores = await score_bandwith(self, self.peer_list)
     else:
-        score = 0
+        # Adjust Global Score with Local Score
+        test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
+        
+        test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
+        
+        scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
+                                    if uid_index in test_uids_sample_index else scores[uid_index] 
+                                    for uid_index,_ in enumerate(uids)]).to(self.device)
 
-    # Log score, previous and current loss
-    bt.logging.info(f"Global Score:            {score}")
+    # self.loop.close()
+    # import asyncio
+    # self.loop_2 = asyncio.new_event_loop()
 
-    # Set previous loss to current loss
-    self.previous_loss = loss
+
+    # global_step = self.dataset_common_state.get_dht("step")
+    # if global_step is not None:
+    #     self.global_step = global_step
+    # bt.logging.info(f"Global Step:   {self.global_step}")
+    # if (self.global_step % 100 == 0) and (self.global_step != 0):
+    #     self.dataset_indices_list_test = (
+    #         self.dataset_common_state.get_dataset_indices_test(
+    #             self.config.neuron.local_batch_size_test
+    #         )
+    #     )
+    # # Get loss on randomly selected test dataset to be used for the Global Score
+    # loss = get_loss(self, self.dataset_indices_list_test, self.config.neuron.local_batch_size_test, self.config.neuron.local_gradient_accumilation_steps_test)
+
+    # event = {}
+    # event.update({"loss": loss, "previous_loss": self.previous_loss})
+    # event.update(self.get_validator_info())
+    # event.update(get_bandwidth())
+    # bt.logging.debug(f"Events: {str(event)}")
+    # bt.logging.info("EVENTS", "events", **event)
+
+    # if not self.config.neuron.dont_wandb_log:
+    #     self.wandb.log(event)
+
+    # # Get latest previous loss from DHT
+    # # self.previous_loss = self.dataset_common_state.get_dht("loss")
+    # previous_loss = self.dataset_common_state.get_dht("loss")
+    # if previous_loss is not None:
+    #     self.previous_loss = previous_loss
+    # bt.logging.info(f"Previous Global Loss:    {self.previous_loss}")
+    # bt.logging.info(f"Current Global Loss:     {loss}")
+
+    # # Compute Global Score
+    # if ((self.previous_loss is None) or ((loss - self.previous_loss) < 0)) and (responses[0] != []):
+    #     score = 1
+    #     # self.dataset_common_state.set_dht("loss", float(loss))
+    #     self.dataset_common_state.set_dht("loss", loss)
+    # else:
+    #     score = 0
+
+    # # Log score, previous and current loss
+    # bt.logging.info(f"Global Score:            {score}")
+
+    # # Set previous loss to current loss
+    # self.previous_loss = loss
     
-    # Write loss to dht
-    self.dataset_common_state.set_dht("loss", loss)
+    # # Write loss to dht
+    # self.dataset_common_state.set_dht("loss", loss)
 
-    # Get all the reward results by iteratively calling your reward() function.
-    scores = torch.FloatTensor([score if response.dendrite.status_code == 200 and response.loss != [] else 0 
-                                for _, response in zip(uids, responses[0])]).to(self.device)
-    bt.logging.info(f"Global Scores:        {scores}")
+    # # Get all the reward results by iteratively calling your reward() function.
+    # scores = torch.FloatTensor([score if response.dendrite.status_code == 200 and response.loss != [] else 0 
+    #                             for _, response in zip(uids, responses[0])]).to(self.device)
+    # bt.logging.info(f"Global Scores:        {scores}")
 
-    # Adjust Global Score with Local Score
-    test_uids_index = [uid_index for uid_index, uid in enumerate(uids) 
-                       if responses[0][uid_index].dendrite.status_code == 200]
+    # # Adjust Global Score with Local Score
+    # test_uids_index = [uid_index for uid_index, uid in enumerate(uids) 
+    #                    if responses[0][uid_index].dendrite.status_code == 200]
     
-    test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
+    # test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
     
-    scores = torch.FloatTensor([scores[uid_index] * get_local_score(self, responses[0][uid_index]) 
-                                if uid_index in test_uids_sample_index else scores[uid_index] 
-                                for uid_index,_ in enumerate(uids)]).to(self.device)
+    # scores = torch.FloatTensor([scores[uid_index] * get_local_score(self, responses[0][uid_index]) 
+    #                             if uid_index in test_uids_sample_index else scores[uid_index] 
+    #                             for uid_index,_ in enumerate(uids)]).to(self.device)
 
-    bt.logging.info(f"Adjusted Global Scores:   {scores}")
+    # bt.logging.info(f"Adjusted Global Scores:   {scores}")
     
     return scores
 

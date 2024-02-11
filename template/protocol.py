@@ -66,7 +66,7 @@ class Train( bt.Synapse ):
     run_id: str = "s25_test_run"
 
     # Optional request output, filled by recieving axon.
-    # gradients: List[ bt.Tensor ] = []
+    gradients: List[ bt.Tensor ] = []
     # gradients: list = None
     
     # Optional model name
