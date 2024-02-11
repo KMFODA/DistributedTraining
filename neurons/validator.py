@@ -243,18 +243,6 @@ class Validator(BaseValidatorNeuron):
     async def _load_state_from_peers(self, peer, timeout: Optional[float] = None):
         if timeout is not None:
             timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
-        # try:
-            # peer_priority, _ = self.dht.get(f"{self.state_averager.prefix}.all_averagers", latest=True) or ({}, None)
-            # peer_priority = {
-            #     PeerID(peer_id): (float(info.value), random.random())  # using randomness as a tie breaker
-            #     for peer_id, info in peer_priority.items()
-            #     if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))
-            # }
-
-            # if not isinstance(peer_priority, dict) or len(peer_priority) == 0:
-            #     logger.info(f"Averager could not load state from peers: peer dict empty or corrupted {peer_priority}")
-            #     future.set_result(None)
-            #     return
 
         metadata = None
         # for peer in sorted(peer_priority.keys(), key=peer_priority.get, reverse=True):
@@ -287,9 +275,6 @@ class Validator(BaseValidatorNeuron):
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
             return None, None
-        # finally:
-        #     if not future.done():
-        #         future.set_result(None)
 
     # Define encoding function
     def encode(self, examples):

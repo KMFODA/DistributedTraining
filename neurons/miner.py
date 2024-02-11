@@ -48,6 +48,7 @@ from template.utils.misc import load_wandb, setup_logging, get_bandwidth
 from template.data.dataset import SubsetFalconLoader
 
 import random
+import asyncio
 
 
 class Miner(BaseMinerNeuron):
@@ -173,6 +174,15 @@ class Miner(BaseMinerNeuron):
         self, synapse: template.protocol.IsAlive
     ) -> template.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
+        synapse.completion = "True"
+        return synapse
+
+    async def all_reduce(
+        self, synapse: template.protocol.IsAlive
+    ) -> template.protocol.IsAlive:
+        bt.logging.info("Received All Reduce Call")
+        # Sleep for 2 minutes and allow all-reduce to run in the background
+        asyncio.sleep(120)
         synapse.completion = "True"
         return synapse
 
@@ -341,6 +351,13 @@ class Miner(BaseMinerNeuron):
 
     async def blacklist_is_alive(
         self, synapse: template.protocol.IsAlive
+    ) -> typing.Tuple[bool, str]:
+        blacklist = await self.blacklist_base(synapse)
+        bt.logging.debug(blacklist[1])
+        return blacklist
+    
+    async def blacklist_all_reduce(
+        self, synapse: template.protocol.AllReduce
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])

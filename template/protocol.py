@@ -92,3 +92,12 @@ class Train( bt.Synapse ):
     
     # Epoch
     epoch: int | None
+
+class AllReduce( bt.Synapse ):
+    answer: Optional[str] = None
+    completion: str = pydantic.Field(
+        "",
+        title="Completion",
+        description="Completion status of the current StreamPrompting object. "
+                    "This attribute is mutable and can be updated.",
+    )
