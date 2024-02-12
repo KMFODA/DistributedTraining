@@ -26,6 +26,8 @@ import template
 import asyncio
 import random
 
+from template.utils.misc import get_bandwidth
+
 
 async def forward(self):
     
@@ -45,13 +47,18 @@ async def forward(self):
     event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-    if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
+    # if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
+    if False:
         all_reduce = True
     else:
         all_reduce = False
 
+    query_tasks = []
     if all_reduce:
+        # breakpoint()
         self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
+        self.opt.grad_averager.__dict__
+        asyncio.sleep(self.opt.averaging_timeout)
         queries = [template.protocol.AllReduce() for uid in self.miner_uids]
     else:
         datapoints_per_group = self.config.neuron.training_examples_per_miner
@@ -59,8 +66,6 @@ async def forward(self):
                 groups_count=len(self.miner_uids),
                 items_per_group=datapoints_per_group,
         )
-
-        query_tasks = []
 
         queries = [
             template.protocol.Train( 
@@ -113,5 +118,13 @@ async def forward(self):
         self.global_step += 1
 
     self.step += 1
+
+    event = {}
+    event.update(self.get_validator_info())
+    event.update(get_bandwidth())
+
+    # Log to wandb
+    if not self.config.neuron.dont_wandb_log:
+        self.wandb.log(event)
 
     return responses

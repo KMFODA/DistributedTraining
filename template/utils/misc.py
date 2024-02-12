@@ -212,6 +212,6 @@ def get_bandwidth():
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
     for key in keys:
-        bandwidth_dict[key] = f"{results[key]/ 1e6:.2f}"
+        bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
 
     return bandwidth_dict

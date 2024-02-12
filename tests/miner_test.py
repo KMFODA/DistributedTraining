@@ -110,7 +110,7 @@ model = model.to(device)
 
 # Set up a decentralized optimizer that will average with peers in background
 opt = torch.optim.AdamW(model.parameters(), lr=config.neuron.lr)
-opt_2 = hivemind.Optimizer(
+opt = hivemind.Optimizer(
     dht=dht,  # use a DHT that is connected with other peers
     run_id=config.neuron.run_id,  # unique identifier of this collaborative run
     scheduler=None,

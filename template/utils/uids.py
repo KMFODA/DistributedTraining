@@ -9,6 +9,7 @@ import template
 async def check_uid(dendrite, axon, uid):
     try:
         response = await dendrite(axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3)
+        breakpoint()
         if response.is_success:
             bt.logging.trace(f"UID {uid} is active.")
             # loop.close()

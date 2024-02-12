@@ -150,7 +150,7 @@ class Validator(BaseValidatorNeuron):
             load_state_timeout=240,
             matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
             averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-            verbose=False,  # print logs incessently
+            verbose=True,  # print logs incessently
             grad_compression=hivemind.Uniform8BitQuantization(),
             state_averaging_compression=hivemind.Uniform8BitQuantization(),
         )
@@ -170,9 +170,8 @@ class Validator(BaseValidatorNeuron):
         self.loop.close()
         self.loop = asyncio.new_event_loop()
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        # breakpoint()
+
         # _ = self.loop.run_until_complete(self._load_state_from_peers(self.peer_list[1].peer_id))
-        # breakpoint()
         
         # metadata, _expiration = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
         # valid_peer_entries = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
@@ -212,7 +211,6 @@ class Validator(BaseValidatorNeuron):
 
         # Get only peers connected to the current run id
         metadata, _ = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
-        breakpoint()
         if metadata is None:
             return None
         peer_list_run = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]

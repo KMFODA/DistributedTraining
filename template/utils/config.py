@@ -151,7 +151,7 @@ def add_args(cls, parser):
         "--neuron.global_batch_size_train",
         type=int,
         help="The hivemind global target_batch_size",
-        default=250*20,
+        default=250*25,
     )
 
     parser.add_argument(
