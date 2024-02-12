@@ -230,7 +230,9 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # torch.cuda.empty_cache()
+            # Log training to hivemind
+            self.opt.step()
+
             bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
         
             if not self.config.neuron.dont_wandb_log:
