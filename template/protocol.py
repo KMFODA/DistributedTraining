@@ -66,8 +66,10 @@ class Train( bt.Synapse ):
     run_id: str = "s25_test_run"
 
     # Optional request output, filled by recieving axon.
-    gradients: List[ bt.Tensor ] = []
+    gradients: float = None
     # gradients: list = None
+
+    gradient_test_index: int = None
     
     # Optional model name
     model_name: str = "kmfoda/tiny-random-gpt2"

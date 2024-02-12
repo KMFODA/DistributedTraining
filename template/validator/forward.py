@@ -1,7 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2023 KMFODA
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -19,15 +18,13 @@
 
 import bittensor as bt
 
-from template.protocol import Train
-from template.utils.misc import AsyncDendritePool
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
 from hivemind.utils.timed_storage import get_dht_time
 
 import template
 import asyncio
-import torch
+import random
 
 
 async def forward(self):
@@ -50,6 +47,8 @@ async def forward(self):
 
     if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
         all_reduce = True
+    else:
+        all_reduce = False
 
     if all_reduce:
         self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
@@ -68,7 +67,8 @@ async def forward(self):
                     dataset_indices = uid_dataset,
                     run_id = self.config.neuron.run_id,
                     batch_size = self.config.neuron.local_batch_size_train,
-                    gradient_accumilation_steps = self.config.neuron.local_gradient_accumilation_steps_train
+                    gradient_accumilation_steps = self.config.neuron.local_gradient_accumilation_steps_train,
+                    gradient_test_index = random.choice(self.test_layer_indices),
             ) for uid_dataset in self.dataset_indices_list
         ]
 
@@ -80,9 +80,10 @@ async def forward(self):
         )
     )
     responses = await asyncio.gather(*query_tasks)
-
-    if all_reduce:
+    if all_reduce and responses != []:
+        responses = []
         # Log the results for monitoring purposes.
+    else:
         bt.logging.info(
             "Received responses: " + str([
                 {
@@ -94,13 +95,11 @@ async def forward(self):
                 } for response, uid in zip(responses[0],self.miner_uids) if response.dendrite.status_code == 200
             ])
         )
-    else:
-        responses = []
     
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce)
 
-    bt.logging.info(f"Scored responses: {rewards}")
+    bt.logging.info(f"Final Scores: {rewards}")
     
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)
@@ -112,5 +111,7 @@ async def forward(self):
     step_update_status = self.dataset_common_state.update_step()
     if step_update_status is None:
         self.global_step += 1
+
+    self.step += 1
 
     return responses

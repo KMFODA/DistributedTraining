@@ -26,6 +26,7 @@ from template.data.dataset import SubsetFalconLoader
 from template.utils.misc import get_bandwidth
 from hivemind.utils.timed_storage import get_dht_time
 import time
+import asyncio
 
 
 def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
@@ -47,36 +48,12 @@ def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
         # Forward pass
         outputs = self.model(input_ids=inputs, labels=inputs)
         
-        # Zero gradients
-        # self.opt.zero_grad()
-
-        # Normalize loss to account for batch accumulation
-        # loss = outputs.loss / accumulation_steps 
         loss = outputs.loss
-
-        # Accumulate Total Loss
-        total_loss += outputs.loss.detach().item() 
 
         # Backward Pass
         loss.backward()
 
-        # Adjust gradient
-        # self.opt.step()
-
-        # if (step + 1) % accumulation_steps == 0:
-        #     n_acc_steps += 1
-            
-        #     bt.logging.info(f"Step {n_acc_steps} Loss: {outputs.loss.detach().item()}")
-            
-        #     if not self.config.neuron.dont_wandb_log:
-        #         self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
-
-        # torch.cuda.empty_cache()
-
         bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
-    
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log({"loss": outputs.loss.detach().item()})
 
     average_loss = total_loss / step
 
@@ -115,16 +92,8 @@ def score_gradients(self, response):
 
         # Forward pass
         outputs = self.model(input_ids=inputs, labels=inputs)
-        
-        # Zero gradients
-        # self.opt.zero_grad()
 
-        # Normalize loss to account for batch accumulation
-        # loss = outputs.loss / accumulation_steps 
         loss = outputs.loss
-
-        # Accumulate Total Loss
-        total_loss += outputs.loss.detach().item() 
 
         # Backward Pass
         loss.backward()
@@ -138,55 +107,50 @@ def score_gradients(self, response):
     for layer in self.model.parameters():
         gradients.append(layer.grad)
         
-    score = 1-(abs(gradients-response.loss))
+    score = 1-(abs(gradients[-1]-response.gradients[-1]))
+    score = score * len(response.dataset_indices)
 
     return score
 
 
-async def score_blacklist(self, uids):
-
-    rewards = torch.zeros(len(uids))
+async def score_blacklist(self, uids, scores):
     
     peer_ids = []
 
     for i, uid in enumerate(uids):
         peer_id = await self.map_uid_to_peerid(uid)
         if peer_id == None:
-            rewards[i] = 0.0
+            scores[i] = 0.0
         else:
-            rewards[i] = 1.0
+            scores[i] = 1.0
         peer_ids.append(peer_id)
 
-    return peer_ids, rewards
+    return peer_ids, scores
 
-async def score_bandwith(self, peer_ids):
-
-    rewards = torch.zeros(len(peer_ids))
+async def score_bandwidth(self, peer_ids, scores):
 
     for i, peer in enumerate(peer_ids):
         
         try:
             start_time = time.perf_counter()
-            # metadata, tensors = await self._load_state_from_peers(peer.peer_id)
-            import asyncio
-            metadata, tensors = await asyncio.wait_for(self._load_state_from_peers(peer.peer_id), timeout=60)
+            metadata, tensors = await asyncio.wait_for(self.load_state_from_miner(peer.peer_id), timeout=60)
 
             end_time = time.perf_counter()
 
             if (metadata is None) or (tensors is None):
-                rewards[i] = 0
+                scores[i] = 0
             else:
-                rewards[i] = end_time - start_time
+                scores[i] = end_time - start_time
 
-            bt.logging.info(f"Reward for peer {peer} is {rewards[i]}")
+            bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
 
         except Exception as e:
 
             bt.logging.info(f"Failed to download state from {peer} - {repr(e)}")
-            rewards[i] = 0
-            bt.logging.info(f"Reward for peer {peer} is {rewards[i]}")
+            scores[i] = 0
+            bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
 
-    return rewards
+    return scores
                      
 async def get_rewards(
     self,
@@ -205,20 +169,32 @@ async def get_rewards(
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
 
-    scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
-    peer_ids, scores = await score_blacklist(self, uids)
-
-    if all_reduce:
-        scores = await score_bandwith(self, peer_ids)
+    if responses == []:
+        scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
     else:
-        # Adjust Global Score with Local Score
-        test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
-        
-        test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
-        
-        scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
-                                    if uid_index in test_uids_sample_index else scores[uid_index] 
-                                    for uid_index,_ in enumerate(uids)]).to(self.device)
+        scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
+        bt.logging.info(f"Timeout Scores: {scores}")
+
+        if (self.step != 0) and ((self.step % 10)==0):
+            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
+            peer_ids, scores = await score_blacklist(self, uids, scores)
+            bt.logging.info(f"DHT Blacklist Scores: {scores}")
+
+        if all_reduce:
+            # Score miners bandwidth
+            scores = await score_bandwidth(self, peer_ids, scores)
+            bt.logging.info(f"Bandwidth Scores: {scores}")
+        else:
+            # Adjust Global Score with Local Score
+            test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
+            
+            # test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
+            test_uids_sample_index = random.sample(test_uids_index, k = 1)
+            
+            scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
+                                        if uid_index in test_uids_sample_index else scores[uid_index] 
+                                        for uid_index,_ in enumerate(uids)]).to(self.device)
+            bt.logging.info(f"Gradient Scores: {scores}")
 
     return scores
 

@@ -29,12 +29,12 @@ bt.subtensor.add_args(parser)
 bt.axon.add_args(parser)
 
 config = BaseNeuron.config()
-config.wallet.name = "polkadot_wallet_1"
-config.wallet.hotkey = "polkadot_wallet_1_hotkey_25_validator_1"
+config.wallet.name = "test_dt"
+config.wallet.hotkey = "miner_1"
 config.netuid = 25
 config.dht.announce_ip = "194.68.245.27"
-config.dht.port = 22126
-config.axon.port = 22127
+config.dht.port = 22036
+config.axon.port = 22037
 # config.neuron.run_id = "s25_test_1"
 
 wallet = bt.wallet(config=config)
@@ -147,7 +147,9 @@ for i, batch in enumerate(dataloader):
     # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
     loss = outputs.loss
     loss.backward()
-    opt.step()
+    # opt.step()
 
+[layer.grad for layer in model.parameters()]
+            
 grad_averager.accumulate_grads_(batch_size=i)
 grad_averager.step(control=grad_averager.schedule_step(scheduled_time=hivemind.get_dht_time()))

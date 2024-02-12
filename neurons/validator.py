@@ -119,6 +119,8 @@ class Validator(BaseValidatorNeuron):
         ).to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
         self.tokenizer.pad_token = self.tokenizer.eos_token
+        # For simplicity only pick layers with a dim of 1
+        self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
 
         # # Init State Averager
         # self.state_averager = TrainingStateAverager(
@@ -210,6 +212,9 @@ class Validator(BaseValidatorNeuron):
 
         # Get only peers connected to the current run id
         metadata, _ = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
+        breakpoint()
+        if metadata is None:
+            return None
         peer_list_run = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
 
         # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
@@ -240,13 +245,11 @@ class Validator(BaseValidatorNeuron):
         self._outer_pipe.send(("_load_state_from_peers", [], dict(peer = peer, timeout=timeout, future=future)))
         return future.result(timeout=timeout) if wait else future
 
-    async def _load_state_from_peers(self, peer, timeout: Optional[float] = None):
+    async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         if timeout is not None:
             timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
 
         metadata = None
-        # for peer in sorted(peer_priority.keys(), key=peer_priority.get, reverse=True):
-        #     if peer == peer_id:
         logger.info(f"Downloading parameters from peer {peer}")
         try:
             stub = self.get_stub(self._p2p, peer, namespace=self.opt.state_averager.prefix)
@@ -334,11 +337,11 @@ class Validator(BaseValidatorNeuron):
                 )
                 break
             except Exception as e:
-                bt.logging.error(
+                bt.logging.info(
                     f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
                 )
                 retries += 1
-                bt.logging.error(f"Retrying...")
+                bt.logging.info(f"Retrying...")
 
         # Write local dht address to config
         self.config.neuron.initial_peers = self.config.neuron.initial_peers + [

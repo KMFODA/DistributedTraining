@@ -178,7 +178,7 @@ class Miner(BaseMinerNeuron):
         return synapse
 
     async def all_reduce(
-        self, synapse: template.protocol.IsAlive
+        self, synapse: template.protocol.AllReduce
     ) -> template.protocol.IsAlive:
         bt.logging.info("Received All Reduce Call")
         # Sleep for 2 minutes and allow all-reduce to run in the background
@@ -210,8 +210,6 @@ class Miner(BaseMinerNeuron):
         )
 
         total_loss = 0
-        # n_acc_steps = 0
-        # accumulation_steps = self.config.neuron.local_gradient_accumilation_steps_train
 
         # Train data for one epoch
         for step, batch in enumerate(dataloader):
@@ -224,7 +222,6 @@ class Miner(BaseMinerNeuron):
             self.opt.zero_grad()
 
             # Normalize loss to account for batch accumulation
-            # loss = outputs.loss / accumulation_steps 
             loss = outputs.loss
             
             # Accumulate Total Loss
@@ -233,19 +230,6 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # Adjust gradient
-            self.opt.step()
-
-            # if (step + 1) % accumulation_steps == 0:
-            #     n_acc_steps += 1
-            #     self.opt.step()         # Adjust gradient
-            #     self.opt.zero_grad()    # Clear gradients
-                
-            #     bt.logging.info(f"Step {n_acc_steps} Loss: {outputs.loss.detach().item()}")
-                
-            #     if not self.config.neuron.dont_wandb_log:
-            #         self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
-
             # torch.cuda.empty_cache()
             bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
         
@@ -253,11 +237,11 @@ class Miner(BaseMinerNeuron):
                 self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
 
         # Store gradients
-        synapse.gradients = []
+        gradients = []
         for layer in self.model.parameters():
-            synapse.gradients.append(layer.grad)
-            
-        synapse.gradients = [gradient.tolist() for gradient in synapse.gradients]
+            gradients.append(layer.grad)
+
+        synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
         average_loss = total_loss / step
         synapse.loss = average_loss
@@ -269,8 +253,9 @@ class Miner(BaseMinerNeuron):
         event = {}
         event.update(self.get_miner_info())
         event.update(get_bandwidth())
-        bt.logging.debug(f"Events: {str(event)}")
-        bt.logging.info("EVENTS", "events", **event)
+        
+        # bt.logging.debug(f"Events: {str(event)}")
+        # bt.logging.info("EVENTS", "events", **event)
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(event)
