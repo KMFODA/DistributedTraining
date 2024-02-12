@@ -109,7 +109,7 @@ def score_gradients(self, response):
     
     gradients = float(sum(gradients[response.gradient_test_index]))
         
-    score = 1-(abs(gradients-response.gradients[-1]))
+    score = 1-(abs(gradients-response.gradients))
     score = score * len(response.dataset_indices)
 
     return score
