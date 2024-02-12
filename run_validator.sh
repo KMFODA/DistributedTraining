@@ -230,7 +230,7 @@ if [ "$?" -eq 1 ]; then
         if [ -d "./.git" ]; then
 
             # check value on github remotely
-            latest_version=$(check_variable_value_on_github "KMFODA/DistributedTraining" "template/__init__.py" "__version__ ")
+            latest_version=$(check_variable_value_on_github "bit-current/DistributedTraining" "template/__init__.py" "__version__ ")
 
             # If the file has been updated
             if version_less_than $current_version $latest_version; then
@@ -241,8 +241,11 @@ if [ "$?" -eq 1 ]; then
                     echo "current validator version:" "$current_version" 
                     echo "latest validator version:" "$latest_version" 
 
+                    #Ensure origin is correctly set
+                    git remote set-url origin https://github.com/bit-current/DistributedTraining.git
                     # Pull latest changes
                     # Failed git pull will return a non-zero output
+                    
                     if git pull origin $branch; then
                         # latest_version is newer than current_version, should download and reinstall.
                         echo "New version published. Updating the local copy."
