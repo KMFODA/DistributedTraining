@@ -150,7 +150,7 @@ class Validator(BaseValidatorNeuron):
             load_state_timeout=240,
             matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
             averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-            verbose=True,  # print logs incessently
+            verbose=False,  # print logs incessently
             grad_compression=hivemind.Uniform8BitQuantization(),
             state_averaging_compression=hivemind.Uniform8BitQuantization(),
         )
@@ -171,6 +171,12 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
+        # breakpoint()
+        self.loop.close()
+        self.loop = asyncio.new_event_loop()
+        import template
+        test = self.loop.run_until_complete(self.dendrite(self.metagraph.axons[1], template.protocol.IsAlive(), deserialize=False, timeout=2.3))
+        breakpoint()
         # _ = self.loop.run_until_complete(self._load_state_from_peers(self.peer_list[1].peer_id))
         
         # metadata, _expiration = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))

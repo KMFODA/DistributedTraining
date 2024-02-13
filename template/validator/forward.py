@@ -44,6 +44,11 @@ async def forward(self):
     self.miner_uids = await get_random_uids(
         self, dendrite=self.dendrite, k=self.config.neuron.sample_size
     )
+    self.metagraph.axons[0]
+    self.metagraph.axons[1]
+    self.metagraph.axons[2]
+    self.metagraph.axons[3]
+    breakpoint()
     event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -57,7 +62,6 @@ async def forward(self):
     if all_reduce:
         # breakpoint()
         self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
-        self.opt.grad_averager.__dict__
         asyncio.sleep(self.opt.averaging_timeout)
         queries = [template.protocol.AllReduce() for uid in self.miner_uids]
     else:

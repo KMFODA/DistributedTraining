@@ -172,20 +172,24 @@ async def get_rewards(
     """
     # TODO Test this
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
+        
         scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
-    else:
-        scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
-        bt.logging.info(f"Timeout Scores: {scores}")
-
-        if (self.step != 0) and ((self.step % 10)==0):
-            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-            peer_ids, scores = await score_blacklist(self, uids, scores)
-            bt.logging.info(f"DHT Blacklist Scores: {scores}")
-
+        
         if all_reduce:
             # Score miners bandwidth
             scores = await score_bandwidth(self, peer_ids, scores)
             bt.logging.info(f"Bandwidth Scores: {scores}")
+
+    else:
+        scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
+        bt.logging.info(f"Timeout Scores: {scores}")
+
+        if ((self.step % 10)==0):
+
+            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
+            peer_ids, scores = await score_blacklist(self, uids, scores)
+            bt.logging.info(f"DHT Blacklist Scores: {scores}")
+
         else:
             # Adjust Global Score with Local Score
             test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
