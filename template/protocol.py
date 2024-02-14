@@ -51,7 +51,7 @@ class Train( bt.Synapse ):
     #     arbitrary_types_allowed = True
 
     # Required request input, filled by sending dendrite caller.
-    dataset_indices: list = [0, 1]
+    dataset_indices: list = None
 
     # Initial peers
     initial_peers: str = "/ip4/127.0.0.1/tcp/8008/p2p/12D3KooWPVy8joVQgKe2o3LYncfFvHN1VCEZNV5UZhmzj45dSs1z"

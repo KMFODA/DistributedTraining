@@ -40,7 +40,7 @@ def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
     accumulation_steps = gradient_accumilation_steps
 
     # Train data for one epoch
-    for index, batch in enumerate(dataloader):
+    for step, batch in enumerate(dataloader):
 
         inputs = batch.to(self.device)
 
@@ -52,7 +52,12 @@ def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
         # Backward Pass
         loss.backward()
 
-        bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
+        bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
+
+    average_loss = total_loss / step
+
+    bt.logging.info(f"Final Loss:           {outputs.loss.detach().item()}")
+    bt.logging.info(f"Average Loss:         {average_loss}")
 
     return average_loss
 
@@ -135,7 +140,6 @@ async def score_bandwidth(self, peer_ids, scores):
         try:
             start_time = time.perf_counter()
             metadata, tensors = await asyncio.wait_for(self.load_state_from_miner(peer.peer_id), timeout=60)
-
             end_time = time.perf_counter()
 
             if (metadata is None) or (tensors is None):
@@ -175,6 +179,10 @@ async def get_rewards(
         scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
         
         if all_reduce:
+            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
+            peer_ids, scores = await score_blacklist(self, uids, scores)
+            bt.logging.info(f"DHT Blacklist Scores: {scores}")
+            
             # Score miners bandwidth
             scores = await score_bandwidth(self, peer_ids, scores)
             bt.logging.info(f"Bandwidth Scores: {scores}")
@@ -192,8 +200,8 @@ async def get_rewards(
         # Adjust Global Score with Local Score
         test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
         
-        # test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
-        test_uids_sample_index = random.sample(test_uids_index, k = 1)
+        test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
+        # test_uids_sample_index = random.sample(test_uids_index, k = 1)
         
         scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
                                     if uid_index in test_uids_sample_index else scores[uid_index] 

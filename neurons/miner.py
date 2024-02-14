@@ -254,7 +254,7 @@ class Miner(BaseMinerNeuron):
         event.update(get_bandwidth())
         bt.logging.info('Logged bandwidth info')
         event.update({'steps':index})
-        bt.logging.info('Logged bandwidth info')
+        bt.logging.info('Logged steps info')
         
         # bt.logging.debug(f"Events: {str(event)}")
         # bt.logging.info("EVENTS", "events", **event)

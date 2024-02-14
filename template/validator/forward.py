@@ -68,20 +68,10 @@ async def forward(self):
         asyncio.sleep(self.opt.averaging_timeout)
         queries = [template.protocol.AllReduce() for uid in self.miner_uids]
     else:
-        datapoints_per_group = self.config.neuron.training_examples_per_miner
-        self.dataset_indices_list = self.dataset_common_state.get_dataset_indices(
-                groups_count=len(self.miner_uids),
-                items_per_group=datapoints_per_group,
-        )
-
         queries = [
             template.protocol.Train( 
-                    dataset_indices = uid_dataset,
-                    run_id = self.config.neuron.run_id,
-                    batch_size = self.config.neuron.local_batch_size_train,
-                    gradient_accumilation_steps = self.config.neuron.local_gradient_accumilation_steps_train,
                     gradient_test_index = random.choice(self.test_layer_indices),
-            ) for uid_dataset in self.dataset_indices_list
+            ) for uid in self.miner_uids
         ]
 
     # The dendrite client queries the network.
