@@ -143,16 +143,14 @@ class Miner(BaseMinerNeuron):
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load dataset
-        # self.dataset = load_dataset(
-        #     self.config.neuron.dataset_name, "wikitext-2-v1", split="train"
-        # )
         self.dataset_loader = ()
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
+            # self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
+            self.wandb = load_wandb(self.config, self.wallet, "miner", str(1))
 
     # Define encoding function
     def encode(self, examples):
@@ -212,49 +210,52 @@ class Miner(BaseMinerNeuron):
         total_loss = 0
 
         # Train data for one epoch
-        for step, batch in enumerate(dataloader):
+        for i, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=inputs)
-            
-            # Zero gradients
-            self.opt.zero_grad()
 
             # Normalize loss to account for batch accumulation
             loss = outputs.loss
             
             # Accumulate Total Loss
             total_loss += outputs.loss.detach().item() 
-            
+
             # Backward Pass
             loss.backward()
 
             # Log training to hivemind
             self.opt.step()
 
-            bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
+            # Store gradients
+            gradients = []
+            for layer in self.model.parameters():
+                gradients.append(layer.grad)
+
+            # Zero gradients
+            self.opt.zero_grad()
+
+            bt.logging.info(f"Step {i} Loss: {outputs.loss.detach().item()}")
         
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
 
-        # Store gradients
-        gradients = []
-        for layer in self.model.parameters():
-            gradients.append(layer.grad)
-
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
-        average_loss = total_loss / step
+        average_loss = total_loss / i
         synapse.loss = average_loss
         synapse.epoch = self.opt.tracker.local_progress.epoch
+        synapse.dataset_indices = group
 
         bt.logging.info(f"Final Loss: {outputs.loss.detach().item()}")
         bt.logging.info(f"Average Loss: {average_loss}")
+        bt.logging.info(f"Total Steps: {i}")    
 
         event = {}
         event.update(self.get_miner_info())
         event.update(get_bandwidth())
+        event.update({'steps':step})
         
         # bt.logging.debug(f"Events: {str(event)}")
         # bt.logging.info("EVENTS", "events", **event)

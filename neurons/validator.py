@@ -138,12 +138,13 @@ class Validator(BaseValidatorNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
+        # Init Optimizer
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
         self.opt = hivemind.Optimizer(
             dht=self.dht,  # use a DHT that is connected with other peers
             run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
             scheduler=None,
-            batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
+            # batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
             target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
             optimizer=opt,  # wrap the SGD optimizer defined above
             use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
@@ -153,6 +154,8 @@ class Validator(BaseValidatorNeuron):
             verbose=False,  # print logs incessently
             grad_compression=hivemind.Uniform8BitQuantization(),
             state_averaging_compression=hivemind.Uniform8BitQuantization(),
+            # client=True,
+            auxiliary=True,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -171,30 +174,6 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
-        # breakpoint()
-        self.loop.close()
-        self.loop = asyncio.new_event_loop()
-        import template
-        test = self.loop.run_until_complete(self.dendrite(self.metagraph.axons[1], template.protocol.IsAlive(), deserialize=False, timeout=2.3))
-        breakpoint()
-        # _ = self.loop.run_until_complete(self._load_state_from_peers(self.peer_list[1].peer_id))
-        
-        # metadata, _expiration = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
-        # valid_peer_entries = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
-        # breakpoint()
-        # # metadata, _expiration = 
-        # breakpoint()
-
-        # breakpoint()
-        # future = MPFuture()
-        # metadata, _expiration = self.dht.get(self.training_progress_key, latest=True) or (None, -float("inf"))
-        # self.loop = asyncio.new_event_loop()
-        # self.loop.run_until_complete(self._load_state_from_peers(peer_list[0].peer_id, future))
-        # self.loop.close()
-
-        # Get Current Epoch
-        self.current_epoch = 1 # Dummy fix need to swithc to self.opt.tracker.global_progress.epoch
-        
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
 

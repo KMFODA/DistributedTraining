@@ -1,7 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2023 KMFODA
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -98,19 +97,24 @@ def score_gradients(self, response):
         # Backward Pass
         loss.backward()
 
+        gradients = []
+        for layer in self.model.parameters():
+            gradients.append(layer.grad)
+
+        # Zero gradients
+        self.opt.zero_grad()
+
         bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
     
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log({"loss": outputs.loss.detach().item()})
 
-    gradients = []
-    for layer in self.model.parameters():
-        gradients.append(layer.grad)
-    
+    # breakpoint()
     gradients = float(sum(gradients[response.gradient_test_index]))
         
+    # breakpoint()
     score = 1-(abs(gradients-response.gradients))
-    score = score * len(response.dataset_indices)
+    # score = score * len(response.dataset_indices)
 
     return score
 
@@ -190,17 +194,16 @@ async def get_rewards(
             peer_ids, scores = await score_blacklist(self, uids, scores)
             bt.logging.info(f"DHT Blacklist Scores: {scores}")
 
-        else:
-            # Adjust Global Score with Local Score
-            test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
-            
-            # test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
-            test_uids_sample_index = random.sample(test_uids_index, k = 1)
-            
-            scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
-                                        if uid_index in test_uids_sample_index else scores[uid_index] 
-                                        for uid_index,_ in enumerate(uids)]).to(self.device)
-            bt.logging.info(f"Gradient Scores: {scores}")
+        # Adjust Global Score with Local Score
+        test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
+        
+        # test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
+        test_uids_sample_index = random.sample(test_uids_index, k = 1)
+        
+        scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
+                                    if uid_index in test_uids_sample_index else scores[uid_index] 
+                                    for uid_index,_ in enumerate(uids)]).to(self.device)
+        bt.logging.info(f"Gradient Scores: {scores}")
 
     return scores
 

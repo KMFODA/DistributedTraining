@@ -135,7 +135,7 @@ tokenizer.pad_token = tokenizer.eos_token
 config.neuron.local_batch_size_train_total = 20
 
 dataloader = SubsetFalconLoader(
-    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.local_batch_size_train_total)
+    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.training_examples_per_miner)
 )
 
 for i, batch in enumerate(dataloader):
@@ -150,6 +150,38 @@ for i, batch in enumerate(dataloader):
     # opt.step()
 
 [layer.grad for layer in model.parameters()]
-            
+
+model = model.to(device)
+model_2 = AutoModelForCausalLM.from_pretrained(config.neuron.model_name)
+model_2 = model_2.to(device)
+test_layer_indices = [i for i, layer in enumerate(model.parameters()) if len(layer.size()) == 1]
+opt_2 = torch.optim.AdamW(model_2.parameters(), lr=config.neuron.lr)
+
+for i in range(0, 100):
+    dataloader = SubsetFalconLoader(
+        batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.training_examples_per_miner)
+    )
+    for i, batch in enumerate(dataloader):
+        inputs = batch.to(device)
+
+        # Forward pass
+        outputs = model(input_ids=inputs, labels=inputs)
+        
+        # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
+        loss = outputs.loss
+        loss.backward()
+
+        # Forward pass
+        outputs_2 = model_2(input_ids=inputs, labels=inputs)
+        
+        # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
+        loss_2 = outputs_2.loss
+        loss_2.backward()
+
+        index = random.choice(test_layer_indices)
+        print(sum([layer.grad for layer in model.parameters()][index]) - sum([layer.grad for layer in model_2.parameters()][index]))
+        opt.zero_grad()
+        opt_2.zero_grad()
+
 grad_averager.accumulate_grads_(batch_size=i)
 grad_averager.step(control=grad_averager.schedule_step(scheduled_time=hivemind.get_dht_time()))

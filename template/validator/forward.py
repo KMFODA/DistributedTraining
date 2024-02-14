@@ -44,11 +44,6 @@ async def forward(self):
     self.miner_uids = await get_random_uids(
         self, dendrite=self.dendrite, k=self.config.neuron.sample_size
     )
-    self.metagraph.axons[0]
-    self.metagraph.axons[1]
-    self.metagraph.axons[2]
-    self.metagraph.axons[3]
-    breakpoint()
     event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -60,7 +55,6 @@ async def forward(self):
 
     query_tasks = []
     if all_reduce:
-        # breakpoint()
         self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
         asyncio.sleep(self.opt.averaging_timeout)
         queries = [template.protocol.AllReduce() for uid in self.miner_uids]
@@ -107,14 +101,15 @@ async def forward(self):
     
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce)
-
+    
+    # Normalise Rewards
+    if rewards.sum() != 0:
+        rewards  = rewards / rewards.sum()
+    
     bt.logging.info(f"Final Scores: {rewards}")
     
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)
-
-    # Update the current_epoch
-    self.current_epoch = 1 # Dummy fix need to switch to self.tracker.global_progress.epoch
 
     # Update global step
     step_update_status = self.dataset_common_state.update_step()
@@ -125,7 +120,10 @@ async def forward(self):
 
     event = {}
     event.update(self.get_validator_info())
-    event.update(get_bandwidth())
+    try:
+        event.update(get_bandwidth())
+    except:
+        bt.logging.info("Error getting bandwidth metrics")
 
     # Log to wandb
     if not self.config.neuron.dont_wandb_log:
