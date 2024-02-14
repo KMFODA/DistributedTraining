@@ -1,4 +1,6 @@
 
+# ⚠️ Deprecated: This project's base repository has been updated. Please use the new [distributed training repository](https://github.com/bit-current/DistributedTraining/) instead.
+
 <div align="center">
 
 # **Distributed Training Subnet** <!-- omit in toc -->
