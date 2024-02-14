@@ -155,7 +155,7 @@ class Validator(BaseValidatorNeuron):
             grad_compression=hivemind.Uniform8BitQuantization(),
             state_averaging_compression=hivemind.Uniform8BitQuantization(),
             # client=True,
-            auxiliary=True,
+            # auxiliary=True,
         )
 
         self.loop = asyncio.new_event_loop()

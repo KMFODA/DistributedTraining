@@ -40,7 +40,7 @@ def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
     accumulation_steps = gradient_accumilation_steps
 
     # Train data for one epoch
-    for step, batch in enumerate(dataloader):
+    for index, batch in enumerate(dataloader):
 
         inputs = batch.to(self.device)
 
@@ -52,12 +52,7 @@ def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
         # Backward Pass
         loss.backward()
 
-        bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
-
-    average_loss = total_loss / step
-
-    bt.logging.info(f"Final Loss:           {outputs.loss.detach().item()}")
-    bt.logging.info(f"Average Loss:         {average_loss}")
+        bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
 
     return average_loss
 
@@ -85,7 +80,7 @@ def score_gradients(self, response):
     )
 
     # Train data for one epoch
-    for step, batch in enumerate(dataloader):
+    for index, batch in enumerate(dataloader):
 
         inputs = batch.to(self.device)
 
@@ -104,7 +99,7 @@ def score_gradients(self, response):
         # Zero gradients
         self.opt.zero_grad()
 
-        bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
+        bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
     
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log({"loss": outputs.loss.detach().item()})

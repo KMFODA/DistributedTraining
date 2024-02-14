@@ -40,6 +40,15 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
+
+    if self.opt._should_load_state_from_peers():
+        bt.logging.info("_should_load_state_from_peers is True")
+        self.opt.load_state_from_peers()
+        self.opt.state_averager.load_state_from_peers()
+    
+    self.opt.load_state_from_peers()
+    self.opt.state_averager.load_state_from_peers()
+
     event = {}
     self.miner_uids = await get_random_uids(
         self, dendrite=self.dendrite, k=self.config.neuron.sample_size

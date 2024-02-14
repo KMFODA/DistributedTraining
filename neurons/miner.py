@@ -210,7 +210,7 @@ class Miner(BaseMinerNeuron):
         total_loss = 0
 
         # Train data for one epoch
-        for i, batch in enumerate(dataloader):
+        for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
 
             # Forward pass
@@ -236,26 +236,25 @@ class Miner(BaseMinerNeuron):
             # Zero gradients
             self.opt.zero_grad()
 
-            bt.logging.info(f"Step {i} Loss: {outputs.loss.detach().item()}")
+            bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
         
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
 
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
-        average_loss = total_loss / i
+        average_loss = total_loss / index
         synapse.loss = average_loss
         synapse.epoch = self.opt.tracker.local_progress.epoch
         synapse.dataset_indices = group
 
-        bt.logging.info(f"Final Loss: {outputs.loss.detach().item()}")
-        bt.logging.info(f"Average Loss: {average_loss}")
-        bt.logging.info(f"Total Steps: {i}")    
-
         event = {}
         event.update(self.get_miner_info())
+        bt.logging.info('Logged miner info')
         event.update(get_bandwidth())
-        event.update({'steps':step})
+        bt.logging.info('Logged bandwidth info')
+        event.update({'steps':index})
+        bt.logging.info('Logged bandwidth info')
         
         # bt.logging.debug(f"Events: {str(event)}")
         # bt.logging.info("EVENTS", "events", **event)
