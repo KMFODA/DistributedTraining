@@ -250,11 +250,11 @@ class Miner(BaseMinerNeuron):
 
         event = {}
         event.update(self.get_miner_info())
-        bt.logging.info('Logged miner info')
-        event.update(get_bandwidth())
-        bt.logging.info('Logged bandwidth info')
+        try:
+            event.update(get_bandwidth())
+        except:
+            bt.logging.info("Error getting bandwidth metrics")
         event.update({'steps':index})
-        bt.logging.info('Logged steps info')
         
         # bt.logging.debug(f"Events: {str(event)}")
         # bt.logging.info("EVENTS", "events", **event)

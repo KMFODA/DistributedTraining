@@ -43,11 +43,8 @@ async def forward(self):
 
     if self.opt._should_load_state_from_peers():
         bt.logging.info("_should_load_state_from_peers is True")
-        self.opt.load_state_from_peers()
+        # self.opt.load_state_from_peers()
         self.opt.state_averager.load_state_from_peers()
-    
-    self.opt.load_state_from_peers()
-    self.opt.state_averager.load_state_from_peers()
 
     event = {}
     self.miner_uids = await get_random_uids(
