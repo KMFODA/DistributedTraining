@@ -9,6 +9,12 @@
 
 ---
 
+# Overview
+
+#### Minimum Requirements
+
+[min.compute.yml](min.compute.yml)
+
 # Installation
 This repository requires python3.10 or higher. To install, simply clone this repository and install the requirements.
 
