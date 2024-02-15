@@ -9,10 +9,8 @@
 
 ---
 
-![Subnet25](assets/Subnet25.jpg)
-
 # Installation
-This repository requires python3.8 or higher. To install, simply clone this repository and install the requirements.
+This repository requires python3.10 or higher. To install, simply clone this repository and install the requirements.
 
 1. Install this repository
 ```bash
@@ -68,6 +66,19 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
 </div>
 
 ---
+
+## Known Errors
+Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
+
+**Asyncio Timeout Error**:
+![Subnet25](assets/error_asyncio_timeout.png)
+
+This happens when one of the various async processes timesout. If your logs continue after this error and you still receive validator calls your miner will still gain incentive.
+
+**Load State From Peer Error**:
+![Subnet25](assets/error_download_state_from_peers.png)
+
+This happens when your miner or validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on wandb is above the minimum requirements this won't impact your incentive.
 
 ## License
 This repository is licensed under the MIT License.
