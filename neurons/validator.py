@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging
+from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager
 from template.validator import forward
 from template.validator.validator_core import DatasetState
 from bitarray import bitarray
@@ -140,34 +140,65 @@ class Validator(BaseValidatorNeuron):
 
         # Init Optimizer
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
-        self.opt = hivemind.Optimizer(
-            dht=self.dht,  # use a DHT that is connected with other peers
-            run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
-            scheduler=None,
-            # batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
-            target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
-            optimizer=opt,  # wrap the SGD optimizer defined above
-            use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
-            load_state_timeout=240,
-            matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
-            averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-            verbose=False,  # print logs incessently
-            grad_compression=hivemind.Uniform8BitQuantization(),
-            state_averaging_compression=hivemind.Uniform8BitQuantization(),
-            # client=True,
-            # auxiliary=True,
+        self.opt = opt
+        # self.opt = hivemind.Optimizer(
+        #     dht=self.dht,  # use a DHT that is connected with other peers
+        #     run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
+        #     scheduler=None,
+        #     # batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
+        #     target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
+        #     optimizer=opt,  # wrap the SGD optimizer defined above
+        #     use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
+        #     load_state_timeout=240,
+        #     matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
+        #     averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
+        #     verbose=True,  # print logs incessently
+        #     grad_compression=hivemind.Uniform8BitQuantization(),
+        #     state_averaging_compression=hivemind.Uniform8BitQuantization(),
+        #     # client=True,
+        #     # auxiliary=True,
+        # )
+
+        self.grad_averager = DTGradientAverager(
+            self.model.parameters(),
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_grad_averager",
+            reuse_grad_buffers=True,
+            compression=hivemind.Uniform8BitQuantization(),
+            accumulate_grads_on=torch.device("cuda"),
+            start = True
         )
+
+        # self.grad_averager = DTGradientAverager(
+        #     self.model.parameters(), 
+        #     dht=self.dht, 
+        #     prefix=f"{self.config.neuron.run_id}_grad_averager",
+        #     start=True,
+        #     accumulate_grads_on=torch.device("cuda")
+        # )
+
+        self.tracker = hivemind.optim.progress_tracker.ProgressTracker(
+            dht=self.dht, 
+            prefix=f"{self.config.neuron.run_id}_progress", 
+            target_batch_size=self.config.neuron.global_batch_size_train,
+            start=True
+        )
+
+        self.step_scheduled = False 
 
         self.loop = asyncio.new_event_loop()
         # self._inner_pipe = self.state_averager._inner_pipe
         # self._outer_pipe = self.state_averager._outer_pipe
         self._inner_pipe, self._outer_pipe = mp.Pipe(duplex=True) 
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.opt.state_averager.prefix = self.opt.state_averager.matchmaking_kwargs["prefix"]
         self.peer_id = self.dht.peer_id
-        self.training_progress_key = f"{self.config.neuron.run_id}_progress"
-        self.get_stub = self.opt.state_averager.get_stub
-        self.serializer = self.opt.state_averager.serializer
+        # self.training_progress_key = f"{self.config.neuron.run_id}_progress"
+        # self.opt.state_averager.prefix = self.opt.state_averager.matchmaking_kwargs["prefix"]
+        # self.get_stub = self.opt.state_averager.get_stub
+        # self.serializer = self.opt.state_averager.serializer
+        self.training_progress_key = self.tracker.prefix
+        self.get_stub = self.grad_averager.get_stub
+        self.serializer = self.grad_averager.serializer
 
         # TEST
         self.loop.close()
@@ -195,7 +226,7 @@ class Validator(BaseValidatorNeuron):
         peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
 
         # Get only peers connected to the current run id
-        metadata, _ = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
+        metadata, _ = self.dht.get(self.training_progress_key, latest=True) or (None, -float("inf"))
         if metadata is None:
             return None
         peer_list_run = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
@@ -235,7 +266,7 @@ class Validator(BaseValidatorNeuron):
         metadata = None
         logger.info(f"Downloading parameters from peer {peer}")
         try:
-            stub = self.get_stub(self._p2p, peer, namespace=self.opt.state_averager.prefix)
+            stub = self.get_stub(self._p2p, peer, namespace=self.grad_averager.matchmaking_kwargs['prefix'])
             stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
             current_tensor_parts, tensors = [], []
 

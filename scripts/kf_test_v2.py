@@ -4,11 +4,12 @@ import time
 from mapreduce import Peer
 import bittensor as bt
 from argparse import ArgumentParser
-from DTraining.template.base.neuron import BaseNeuron
+from template.base.neuron import BaseNeuron
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from template.data.dataset import SubsetFalconLoader
 import random
 
+# python3 map-reduce-subnet/test/test.py --netuid 32 --validator.uid 0 --wallet.name default --wallet.hotkey default --subtensor.network test
 # tensor size for testing, set to 10 MB
 tensor_size = 68 * 1024 * 1024
 bandwidth = tensor_size * 4 # torch.float32 is 4 bytes
@@ -47,14 +48,8 @@ tokenizer = AutoTokenizer.from_pretrained(config.neuron.model_name)
 tokenizer.pad_token = tokenizer.eos_token
 
 dataloader = SubsetFalconLoader(
-    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.training_examples_per_miner)
+    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = 1)
 )
-
-
-# parser_2.add_argument("--netuid", type=int, help="Network netuid", default=32)
-# parser_2.add_argument("--validator.uid", type=int, help="Network netuid", default=0)
-
-# python3 test/test.py --netuid 32 --validator.uid 0 --wallet.name default --wallet.hotkey default --subtensor.network test
 
 parser_2 = ArgumentParser()
 parser_2.add_argument ('--port.range', default = '22043:22049', help = "Opened Port range" )
@@ -68,7 +63,25 @@ bt.wallet.add_args(parser_2)
 bt.axon.add_args(parser_2)
 config_2 = bt.config(parser_2)
 
+weights = torch.rand((tensor_size, 1), dtype=torch.float32)
+weights = [torch.tensor(layer) for layer in model.parameters()]
+# breakpoint()
 
+for i, batch in enumerate(dataloader):
+    inputs = batch.to(device)
+    # inputs = batch
+
+    # Forward pass
+    outputs = model(input_ids=inputs, labels=inputs)
+    
+    # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
+    loss = outputs.loss
+    loss.backward()
+    bt.logging.success(f"🟢 Step: {i}")
+    bt.logging.success(f"🟢 Loss: {loss}")
+
+
+# breakpoint()
 def train(rank, peer_count, bandwidth):
     bt.logging.info(f"🔷 Starting peer with rank {rank}")
     # Initialize Peer instance
@@ -77,18 +90,19 @@ def train(rank, peer_count, bandwidth):
     # Initialize process group with the fetched configuration
     peer.init_process_group()
 
-    weights = [layer for layer in model.parameters()]
+    # weights = None
 
-    if rank == 1: # if it is the first peer
-        weights = torch.rand((tensor_size, 1), dtype=torch.float32)
-        # First peer broadcasts the weights
-        peer.broadcast(weights)
-    else:
-        # Other peers receive the weights
-        weights = peer.broadcast(weights)
+    # if rank == 1: # if it is the first peer
+    #     weights = torch.rand((tensor_size, 1), dtype=torch.float32)
+    #     # weights = [torch.tensor(layer) for layer in model.parameters()]
+    #     # First peer broadcasts the weights
+    #     peer.broadcast(weights)
+    # else:
+    #     # Other peers receive the weights
+    #     weights = peer.broadcast(weights)
     
-    # Should destroy process group after broadcasting
-    peer.destroy_process_group()
+    # # Should destroy process group after broadcasting
+    # peer.destroy_process_group()
 
     # Number of epochs
     epoch = 2
@@ -101,22 +115,13 @@ def train(rank, peer_count, bandwidth):
         bt.logging.success(f"🟢 Epoch: {i}")
         
         # Replace this with actual training code
-        for i, batch in enumerate(dataloader):
-            inputs = batch.to(device)
-
-            # Forward pass
-            outputs = model(input_ids=inputs, labels=inputs)
-            
-            # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
-            loss = outputs.loss
-            loss.backward()
         
         # After calculating gradients
-        # gradients = torch.ones((tensor_size, 1), dtype=torch.float32)
-        gradients = [layer.grad for layer in model.parameters()]
+        gradients = torch.ones((tensor_size, 1), dtype=torch.float32)
+        gradients = [torch.tensor(layer.grad).to('cpu') for layer in model.parameters()]
         
         if rank == 1:
-            # gradients = torch.ones((tensor_size, 1), dtype=torch.float32) * 3
+        #     # gradients = torch.ones((tensor_size, 1), dtype=torch.float32) * 3
             gradients = gradients * 3
 
         # Initialize process group

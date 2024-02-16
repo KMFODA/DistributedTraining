@@ -44,7 +44,7 @@ from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager
 from template.data.dataset import SubsetFalconLoader
 
 import random
@@ -124,20 +124,41 @@ class Miner(BaseMinerNeuron):
 
         # Set up a decentralized optimizer that will average with peers in background
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
-        self.opt = hivemind.Optimizer(
-            dht=self.dht,  # use a DHT that is connected with other peers
-            run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
-            scheduler=None,
-            batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
-            target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
-            optimizer=opt,  # wrap the SGD optimizer defined above
-            use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
-            matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
-            averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-            verbose=False,  # print logs incessently
-            grad_compression=hivemind.Uniform8BitQuantization(),
-            state_averaging_compression=hivemind.Uniform8BitQuantization(),
+        self.opt = opt
+        # self.opt = hivemind.Optimizer(
+        #     dht=self.dht,  # use a DHT that is connected with other peers
+        #     run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
+        #     scheduler=None,
+        #     batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
+        #     target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
+        #     optimizer=opt,  # wrap the SGD optimizer defined above
+        #     use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
+        #     matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
+        #     averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
+        #     verbose=True,  # print logs incessently
+        #     grad_compression=hivemind.Uniform8BitQuantization(),
+        #     state_averaging_compression=hivemind.Uniform8BitQuantization(),
+        # )
+
+        self.grad_averager = DTGradientAverager(
+            self.model.parameters(),
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_grad_averager",
+            # reuse_grad_buffers=True,
+            compression=hivemind.Uniform8BitQuantization(),
+            accumulate_grads_on=torch.device("cuda"),
+            start = True
         )
+
+        self.tracker = hivemind.optim.progress_tracker.ProgressTracker(
+            dht=self.dht, 
+            prefix=f"{self.config.neuron.run_id}_progress", 
+            target_batch_size=self.config.neuron.global_batch_size_train,
+            start=True
+        )
+        self.step_scheduled = False
+        self.local_epoch, self.local_samples = 0, 0
+
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
         # Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -178,9 +199,27 @@ class Miner(BaseMinerNeuron):
     async def all_reduce(
         self, synapse: template.protocol.AllReduce
     ) -> template.protocol.IsAlive:
+        
         bt.logging.info("Received All Reduce Call")
         # Sleep for 2 minutes and allow all-reduce to run in the background
-        asyncio.sleep(120)
+        # asyncio.sleep(120)
+
+        bt.logging.info("Scheduling Gradient Averaging Call")
+        next_step_control = self.grad_averager.schedule_step()
+        self.step_scheduled = True  # Set the flag to True
+
+        # # aggregate gradients and perform optimizer step when target batch size is reached
+        with self.tracker.pause_updates():
+            bt.logging.info("Gradient Averaging")
+            self.grad_averager.step(control=next_step_control)
+            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info("Performing Optimizer Step")
+                self.opt.step()  # update model parameters using averaged gradients
+            self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+            local_epoch = self.tracker.update_epoch(local_epoch + 1)
+            self.local_samples = 0  
+            self.step_scheduled = False 
+
         synapse.completion = "True"
         return synapse
 
@@ -226,26 +265,34 @@ class Miner(BaseMinerNeuron):
             loss.backward()
 
             # Log training to hivemind
-            self.opt.step()
+            # self.opt.step()
 
             # Store gradients
             gradients = []
             for layer in self.model.parameters():
                 gradients.append(layer.grad)
 
+            self.grad_averager.accumulate_grads_(batch_size=index)
+            self.local_samples += 1
+            
+            self.tracker.report_local_progress(self.local_epoch, self.local_samples)
+            bt.logging.info("local samples:", self.local_samples, "global_samples:", self.tracker.global_progress.samples_accumulated)
+            bt.logging.info("local epoch:", self.local_epoch, "global epoch", self.tracker.global_progress.epoch)
+            bt.logging.info("Number of Peers:", self.tracker.global_progress.num_peers)
+
             # Zero gradients
-            self.opt.zero_grad()
+            # self.opt.zero_grad()
 
             bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
         
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
+            # if not self.config.neuron.dont_wandb_log:
+            #     self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
 
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
         average_loss = total_loss / index
         synapse.loss = average_loss
-        synapse.epoch = self.opt.tracker.local_progress.epoch
+        # synapse.epoch = self.opt.tracker.local_progress.epoch
         synapse.dataset_indices = group
 
         event = {}

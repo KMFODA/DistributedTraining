@@ -41,10 +41,12 @@ async def forward(self):
 
     """
 
-    if self.opt._should_load_state_from_peers():
-        bt.logging.info("_should_load_state_from_peers is True")
-        # self.opt.load_state_from_peers()
-        self.opt.state_averager.load_state_from_peers()
+    # if self.opt._should_load_state_from_peers():
+    #     bt.logging.info("Local state is behind global state")
+    #     self.opt.load_state_from_peers()
+        # self.opt.state_averager.load_state_from_peers()
+    
+    # self.opt.state_averager.load_state_from_peers()
 
     event = {}
     self.miner_uids = await get_random_uids(
@@ -52,17 +54,59 @@ async def forward(self):
     )
     event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
+    breakpoint()
 
+    # self.opt.use_gradient_averaging
+    # self.opt._update_global_epoch
+    # self.opt.grad_scaler
+    # self.opt.scheduled_grads
+    # self.opt.grad_averager.step(control=self.opt.scheduled_grads, reset_accumulators=True, wait=False)
     # if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
-    if False:
+    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled):
+        next_step_control = self.grad_averager.schedule_step()
+        self.step_scheduled = True  
         all_reduce = True
+        bt.logging.info("Scheduling all-reduce synapse call")
     else:
         all_reduce = False
 
     query_tasks = []
     if all_reduce:
-        self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
-        asyncio.sleep(self.opt.averaging_timeout)
+        # import hivemind
+        # next_step_time = hivemind.get_dht_time() + 60   # runs global steps every 60 seconds
+        # next_step_control = None
+
+        # timeout = 60
+        # control = self.grad_averager.schedule_step(timeout=timeout)
+        # self.grad_averager.load_accumulators_into_averager_()
+        # self.grad_averager._accumulators_used_in_step = True
+        # self.grad_averager._new_averaged_grads = True
+        # weight = None
+        # control.weight = self.grad_averager.local_samples_accumulated if weight is None else weight
+        # reset_accumulators = True
+        # if reset_accumulators:
+        #     self.grad_averager.reset_accumulated_grads_()
+        # control.allow_allreduce()
+        # control.result(timeout)
+        # next_step_control = self.grad_averager.schedule_step(scheduled_time=next_step_time)
+        # self.grad_averager.step(control=next_step_control, timeout = timeout)
+
+        # self.opt.grad_averager.next_chunk_timeout = 15
+        # self.opt.grad_averager.is_looking_for_group
+        # self.opt.scheduled_grad = self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
+        # self.opt.grad_scaler = None
+        # self.opt._update_global_epoch(self.opt.grad_scaler)
+
+        with self.tracker.pause_updates():
+            bt.logging.info("Gradient Averaging")
+            self.grad_averager.step(control=next_step_control, wait=False)
+        #     with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+        #         bt.logging.info("Performing Optimizer Step")
+        #         self.opt.step()  # update model parameters using averaged grad
+        #     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+        #     # local_epoch = self.tracker.update_epoch(local_epoch + 1)
+        #     self.step_scheduled = False 
+
         queries = [template.protocol.AllReduce() for uid in self.miner_uids]
     else:
         queries = [
@@ -82,6 +126,12 @@ async def forward(self):
     if all_reduce and responses != []:
         responses = []
         # Log the results for monitoring purposes.
+        with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+            bt.logging.info("Performing Optimizer Step")
+            self.opt.step()  # update model parameters using averaged grad
+        self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+        # local_epoch = self.tracker.update_epoch(local_epoch + 1)
+        self.step_scheduled = False 
     else:
         bt.logging.info(
             "Received responses: " + str([

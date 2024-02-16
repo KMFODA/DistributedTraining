@@ -102,7 +102,7 @@ def score_gradients(self, response):
             gradients.append(layer.grad)
 
         # Zero gradients
-        self.opt.zero_grad()
+        # self.opt.zero_grad()
 
         bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
     
@@ -191,11 +191,11 @@ async def get_rewards(
         scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
-        if ((self.step % 10)==0):
+        # if ((self.step % 10)==0):
 
-            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-            peer_ids, scores = await score_blacklist(self, uids, scores)
-            bt.logging.info(f"DHT Blacklist Scores: {scores}")
+        #     # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
+        #     peer_ids, scores = await score_blacklist(self, uids, scores)
+        #     bt.logging.info(f"DHT Blacklist Scores: {scores}")
 
         # Adjust Global Score with Local Score
         test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
