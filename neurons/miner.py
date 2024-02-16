@@ -123,22 +123,7 @@ class Miner(BaseMinerNeuron):
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
-        self.opt = opt
-        # self.opt = hivemind.Optimizer(
-        #     dht=self.dht,  # use a DHT that is connected with other peers
-        #     run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
-        #     scheduler=None,
-        #     batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
-        #     target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
-        #     optimizer=opt,  # wrap the SGD optimizer defined above
-        #     use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
-        #     matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
-        #     averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-        #     verbose=True,  # print logs incessently
-        #     grad_compression=hivemind.Uniform8BitQuantization(),
-        #     state_averaging_compression=hivemind.Uniform8BitQuantization(),
-        # )
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
@@ -278,8 +263,8 @@ class Miner(BaseMinerNeuron):
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
             if index % 10 == 0:
-                bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
-                bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+                bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
+                bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
             # Zero gradients
             # self.opt.zero_grad()
