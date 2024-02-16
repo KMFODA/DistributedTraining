@@ -210,7 +210,7 @@ class Miner(BaseMinerNeuron):
 
         # # aggregate gradients and perform optimizer step when target batch size is reached
         with self.tracker.pause_updates():
-            bt.logging.info("Gradient Averaging")
+            bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(control=next_step_control)
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Performing Optimizer Step")
@@ -279,7 +279,7 @@ class Miner(BaseMinerNeuron):
 
             if index % 10 == 0:
                 bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
-                bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers:       {self.tracker.global_progress.num_peers}")
+                bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
             # Zero gradients
             # self.opt.zero_grad()

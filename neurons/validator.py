@@ -236,7 +236,7 @@ class Validator(BaseValidatorNeuron):
             return None
         else:
             peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-
+        breakpoint()
         # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
         if str(peer_id) not in peer_list_run:
             return None
