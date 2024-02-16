@@ -22,7 +22,7 @@ from typing import List
 import bittensor as bt
 import torch
 from template.data.dataset import SubsetFalconLoader
-from template.utils.misc import get_bandwidth
+from template.utils.misc import get_bandwidth, grads_from_parameters
 from hivemind.utils.timed_storage import get_dht_time
 import time
 import asyncio
@@ -97,9 +97,9 @@ def score_gradients(self, response):
         # Backward Pass
         loss.backward()
 
-        gradients = []
-        for layer in self.model.parameters():
-            gradients.append(layer.grad)
+        gradients = tuple(
+            grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
+        )
 
         # Zero gradients
         # self.opt.zero_grad()
@@ -168,12 +168,13 @@ async def get_rewards(
 
     Args:
     - uids (List[int]): A list of uids that were queried.
+    - responses (List): A list of all the responses from the queried uids.
+    - all_reduce (bool): A boolean representing wether the all_reduce synapse was called.
     - responses (List[float]): A list of responses from the miners.
 
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    # TODO Test this
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
         
         scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
@@ -191,17 +192,16 @@ async def get_rewards(
         scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
-        # if ((self.step % 10)==0):
+        if ((self.step % 10)==0):
 
-        #     # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-        #     peer_ids, scores = await score_blacklist(self, uids, scores)
-        #     bt.logging.info(f"DHT Blacklist Scores: {scores}")
+            # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
+            peer_ids, scores = await score_blacklist(self, uids, scores)
+            bt.logging.info(f"DHT Blacklist Scores: {scores}")
 
-        # Adjust Global Score with Local Score
+        # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
         test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
         
         test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
-        # test_uids_sample_index = random.sample(test_uids_index, k = 1)
         
         scores = torch.FloatTensor([scores[uid_index] * score_gradients(self, responses[0][uid_index]) 
                                     if uid_index in test_uids_sample_index else scores[uid_index] 

@@ -54,7 +54,7 @@ async def forward(self):
     )
     event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
-    breakpoint()
+    # breakpoint()  
 
     # self.opt.use_gradient_averaging
     # self.opt._update_global_epoch

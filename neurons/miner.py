@@ -44,7 +44,7 @@ from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, grads_from_parameters
 from template.data.dataset import SubsetFalconLoader
 
 import random
@@ -268,31 +268,33 @@ class Miner(BaseMinerNeuron):
             # self.opt.step()
 
             # Store gradients
-            gradients = []
-            for layer in self.model.parameters():
-                gradients.append(layer.grad)
+            gradients = tuple(
+                grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
+            )
 
-            self.grad_averager.accumulate_grads_(batch_size=index)
+            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
             self.local_samples += 1
             
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
-            bt.logging.info("local samples:", self.local_samples, "global_samples:", self.tracker.global_progress.samples_accumulated)
-            bt.logging.info("local epoch:", self.local_epoch, "global epoch", self.tracker.global_progress.epoch)
-            bt.logging.info("Number of Peers:", self.tracker.global_progress.num_peers)
+
+            if index % 10 == 0:
+                bt.logging.info(f"Local samples: {self.local_samples}   Global_samples: {self.tracker.global_progress.samples_accumulated}   Local epoch: {self.local_epoch}   Global epoch: {self.tracker.global_progress.epoch}")
+                bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f}      Number of Peers:       {self.tracker.global_progress.num_peers}")
 
             # Zero gradients
             # self.opt.zero_grad()
-
-            bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
         
-            # if not self.config.neuron.dont_wandb_log:
-            #     self.wandb.log({"loss": outputs.loss.detach().item(), "opt_local_epoch": self.opt.local_epoch})
+            if not self.config.neuron.dont_wandb_log:
+                self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
+        
+        if index % 10 != 0:
+            bt.logging.info(f"Local samples: {self.local_samples}   Global samples: {self.tracker.global_progress.samples_accumulated}   Local epoch: {self.local_epoch}   Global epoch: {self.tracker.global_progress.epoch}")
+            bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f}      Number of peers: {self.tracker.global_progress.num_peers}")
 
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
         average_loss = total_loss / index
         synapse.loss = average_loss
-        # synapse.epoch = self.opt.tracker.local_progress.epoch
         synapse.dataset_indices = group
 
         event = {}

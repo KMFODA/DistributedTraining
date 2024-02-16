@@ -29,11 +29,13 @@ import asyncio
 import wandb
 import logging
 from loguru import logger as bt_logger
+from typing import Iterator
 from hivemind.utils.logging import use_hivemind_log_handler
 import speedtest
 import hivemind
 from contextlib import contextmanager
 import torch
+
 
 
 # LRU Cache with TTL
@@ -240,3 +242,10 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
             finally:
                 for param, old_grad in zip(self.parameters, old_grads):
                     param.grad = old_grad
+
+def grads_from_parameters(self) -> Iterator[torch.Tensor]:
+    """gradient buffers associated with parameters"""
+    for param in self.model.parameters():
+        if param.grad is None:
+            param.grad = torch.zeros_like(param)
+        yield param.grad
