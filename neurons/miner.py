@@ -216,7 +216,7 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged gradients
             self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-            local_epoch = self.tracker.update_epoch(local_epoch + 1)
+            self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
             self.local_samples = 0  
             self.step_scheduled = False 
 
@@ -278,8 +278,8 @@ class Miner(BaseMinerNeuron):
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
             if index % 10 == 0:
-                bt.logging.info(f"Local samples: {self.local_samples}   Global_samples: {self.tracker.global_progress.samples_accumulated}   Local epoch: {self.local_epoch}   Global epoch: {self.tracker.global_progress.epoch}")
-                bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f}      Number of Peers:       {self.tracker.global_progress.num_peers}")
+                bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
+                bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers:       {self.tracker.global_progress.num_peers}")
 
             # Zero gradients
             # self.opt.zero_grad()
@@ -288,8 +288,8 @@ class Miner(BaseMinerNeuron):
                 self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
         
         if index % 10 != 0:
-            bt.logging.info(f"Local samples: {self.local_samples}   Global samples: {self.tracker.global_progress.samples_accumulated}   Local epoch: {self.local_epoch}   Global epoch: {self.tracker.global_progress.epoch}")
-            bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f}      Number of peers: {self.tracker.global_progress.num_peers}")
+            bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
+            bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers:       {self.tracker.global_progress.num_peers}")
 
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 

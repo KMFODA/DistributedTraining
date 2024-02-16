@@ -49,12 +49,7 @@ async def forward(self):
     # self.opt.state_averager.load_state_from_peers()
 
     event = {}
-    self.miner_uids = await get_random_uids(
-        self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-    )
-    event.update({"uids":self.miner_uids})
-    bt.logging.info(f"UIDs:  {self.miner_uids}")
-    # breakpoint()  
+    breakpoint()  
 
     # self.opt.use_gradient_averaging
     # self.opt._update_global_epoch
@@ -62,14 +57,26 @@ async def forward(self):
     # self.opt.scheduled_grads
     # self.opt.grad_averager.step(control=self.opt.scheduled_grads, reset_accumulators=True, wait=False)
     # if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
-    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled):
+    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+        bt.logging.info("Scheduling all-reduce synapse call")
+        # Get as many active miners as possible
+        self.miner_uids = await get_random_uids(
+            self, dendrite=self.dendrite, k=len(self.metagraph.n)
+        )
+        event.update({"uids":self.miner_uids})
+        bt.logging.info(f"UIDs:  {self.miner_uids}")
         next_step_control = self.grad_averager.schedule_step()
         self.step_scheduled = True  
         all_reduce = True
-        bt.logging.info("Scheduling all-reduce synapse call")
     else:
+        self.miner_uids = await get_random_uids(
+            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
+        )
+        event.update({"uids":self.miner_uids})
         all_reduce = False
-
+    all_reduce = True
+    next_step_control = self.grad_averager.schedule_step()
+    self.step_scheduled = True  
     query_tasks = []
     if all_reduce:
         # import hivemind

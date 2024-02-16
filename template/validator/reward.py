@@ -124,6 +124,7 @@ async def score_blacklist(self, uids, scores):
     peer_ids = []
 
     for i, uid in enumerate(uids):
+
         peer_id = await self.map_uid_to_peerid(uid)
         if peer_id == None:
             scores[i] = 0.0
@@ -183,11 +184,9 @@ async def get_rewards(
             # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
             peer_ids, scores = await score_blacklist(self, uids, scores)
             bt.logging.info(f"DHT Blacklist Scores: {scores}")
-            
             # Score miners bandwidth
             scores = await score_bandwidth(self, peer_ids, scores)
             bt.logging.info(f"Bandwidth Scores: {scores}")
-
     else:
         scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
