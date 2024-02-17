@@ -20,7 +20,6 @@ import bittensor as bt
 
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
-from hivemind.utils.timed_storage import get_dht_time
 
 import template
 import asyncio

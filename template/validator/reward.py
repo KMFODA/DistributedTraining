@@ -22,9 +22,7 @@ from typing import List
 import bittensor as bt
 import torch
 from template.data.dataset import SubsetFalconLoader
-from template.utils.misc import get_bandwidth, grads_from_parameters
 from template.utils.uids import get_random_uids
-from hivemind.utils.timed_storage import get_dht_time
 import time
 import asyncio
 
@@ -175,7 +173,7 @@ async def get_rewards(
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
+    scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
     # Check if peer is connected to DHT & run_id and blacklist them if they are not
     peer_ids, scores = await score_blacklist(self, uids, scores)
     bt.logging.info(f"DHT Blacklist Scores: {scores}")
@@ -189,7 +187,7 @@ async def get_rewards(
             # Now that we've called all_reduce on all available UIDs only score a sample of them to spread scoring burden across all validators
             uids = await get_random_uids(self, dendrite=self.dendrite, k=self.config.neuron.sample_size)
             # Set up the scores tensor
-            scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
+            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             peer_ids, scores = await score_blacklist(self, uids, scores)
             bt.logging.info(f"DHT Blacklist Scores: {scores}")
@@ -198,7 +196,7 @@ async def get_rewards(
             bt.logging.info(f"Bandwidth Scores: {scores}")
         else:
             # Set up the scores tensor
-            scores = torch.FloatTensor([0 for uid in uids]).to(self.device)
+            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
     else:
         scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
@@ -210,7 +208,7 @@ async def get_rewards(
             bt.logging.info(f"DHT Blacklist Scores: {scores}")
 
         # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
-        test_uids_index = [uid_index for uid_index, uid in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
+        test_uids_index = [uid_index for uid_index, _ in enumerate(uids) if responses[0][uid_index].dendrite.status_code == 200]
         
         test_uids_sample_index = random.sample(test_uids_index, k = min(4, len(test_uids_index)))
         
