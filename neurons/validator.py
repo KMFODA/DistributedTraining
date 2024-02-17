@@ -20,19 +20,14 @@
 import asyncio
 import re
 import time
-from functools import partial
 from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
 import requests
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import wandb
-from datasets import load_dataset
-from hivemind.optim.state_averager import TrainingStateAverager
-from hivemind.optim.progress_tracker import ProgressTracker
-from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from template.base.validator import BaseValidatorNeuron
 from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager
@@ -40,26 +35,17 @@ from template.validator import forward
 from template.validator.validator_core import DatasetState
 from bitarray import bitarray
 
-
 import asyncio
-import multiprocessing as mp
-from typing import Any, Dict, Optional, Sequence, Tuple
-from hivemind.utils import MPFuture, get_logger
+from typing import Optional
+from hivemind.utils import get_logger
 from hivemind.proto import averaging_pb2
-from hivemind.utils.asyncio import (
-    achain,
-    aiter_with_timeout,
-    anext,
-    as_aiter,
-    azip,
-    enter_asynchronously,
-    switch_to_uvloop,
-)
-from hivemind.p2p import P2P, P2PContext, P2PDaemonError, P2PHandlerError, PeerID, ServicerBase
-import random
-from hivemind.compression import CompressionBase, CompressionInfo, NoCompression, deserialize_torch_tensor
-from hivemind.utils.streaming import combine_from_streaming, split_for_streaming
-from hivemind.utils.timed_storage import DHTExpiration, ValueWithExpiration, get_dht_time
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.optim.progress_tracker import ProgressTracker
+
+from hivemind.p2p import PeerID
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.utils.streaming import combine_from_streaming
+from hivemind.utils.timed_storage import ValueWithExpiration
 logger = get_logger(__name__)
 
 class Validator(BaseValidatorNeuron):
@@ -83,7 +69,6 @@ class Validator(BaseValidatorNeuron):
         # # Init Dataset
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
-        # self.dataset_dict = dict()  # Init a dict to use as placeholder DHT
 
         self.dataset_common_state = DatasetState(
             self.dht, self.dataset_indices, self.config.neuron.run_id
@@ -122,19 +107,6 @@ class Validator(BaseValidatorNeuron):
         # For simplicity only pick layers with a dim of 1
         self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
 
-        # # Init State Averager
-        # self.state_averager = TrainingStateAverager(
-        #     dht=self.dht,
-        #     optimizer=partial(torch.optim.AdamW, lr=self.config.neuron.lr),
-        #     scheduler=None,
-        #     params=self.model.parameters(),
-        #     allow_state_sharing=False,
-        #     start=True,
-        #     prefix=f"{self.config.neuron.run_id}_state_averager",
-        #     state_compression=hivemind.Uniform8BitQuantization(),
-        #     # **asdict(averager_args),
-        # )
-
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
@@ -151,7 +123,7 @@ class Validator(BaseValidatorNeuron):
             start = True
         )
 
-        self.tracker = hivemind.optim.progress_tracker.ProgressTracker(
+        self.tracker = ProgressTracker(
             dht=self.dht, 
             prefix=f"{self.config.neuron.run_id}_progress", 
             target_batch_size=self.config.neuron.global_batch_size_train,
