@@ -141,7 +141,7 @@ async def score_bandwidth(self, peer_ids, scores):
         
         try:
             start_time = time.perf_counter()
-            # breakpoint()
+
             metadata, tensors = await asyncio.wait_for(self.load_state_from_miner(peer), timeout=60)
             end_time = time.perf_counter()
 

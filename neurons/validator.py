@@ -32,7 +32,6 @@ import wandb
 from template.base.validator import BaseValidatorNeuron
 from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager
 from template.validator import forward
-from template.validator.validator_core import DatasetState
 from bitarray import bitarray
 
 import asyncio
@@ -70,40 +69,13 @@ class Validator(BaseValidatorNeuron):
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
 
-        self.dataset_common_state = DatasetState(
-            self.dht, self.dataset_indices, self.config.neuron.run_id
-        )
-        
-        # self.dataset_indices_list_test = self.dataset_common_state.get_dht("dataset_indices_train")
-        # if self.dataset_indices_list_test is None:
-        #     self.dataset_indices_list_test = self.dataset_common_state.get_dht("dataset_indices_test")
-        self.dataset_indices_list_test = (
-            self.dataset_common_state.get_dataset_indices_test(
-                self.config.neuron.local_batch_size_test * self.config.neuron.local_gradient_accumilation_steps_test
-            )
-        )
-
-        self.global_step = self.dataset_common_state.get_dht("step")
-        if self.global_step is None:
-            self.global_step = 0
-            # self.dataset_common_state.set_dht("step")
-
-        # Init Loss
-        self.previous_loss = self.dataset_common_state.get_dht("loss")
-        self.latest_upload = 0
-        self.latest_weight_update = 0
-        self.step = 0
-        self.global_step = self.dataset_common_state.get_dht("step")
-
-        # Init device
+        # Init Device, Model & Tokenizer
         self.device = self.config.neuron.device
-
-        # Init Model
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name
-        ).to(self.device)
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model.to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
         self.tokenizer.pad_token = self.tokenizer.eos_token
+        
         # For simplicity only pick layers with a dim of 1
         self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
 
@@ -117,7 +89,6 @@ class Validator(BaseValidatorNeuron):
             self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
-            # reuse_grad_buffers=True,
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start = True
@@ -130,23 +101,14 @@ class Validator(BaseValidatorNeuron):
             start=True
         )
 
-        self.step_scheduled = False 
+        self.step_scheduled = False
 
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
+        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
         self.peer_id = self.dht.peer_id
-        # self.training_progress_key = f"{self.config.neuron.run_id}_progress"
-        # self.opt.state_averager.prefix = self.opt.state_averager.matchmaking_kwargs["prefix"]
-        # self.get_stub = self.opt.state_averager.get_stub
-        # self.serializer = self.opt.state_averager.serializer
-        self.training_progress_key = self.tracker.prefix
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
-
-        # TEST
-        self.loop.close()
-        self.loop = asyncio.new_event_loop()
-        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
@@ -169,13 +131,11 @@ class Validator(BaseValidatorNeuron):
         peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
 
         # Get only peers connected to the current run id
-        # metadata, _ = self.dht.get(self.training_progress_key, latest=True) or (None, -float("inf"))
         prefix = self.grad_averager.matchmaking_kwargs['prefix']
         metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
 
         if metadata is None:
             return None
-        # peer_list_run = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
         peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
 
         # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
@@ -223,16 +183,6 @@ class Validator(BaseValidatorNeuron):
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
             return None, None
-
-    # Define encoding function
-    def encode(self, examples):
-        return self.tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=512,
-            padding="max_length",
-            return_tensors="pt",
-        )
 
     def init_dht(self):
         # Init DHT

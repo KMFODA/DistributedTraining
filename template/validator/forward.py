@@ -42,8 +42,8 @@ async def forward(self):
     """
 
     event = {}
-    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-        # breakpoint()
+    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
+
         bt.logging.info("Scheduling all-reduce synapse call")
         sample_size=int(self.metagraph.n)
         next_step_control = self.grad_averager.schedule_step()
@@ -52,7 +52,7 @@ async def forward(self):
     else:
 
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            bt.logging.info("Local Epoch Behing Global Epoch Loading State From Peers")
+            bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
             self.grad_averager.load_state_from_peers()
             self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
 
@@ -72,12 +72,11 @@ async def forward(self):
             bt.logging.info("Gradient Averaging")
             self.grad_averager.step(control=next_step_control, wait=False)
 
-        queries = [template.protocol.AllReduce() for uid in self.miner_uids]
+        queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:
-        queries = [
-            template.protocol.Train( 
+        queries = [template.protocol.Train( 
                     gradient_test_index = random.choice(self.test_layer_indices),
-            ) for uid in self.miner_uids
+            ) for _ in self.miner_uids
         ]
 
     # The dendrite client queries the network.
@@ -121,13 +120,6 @@ async def forward(self):
     
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)
-
-    # Update global step
-    step_update_status = self.dataset_common_state.update_step()
-    if step_update_status is None:
-        self.global_step += 1
-
-    self.step += 1
 
     event = {}
     event.update(self.get_validator_info())

@@ -19,7 +19,7 @@
 import re
 import time
 import typing
-from functools import partial
+import random
 from ipaddress import ip_address
 
 import bittensor as bt
@@ -27,15 +27,12 @@ import hivemind
 import requests
 import torch
 import wandb
-from datasets import load_dataset
+
 from hivemind import utils
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+from hivemind.optim.progress_tracker import ProgressTracker
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    default_data_collator,
-    get_linear_schedule_with_warmup,
 )
 
 # Bittensor Miner Template:
@@ -46,9 +43,6 @@ from bitarray import bitarray
 from template.base.miner import BaseMinerNeuron
 from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, grads_from_parameters
 from template.data.dataset import SubsetFalconLoader
-
-import random
-import asyncio
 
 
 class Miner(BaseMinerNeuron):
@@ -129,13 +123,12 @@ class Miner(BaseMinerNeuron):
             self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
-            # reuse_grad_buffers=True,
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start = True
         )
 
-        self.tracker = hivemind.optim.progress_tracker.ProgressTracker(
+        self.tracker = ProgressTracker(
             dht=self.dht, 
             prefix=f"{self.config.neuron.run_id}_progress", 
             target_batch_size=self.config.neuron.global_batch_size_train,
@@ -186,24 +179,17 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         
         bt.logging.info("Received All Reduce Call")
-        # Sleep for 2 minutes and allow all-reduce to run in the background
-        # asyncio.sleep(120)
 
-        bt.logging.info("Scheduling Gradient Averaging Call")
-        next_step_control = self.grad_averager.schedule_step()
-        self.step_scheduled = True  # Set the flag to True
-
-        # # aggregate gradients and perform optimizer step when target batch size is reached
+        # Aggregate gradients and perform optimizer step when target batch size is reached
         with self.tracker.pause_updates():
             bt.logging.info("Performing Gradient Averaging")
-            self.grad_averager.step(control=next_step_control)
+            self.grad_averager.step()
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged gradients
             self.grad_averager.reset_accumulated_grads_()  # prepare for next step
             self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
             self.local_samples = 0  
-            self.step_scheduled = False 
 
         synapse.completion = "True"
         return synapse
@@ -236,6 +222,9 @@ class Miner(BaseMinerNeuron):
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
+            
+            # Zero gradients
+            self.opt.zero_grad()
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=inputs)
@@ -249,25 +238,22 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # Log training to hivemind
-            # self.opt.step()
-
             # Store gradients
             gradients = tuple(
                 grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
             )
 
+            # Accumulate gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
             self.local_samples += 1
             
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
+            # Log accumulation status
             if index % 10 == 0:
                 bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
                 bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
-            # Zero gradients
-            # self.opt.zero_grad()
         
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})

@@ -17,8 +17,6 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-import math
-import hashlib as rpccheckhealth
 from math import floor
 from typing import Callable, Any
 from functools import lru_cache, update_wrapper
@@ -187,7 +185,7 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
-def setup_logging():
+def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
@@ -197,7 +195,7 @@ def setup_logging():
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG) # Set this to DEBUG to check hivemind debug messages
+    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
     bt_handler = BittensorLogHandler()
     formatter = logging.Formatter('%(message)s')
@@ -224,7 +222,7 @@ def get_bandwidth():
 class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
     '''
     Needs this wrapper class to ensure device is set properly when averaging gradients
-    see: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
+    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
     '''
     @contextmanager
     @torch.no_grad()
