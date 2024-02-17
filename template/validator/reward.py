@@ -24,57 +24,7 @@ import torch
 from template.data.dataset import SubsetFalconLoader
 from template.utils.uids import get_random_uids
 import time
-import asyncio
-
-
-def get_loss(self, dataset_indices, batch_size, gradient_accumilation_steps):
-
-    # Create Dataloader
-    dataloader = SubsetFalconLoader(
-        batch_size=batch_size, sequence_length=1024, rows=dataset_indices
-    )
-
-    total_loss = 0
-    n_acc_steps = 0
-    accumulation_steps = gradient_accumilation_steps
-
-    # Train data for one epoch
-    for step, batch in enumerate(dataloader):
-
-        inputs = batch.to(self.device)
-
-        # Forward pass
-        outputs = self.model(input_ids=inputs, labels=inputs)
-        
-        loss = outputs.loss
-
-        # Backward Pass
-        loss.backward()
-
-        bt.logging.info(f"Step {step} Loss: {outputs.loss.detach().item()}")
-
-    average_loss = total_loss / step
-
-    bt.logging.info(f"Final Loss:           {outputs.loss.detach().item()}")
-    bt.logging.info(f"Average Loss:         {average_loss}")
-
-    return average_loss
-
-def get_local_score(self, synapse):
-
-    if False: # Dummy fix need to switch to if self.tracker.global_progress.epoch != self.current_epoch:
-        score = 1
-    else:
-        loss = get_loss(self, synapse.dataset_indices, synapse.batch_size, synapse.gradient_accumilation_steps)
-        bt.logging.info(f"Calculated Loss:  {loss}")
-        bt.logging.info(f"Synapse Loss:     {synapse.loss}")
-        # The miner's local score is the variance between the loss it returns and the 
-        # loss the validator calculates for the last batch of data sent to that miner
-        score = 1-(abs(loss-synapse.loss)/loss)
-        bt.logging.info(f"Local Score:      {score}")
-
-    return score
-    
+import asyncio 
 
 def score_gradients(self, response, uid):
     
