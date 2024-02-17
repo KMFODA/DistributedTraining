@@ -98,21 +98,18 @@ def score_gradients(self, response, uid):
         # Backward Pass
         loss.backward()
 
-        gradients = tuple(
-            grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
-        )
-
-        # Zero gradients
-        # self.opt.zero_grad()
 
         # bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
     
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log({"loss": outputs.loss.detach().item()})
 
+    # 
+    gradients = tuple(
+            param.grad.detach().cpu().clone() for param in self.model.parameters())
     gradients = float(sum(gradients[response.gradient_test_index]))
         
-    bt.logging.info(f"Local Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
+    bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
     bt.logging.info(f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}")
 
     score = 1-(abs(gradients-response.gradients))

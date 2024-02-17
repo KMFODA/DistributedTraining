@@ -90,7 +90,7 @@ class Validator(BaseValidatorNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device("cuda"),
+            reuse_grad_buffers=True,
             start = True
         )
 

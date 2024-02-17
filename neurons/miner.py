@@ -124,7 +124,7 @@ class Miner(BaseMinerNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device("cuda"),
+            reuse_grad_buffers=True,
             start = True
         )
 
@@ -148,7 +148,6 @@ class Miner(BaseMinerNeuron):
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            # self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
             self.wandb = load_wandb(self.config, self.wallet, "miner", str(1))
 
     # Define encoding function
@@ -222,9 +221,6 @@ class Miner(BaseMinerNeuron):
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
-            
-            # Zero gradients
-            self.opt.zero_grad()
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=inputs)
@@ -238,13 +234,6 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # Store gradients
-            gradients = tuple(
-                grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
-            )
-
-            # Accumulate gradients
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
             self.local_samples += 1
             
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
@@ -262,6 +251,9 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
             bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers:       {self.tracker.global_progress.num_peers}")
 
+        # Store summed random gradients in the synapse
+        gradients = tuple(
+            param.grad.detach().cpu().clone() for param in self.model.parameters())
         synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
 
         average_loss = total_loss / index
