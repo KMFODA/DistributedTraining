@@ -106,9 +106,6 @@ for i in range(0, 100):
         print("local samples:", local_samples, "global_samples:", tracker.global_progress.samples_accumulated)
         print("local epoch:", local_epoch, "global epoch", tracker.global_progress.epoch)
         
-        # TODO!! This is the part that needs proper implementation into our pipeline
-        # TODO!! I.e. if a few peers have accumulated just 200 samples, and then they are idle until the target_batch_size
-        # TODO!! how will gradient_avering work? Should we load state from peers only when querying miners, checking if they are out of sync?
         # if local_epoch < tracker.global_progress.epoch:
         #     # if peer is out of sync, synchronize it with the swarm
         #     grad_averager.load_state_from_peers()

@@ -217,22 +217,6 @@ class Validator(BaseValidatorNeuron):
             return None
         else:
             return peer_id
-        
-    def load_state_from_peers(
-        self, peer, wait: bool = True, timeout: Optional[float] = None,
-    ) -> Optional[Tuple[Any, Sequence[torch.Tensor]]]:
-        """
-        Try to download the latest optimizer state one of the existing peer.
-        :returns: on success, return a 2-tuple with (metadata, tensors), where
-
-        - metadata is a small object containing metadata (e.g. hyperparameters, scalars, etc)
-        - tensors is a sequence of pytorch tensors meant to contain peer's model weights and optimizer statistics
-
-        The exact contents of both metadata and tensors are determined by get_current_state method
-        """
-        future = MPFuture()
-        self._outer_pipe.send(("_load_state_from_peers", [], dict(peer = peer, timeout=timeout, future=future)))
-        return future.result(timeout=timeout) if wait else future
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         if timeout is not None:
