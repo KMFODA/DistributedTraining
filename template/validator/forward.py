@@ -40,9 +40,10 @@ async def forward(self):
 
     """
 
+    bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+
     event = {}
     if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
-
         bt.logging.info("Scheduling all-reduce synapse call")
         sample_size=int(self.metagraph.n)
         next_step_control = self.grad_averager.schedule_step()

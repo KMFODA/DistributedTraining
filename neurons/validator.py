@@ -18,19 +18,17 @@
 
 
 import asyncio
-import re
 import time
 from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
-import requests
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import wandb
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager
+from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager, init_dht
 from template.validator import forward
 from bitarray import bitarray
 
@@ -54,7 +52,8 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
-        self.init_dht()
+        # Init DHT
+        init_dht(self)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -90,7 +89,8 @@ class Validator(BaseValidatorNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            reuse_grad_buffers=True,
+            # reuse_grad_buffers=True,
+            accumulate_grads_on=torch.device("cuda"),
             start = True
         )
 
@@ -183,66 +183,6 @@ class Validator(BaseValidatorNeuron):
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
             return None, None
-
-    def init_dht(self):
-        # Init DHT
-        if self.config.dht.use_google_dns:
-            request = requests.get("https://api.ipify.org")
-            request.raise_for_status()
-
-            address = request.text
-            bt.logging.info(f"Received public IP address of this machine: {address}")
-            version = ip_address(address).version
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-        else:
-            version = "4"
-            address = self.config.dht.announce_ip
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-
-        # Init list of available DHT addresses from wandb
-        api = wandb.Api()
-        initial_peers_list = self.config.neuron.initial_peers
-        runs = api.runs(
-            f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-        )
-        for ru in runs:
-            if ru.state == "running":
-                for peer in ru.config["neuron"]["initial_peers"]:
-                    if peer not in initial_peers_list:
-                        initial_peers_list.append(peer)
-
-        retries = 0
-        while retries <= len(initial_peers_list):
-            if retries == len(initial_peers_list):
-                raise Exception("Max retries reached, operation failed.")
-            try:
-                # Init DHT
-                self.dht = hivemind.DHT(
-                    host_maddrs=[
-                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                    ],
-                    initial_peers=[initial_peers_list[retries]],
-                    announce_maddrs=announce_maddrs,
-                    start=True,
-                    # client_mode = True,
-                )
-                bt.logging.info(
-                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
-                )
-                break
-            except Exception as e:
-                bt.logging.info(
-                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
-                )
-                retries += 1
-                bt.logging.info(f"Retrying...")
-
-        # Write local dht address to config
-        self.config.neuron.initial_peers = self.config.neuron.initial_peers + [
-            re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
-            for addr in self.dht.get_visible_maddrs()
-        ]
 
     async def forward(self):
         return await forward(self)

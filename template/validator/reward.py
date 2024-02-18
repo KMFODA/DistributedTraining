@@ -30,7 +30,7 @@ def score_gradients(self, response, uid):
     
     # Create Dataloader
     dataloader = SubsetFalconLoader(
-        batch_size=response.batch_size, sequence_length=1024, rows=response.dataset_indices
+        batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
     )
 
     # Train data for one epoch
@@ -46,15 +46,19 @@ def score_gradients(self, response, uid):
         # Backward Pass
         loss.backward()
 
+        # Copy gradients
+        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
 
-        # bt.logging.info(f"Step {index} Loss: {outputs.loss.detach().item()}")
+        # Accumulate Gradients
+        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+        
+        # Zero Gradients
+        self.opt.zero_grad()
     
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log({"loss": outputs.loss.detach().item()})
 
-    # 
-    gradients = tuple(
-            param.grad.detach().cpu().clone() for param in self.model.parameters())
+    # Store summed random gradients in the synapse
     gradients = float(sum(gradients[response.gradient_test_index]))
         
     bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
@@ -84,24 +88,29 @@ async def score_bandwidth(self, peer_ids, scores):
 
     for i, peer in enumerate(peer_ids):
         
-        try:
-            start_time = time.perf_counter()
-
-            metadata, tensors = await asyncio.wait_for(self.load_state_from_miner(peer), timeout=60)
-            end_time = time.perf_counter()
-
-            if (metadata is None) or (tensors is None):
-                scores[i] = 0
-            else:
-                scores[i] = end_time - start_time
-
-            bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
-
-        except Exception as e:
-
-            bt.logging.info(f"Failed to download state from {peer} - {repr(e)}")
+        if peer is None:
             scores[i] = 0
-            bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
+        
+        else:
+        
+            try:
+                start_time = time.perf_counter()
+
+                metadata, tensors = await asyncio.wait_for(self.load_state_from_miner(peer), timeout=60)
+                end_time = time.perf_counter()
+
+                if (metadata is None) or (tensors is None):
+                    scores[i] = 0
+                else:
+                    scores[i] = 1 / (end_time - start_time)
+
+                bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
+
+            except Exception as e:
+
+                bt.logging.info(f"Failed to download state from {peer} - {repr(e)}")
+                scores[i] = 0
+                bt.logging.info(f"Reward for peer {peer} is {scores[i]}")
 
     return scores
                      
@@ -123,13 +132,14 @@ async def get_rewards(
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
-    # Check if peer is connected to DHT & run_id and blacklist them if they are not
-    peer_ids, scores = await score_blacklist(self, uids, scores)
-    bt.logging.info(f"DHT Blacklist Scores: {scores}")
-    # Score miners bandwidth
-    scores = await score_bandwidth(self, peer_ids, scores)
-    bt.logging.info(f"Bandwidth Scores: {scores}")
+    # scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
+    # # Check if peer is connected to DHT & run_id and blacklist them if they are not
+    # peer_ids, scores = await score_blacklist(self, uids, scores)
+    # bt.logging.info(f"DHT Blacklist Scores: {scores}")
+    # breakpoint()
+    # # Score miners bandwidth
+    # scores = await score_bandwidth(self, peer_ids, scores)
+    # bt.logging.info(f"Bandwidth Scores: {scores}")
 
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
         
@@ -152,7 +162,6 @@ async def get_rewards(
         bt.logging.info(f"Timeout Scores: {scores}")
 
         if ((self.step % 10)==0):
-
             # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
             peer_ids, scores = await score_blacklist(self, uids, scores)
             bt.logging.info(f"DHT Blacklist Scores: {scores}")
