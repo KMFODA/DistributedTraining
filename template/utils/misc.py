@@ -276,9 +276,12 @@ def init_dht(self):
     )
     for ru in runs:
         if ru.state == "running":
-            for peer in ru.config["neuron"]["dht_addresses"]:
-                if peer not in initial_peers_list:
-                    initial_peers_list.append(peer)
+            if "dht_addresses" not in ru.config["neuron"].keys():
+                continue
+            else:
+                for peer in ru.config["neuron"]["dht_addresses"]:
+                    if peer not in initial_peers_list:
+                        initial_peers_list.append(peer)
 
     # Init DHT
     retries = 0
