@@ -28,7 +28,8 @@ import torch
 import wandb
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, DTGradientAverager, init_dht
+from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, init_dht
+from template.utils.hivemind import DTGradientAverager
 from template.validator import forward
 from bitarray import bitarray
 
@@ -82,6 +83,7 @@ class Validator(BaseValidatorNeuron):
         # Init Optimizer
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
+        # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
@@ -92,9 +94,10 @@ class Validator(BaseValidatorNeuron):
             start = True
         )
 
+        # Init Tracker
         self.tracker = ProgressTracker(
             dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}_progress", 
+            prefix=f"{self.config.neuron.run_id}", 
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True
         )
@@ -104,10 +107,11 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+        self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
         self.peer_id = self.dht.peer_id
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
-
+    
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
 
@@ -121,32 +125,43 @@ class Validator(BaseValidatorNeuron):
             "emissions": self.metagraph.emission[self.uid],
         }
 
-    async def map_uid_to_peerid(self, uid):
-        miner_ip = self.metagraph.axons[uid].ip
+    async def map_uid_to_peerid(self, uids):
+        uids_to_peerids = {}
+        for uid in uids:
+            miner_ip = self.metagraph.axons[uid].ip
 
-        # Get all peers connected to our DHT and their ips
-        peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
+            # Get all peers connected to our DHT and their ips
+            peer_list_dht = await self._p2p.list_peers()
+            peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
 
-        # Get only peers connected to the current run id
-        prefix = self.grad_averager.matchmaking_kwargs['prefix']
-        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
+            # Get only peers connected to the current run id
+            prefix = self.grad_averager.matchmaking_kwargs['prefix']
+            metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
 
-        if metadata is None:
-            return None
-        peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
+            if metadata is None:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
 
-        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
-        if miner_ip not in peer_list_dht_addrs:
-            return None
-        else:
-            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
+            # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
+            if miner_ip not in peer_list_dht_addrs:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            else:
+                peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
 
-        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in peer_list_run:
-            return None
-        else:
-            return peer_id
+            # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
+            if str(peer_id) not in peer_list_run:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            else:
+                # return peer_id
+                uids_to_peerids[uid] = peer_id
+                continue
+        return uids_to_peerids
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         if timeout is not None:

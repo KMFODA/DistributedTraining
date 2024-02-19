@@ -27,17 +27,13 @@ import asyncio
 import wandb
 import logging
 from loguru import logger as bt_logger
-from typing import Iterator
 from hivemind.utils.logging import use_hivemind_log_handler
 import speedtest
 import hivemind
-from contextlib import contextmanager
-import torch
 import requests
 from hivemind import utils
 import re
 from ipaddress import ip_address
-
 
 
 # LRU Cache with TTL
@@ -222,29 +218,6 @@ def get_bandwidth():
         bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
 
     return bandwidth_dict
-
-class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
-    '''
-    Needs this wrapper class to ensure device is set properly when averaging gradients
-    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
-    '''
-    @contextmanager
-    @torch.no_grad()
-    def use_averaged_gradients(self):
-        """Substitute model's main gradients with averaged gradients"""
-        self._new_averaged_grads = False
-        with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
-            try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
-                    # move new_grad to the same device as param before assigning
-                    param.grad = new_grad.to(param.device)
-                yield averaged_grads
-            finally:
-                for param, old_grad in zip(self.parameters, old_grads):
-                    param.grad = old_grad
-
 
 def init_dht(self):
     # Init DHT and model

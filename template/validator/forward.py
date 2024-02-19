@@ -26,6 +26,7 @@ import asyncio
 import random
 
 from template.utils.misc import get_bandwidth
+import time
 
 
 async def forward(self):
@@ -41,20 +42,27 @@ async def forward(self):
     """
 
     bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
     event = {}
     if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
+        
         bt.logging.info("Scheduling all-reduce synapse call")
         sample_size=int(self.metagraph.n)
         next_step_control = self.grad_averager.schedule_step()
         self.step_scheduled = True  
         all_reduce = True
+
     else:
 
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+            bt.logging.info('model weights before opt')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+
             bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
-            self.grad_averager.load_state_from_peers()
+            self.grad_averager.load_state_from_peers_with_latest_state(global_epoch = self.tracker.global_progress.epoch)
             self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+            
+            bt.logging.info('model weights after opt')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 
         sample_size = self.config.neuron.sample_size
         all_reduce = False
@@ -70,7 +78,7 @@ async def forward(self):
     if all_reduce:
         with self.tracker.pause_updates():
             bt.logging.info("Gradient Averaging")
-            self.grad_averager.step(control=next_step_control, wait=False)
+            gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False, timeout = 150 )
 
         queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:
@@ -89,12 +97,29 @@ async def forward(self):
     responses = await asyncio.gather(*query_tasks)
     if all_reduce and responses != []:
         responses = []
-        # Log the results for monitoring purposes.
-        with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-            bt.logging.info("Performing Optimizer Step")
-            self.opt.step()  # update model parameters using averaged grad
-        self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-        # local_epoch = self.tracker.update_epoch(local_epoch + 1)
+        sleep_counter = 1
+        while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+            time.sleep(1)
+            sleep_counter += 1
+        if gradient_averaging_step.done():
+            # Log the results for monitoring purposes.
+            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info("Performing Optimizer Step")
+                self.opt.step()  # update model parameters using averaged grad
+            self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+            self.tracker.local_epoch = self.tracker.update_epoch(self.tracker.local_epoch + 1)
+
+        else:
+            # breakpoint()
+            bt.logging.info('model weights before opt')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            bt.logging.info("Averaging Failed. Loading State From Peer")
+            self.grad_averager.load_state_from_peers_with_latest_state(global_epoch = self.tracker.global_progress.epoch)
+            self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+
+            bt.logging.info('model weights after opt')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+    
         self.step_scheduled = False 
     else:
         bt.logging.info(

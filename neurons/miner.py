@@ -38,9 +38,9 @@ from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, init_dht
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth, init_dht
+from template.utils.hivemind import DTGradientAverager
 from template.data.dataset import SubsetFalconLoader
-
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -73,10 +73,11 @@ class Miner(BaseMinerNeuron):
 
         self.tracker = ProgressTracker(
             dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}_progress", 
+            prefix=f"{self.config.neuron.run_id}", 
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True
         )
+
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
 
@@ -87,7 +88,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self.config, self.wallet, "miner", str(1))
+            self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
 
     def get_miner_info(self):
         return {
