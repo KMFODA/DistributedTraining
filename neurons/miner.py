@@ -30,11 +30,8 @@ import wandb
 
 from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-)
-
+from transformers import AutoModelForCausalLM,
+    
 # Bittensor Miner Template:
 import template
 from bitarray import bitarray
@@ -83,10 +80,6 @@ class Miner(BaseMinerNeuron):
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
-        # Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-
         # Load dataset
         self.dataset_loader = ()
         dataset_length = 968000015
@@ -95,12 +88,6 @@ class Miner(BaseMinerNeuron):
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(self.config, self.wallet, "miner", str(1))
-
-    # Define encoding function
-    def encode(self, examples):
-        return self.tokenizer(
-            examples["text"], truncation=True, max_length=512, padding="max_length"
-        )
 
     def get_miner_info(self):
         return {

@@ -23,7 +23,7 @@ from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 import torch
 import wandb
 
@@ -72,9 +72,7 @@ class Validator(BaseValidatorNeuron):
         self.device = self.config.neuron.device
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         self.model.to(self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        
+
         # For simplicity only pick layers with a dim of 1
         self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
 
