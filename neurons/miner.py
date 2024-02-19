@@ -30,7 +30,7 @@ import wandb
 
 from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
-from transformers import AutoModelForCausalLM,
+from transformers import AutoModelForCausalLM
     
 # Bittensor Miner Template:
 import template
