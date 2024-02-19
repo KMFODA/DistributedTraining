@@ -138,7 +138,12 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
-       
+        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+            bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
+            self.grad_averager.load_state_from_peers()
+            self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+            self.local_epoch = self.tracker.local_progress.epoch
+        
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
         group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
