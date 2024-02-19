@@ -38,7 +38,7 @@ from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, grads_from_parameters, init_dht
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, init_dht
 from template.data.dataset import SubsetFalconLoader
 
 

@@ -245,13 +245,6 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
                 for param, old_grad in zip(self.parameters, old_grads):
                     param.grad = old_grad
 
-def grads_from_parameters(self) -> Iterator[torch.Tensor]:
-    """gradient buffers associated with parameters"""
-    for param in self.model.parameters():
-        if param.grad is None:
-            param.grad = torch.zeros_like(param)
-        yield param.grad
-
 
 def init_dht(self):
     # Init DHT and model
