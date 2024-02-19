@@ -242,7 +242,9 @@ class BaseValidatorNeuron(BaseNeuron):
             wait_for_finalization=False,
             version_key=self.spec_version,
         )
-
+        
+        # Log weigths to wandb
+        self.wandb.log({f"weights.uid{processed_weight_uids}": processed_weights for processed_weight_uids, processed_weights in zip(processed_weight_uids, processed_weights)})
         bt.logging.info(f"Set weights: {processed_weights}")
 
     def resync_metagraph(self):
