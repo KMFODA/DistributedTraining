@@ -20,6 +20,7 @@ import bittensor as bt
 
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
+from template.utils.hivemind import load_state_from_peer
 
 import template
 import asyncio
@@ -42,6 +43,10 @@ async def forward(self):
     """
 
     bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+    if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+        bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
+        load_state_from_peer(self)
+
     event = {}
     if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
         
@@ -52,17 +57,6 @@ async def forward(self):
         all_reduce = True
 
     else:
-
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            bt.logging.info('model weights before opt')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-
-            bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
-            self.grad_averager.load_state_from_peers_with_latest_state(global_epoch = self.tracker.global_progress.epoch)
-            self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
-            
-            bt.logging.info('model weights after opt')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 
         sample_size = self.config.neuron.sample_size
         all_reduce = False
@@ -77,7 +71,7 @@ async def forward(self):
     query_tasks = []
     if all_reduce:
         with self.tracker.pause_updates():
-            bt.logging.info("Gradient Averaging")
+            bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False, timeout = 150 )
 
         queries = [template.protocol.AllReduce() for _ in self.miner_uids]
@@ -103,23 +97,21 @@ async def forward(self):
             sleep_counter += 1
         if gradient_averaging_step.done():
             # Log the results for monitoring purposes.
-            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                bt.logging.info("Performing Optimizer Step")
-                self.opt.step()  # update model parameters using averaged grad
-            self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-            self.tracker.local_epoch = self.tracker.update_epoch(self.tracker.local_epoch + 1)
+            bt.logging.info('Model Weights Before Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            with self.tracker.pause_updates():
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info('Model Weights After Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
 
         else:
-            # breakpoint()
-            bt.logging.info('model weights before opt')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             bt.logging.info("Averaging Failed. Loading State From Peer")
-            self.grad_averager.load_state_from_peers_with_latest_state(global_epoch = self.tracker.global_progress.epoch)
-            self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+            load_state_from_peer(self)
 
-            bt.logging.info('model weights after opt')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    
         self.step_scheduled = False 
     else:
         bt.logging.info(

@@ -39,8 +39,9 @@ from bitarray import bitarray
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.utils.misc import load_wandb, setup_logging, get_bandwidth, init_dht
-from template.utils.hivemind import DTGradientAverager
+from template.utils.hivemind import DTGradientAverager, load_state_from_peer
 from template.data.dataset import SubsetFalconLoader
+from hivemind.optim.state_averager import TrainingStateAverager
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -61,6 +62,7 @@ class Miner(BaseMinerNeuron):
         # Set up a decentralized optimizer that will average with peers in background
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
+        # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
@@ -68,9 +70,10 @@ class Miner(BaseMinerNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device(self.device),
-            start = True
+            start = True,
         )
 
+        # Init Tracker
         self.tracker = ProgressTracker(
             dht=self.dht, 
             prefix=f"{self.config.neuron.run_id}", 
@@ -78,6 +81,18 @@ class Miner(BaseMinerNeuron):
             start=True
         )
 
+        # Init State Averager
+        self.state_averager = TrainingStateAverager(
+            optimizer = self.opt,
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            state_compression=hivemind.Uniform8BitQuantization(),
+            start = True,
+        )
+        
+        # Init UID
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
 
@@ -88,7 +103,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
+            self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
 
     def get_miner_info(self):
         return {
@@ -117,13 +132,16 @@ class Miner(BaseMinerNeuron):
         with self.tracker.pause_updates():
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(timeout = (synapse.timeout))
+            bt.logging.info('Model Weights Before Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged gradients
+            bt.logging.info('Model Weights After Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             self.grad_averager.reset_accumulated_grads_()  # prepare for next step
             self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
             self.local_samples = 0  
-
         synapse.completion = "True"
         return synapse
 
@@ -140,10 +158,7 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
-            self.grad_averager.load_state_from_peers()
-            self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
-            self.local_epoch = self.tracker.local_progress.epoch
+            load_state_from_peer(self)
         
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)

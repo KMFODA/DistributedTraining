@@ -130,8 +130,8 @@ def add_args(cls, parser):
         "--neuron.lr",
         type=float,
         help="The learning rate",
-        default=0.001
-        # default=5/((2**3)*(10**3))
+        # default=0.001
+        default=5/((2**3)*(10**3))
     )
 
     parser.add_argument(

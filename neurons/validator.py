@@ -39,6 +39,7 @@ from hivemind.utils import get_logger
 from hivemind.proto import averaging_pb2
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.optim.progress_tracker import ProgressTracker
+from hivemind.optim.state_averager import TrainingStateAverager
 
 from hivemind.p2p import PeerID
 from hivemind.compression import deserialize_torch_tensor
@@ -58,7 +59,7 @@ class Validator(BaseValidatorNeuron):
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self.config, self.wallet, "validator", str(self.dht.peer_id))
+            self.wandb = load_wandb(self, self.config, self.wallet, "validator", str(self.dht.peer_id))
 
         # Init Dendrite Pool
         self.dendrite_pool = AsyncDendritePool(
@@ -93,7 +94,7 @@ class Validator(BaseValidatorNeuron):
             accumulate_grads_on=torch.device("cuda"),
             start = True
         )
-
+        
         # Init Tracker
         self.tracker = ProgressTracker(
             dht=self.dht, 
@@ -102,7 +103,17 @@ class Validator(BaseValidatorNeuron):
             start=True
         )
 
+        # Init State Averager
+        self.state_averager = TrainingStateAverager(
+            optimizer = self.opt,
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            state_compression=hivemind.Uniform8BitQuantization(),
+            start = True,
+        )
+
         self.step_scheduled = False
+        self.local_epoch, self.local_samples = 0, 0
 
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())

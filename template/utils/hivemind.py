@@ -1,20 +1,35 @@
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple, Iterable, Callable, Union
 import random
 from hivemind.utils import MPFuture
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import DHTExpiration, ValueWithExpiration, get_dht_time
-from hivemind.utils import MPFuture, get_logger
+from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.optim.progress_tracker import LocalTrainingProgress
 import logging
 import hivemind
+from itertools import chain
 import torch
+from packaging.version import Version
 import re
 from contextlib import contextmanager
+import bittensor as bt
 
 from hivemind.proto import averaging_pb2
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.compression import deserialize_torch_tensor
+
+Parameters = Iterable[torch.Tensor]
+ParamGroups = Iterable[Dict[str, Any]]
+TorchOptimizer = torch.optim.Optimizer
+if Version(torch.__version__).major >= 2:
+    ZERO_GRAD_SET_TO_NONE_DEFAULT = True
+    LRSchedulerBase = torch.optim.lr_scheduler.LRScheduler
+else:
+    ZERO_GRAD_SET_TO_NONE_DEFAULT = False
+    LRSchedulerBase = torch.optim.lr_scheduler._LRScheduler
+OptimizerFactory = Callable[[Union[Parameters, ParamGroups]], TorchOptimizer]
+SchedulerFactory = Callable[[TorchOptimizer], LRSchedulerBase]
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -40,6 +55,29 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
             finally:
                 for param, old_grad in zip(self.parameters, old_grads):
                     param.grad = old_grad
+
+    @torch.no_grad()
+    def _apply_optimizer_parameters_(self):
+        """Copy parameters from offloaded optimizer to the main model"""
+        assert self.offload_optimizer, "Applying offloaded optimizer updates requires offloaded optimizer"
+        offloaded_parameters = [param for group in self.optimizer.param_groups for param in group["params"]]
+        assert len(offloaded_parameters) == len(self.main_parameters), "Optimizer parameters changed during training"
+        for main_param, offloaded_param in zip(self.main_parameters, offloaded_parameters):
+            main_param.copy_(offloaded_param, non_blocking=True)
+
+    @torch.no_grad()
+    def _load_local_tensors_into_averager_(self):
+        """Copy local tensors into the averaging buffers"""
+        assert not self.reuse_tensors, "No need to load tensors into averager: both tensors share the same memory"
+        with self.get_tensors() as averaged_tensors:
+            for local_tensor, averaged_tensor in zip(self._local_tensors(), averaged_tensors):
+                averaged_tensor.copy_(local_tensor, non_blocking=True)
+
+    def _update_scheduler(self):
+        """Increase the scheduler state until it becomes synchronized with local epoch"""
+        if self.scheduler:
+            while self.scheduler._step_count <= self.local_epoch:
+                self.scheduler.step()
 
     def load_state_from_peers_with_latest_state(
         self, global_epoch, wait: bool = True, timeout: Optional[float] = None, peer_id = None,
@@ -120,3 +158,150 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
         finally:
             if not future.done():
                 future.set_result(None)
+
+class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
+
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+    def load_state_from_peers_with_latest_state(
+        self, global_epoch, wait: bool = True, timeout: Optional[float] = None, peer_id = None,
+    ) -> Optional[Tuple[Any, Sequence[torch.Tensor]]]:
+        """
+        Try to download the latest optimizer state one of the existing peer.
+        :returns: on success, return a 2-tuple with (metadata, tensors), where
+
+        - metadata is a small object containing metadata (e.g. hyperparameters, scalars, etc)
+        - tensors is a sequence of pytorch tensors meant to contain peer's model weights and optimizer statistics
+
+        The exact contents of both metadata and tensors are determined by get_current_state method
+        """
+        future = MPFuture()
+        self._outer_pipe.send(("_load_state_from_peers_with_latest_state", [], dict(timeout=timeout, global_epoch=global_epoch, future=future, peer_id = peer_id)))
+        return future.result(timeout=timeout) if wait else future
+
+    async def _load_state_from_peers_with_latest_state(self, future: MPFuture, global_epoch, timeout: Optional[float] = None, peer_id = None, max_retries = 3):
+        if timeout is not None:
+            timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
+        try:
+            # Extract training progress metadata
+            training_progress_metadata, _ = self.dht.get(f"{re.sub('_state_averager', '_progress', self.prefix)}", latest=True) or (None, -float("inf"))
+            
+            # Get only peers where local_epoch == global_epoch
+            if training_progress_metadata is None:
+                logger.info(f"Averager could not load metadata from the tracker")
+                future.set_result(None)
+                return
+            else:
+                valid_peer_entries = [PeerID(LocalTrainingProgress.parse_obj(peer_state.value).peer_id) for peer_state in training_progress_metadata.values() if (peer_state.value is not None) and (LocalTrainingProgress.parse_obj(peer_state.value).epoch == global_epoch)]
+
+            # Get all the peers connected to the correct gradient averager and filter for peers with the right local epoch
+            key_manager = self._matchmaking.group_key_manager
+            peer_priority, _ = self.dht.get(f"{key_manager.prefix}.all_averagers", latest=True) or ({}, None)
+            peer_priority = {
+                PeerID(peer_id): (float(info.value), random.random())  # using randomness as a tie breaker
+                for peer_id, info in peer_priority.items()
+                if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int)) and (PeerID(peer_id) in valid_peer_entries)
+            }
+            print(peer_priority)
+            if not isinstance(peer_priority, dict) or len(peer_priority) == 0:
+                logger.info(f"Averager could not load state from peers: peer dict empty or corrupted {peer_priority}")
+                future.set_result(None)
+                return
+            
+            metadata = None
+            for peer in sorted(peer_priority.keys(), key=peer_priority.get, reverse=True):
+                if peer != self.peer_id:
+                    logger.info(f"Downloading parameters from peer {peer}")
+                    try:
+                        stub = self.get_stub(self._p2p, peer, namespace=self.prefix)
+                        stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
+                        current_tensor_parts, tensors = [], []
+
+                        # TODO merge this with hivemind.compression.deserialize_tensor_stream
+                        async for message in aiter_with_timeout(stream, timeout=timeout):
+                            if message.metadata:
+                                metadata = self.serializer.loads(message.metadata)
+                            if message.tensor_part.dtype and current_tensor_parts:
+                                # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
+                                tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+                                current_tensor_parts = []
+                            current_tensor_parts.append(message.tensor_part)
+                        if current_tensor_parts:
+                            tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+
+                        if not metadata:
+                            logger.debug(f"Peer {peer} did not send its state")
+                            continue
+
+                        logger.info(f"Finished downloading state from {peer}")
+                        future.set_result((metadata, tensors))
+                        
+                        opt_parameters = tuple(param for param_group in self.optimizer.param_groups for param in param_group["params"])
+                        main_parameters_and_extras = tuple(chain(opt_parameters, self.extra_tensors))
+                        num_parameters_and_extras = len(main_parameters_and_extras)
+                        # metadata, flat_tensors = loaded_state
+                        metadata, flat_tensors = metadata, tensors
+                        # breakpoint()
+                        # print((not isinstance(metadata.get("epoch"), int)))
+                        # print(metadata.get("epoch"))
+                        # if (not isinstance(metadata.get("epoch"), int)) or metadata["epoch"] < self.local_epoch:
+                        #     logger.warning("Cowardly refusing to load state from peer: peer's epoch is behind our local epoch")
+                        #     return
+
+                        loaded_parameters_and_extras = flat_tensors[:num_parameters_and_extras]
+                        loaded_opt_tensors = flat_tensors[num_parameters_and_extras:]
+                        if num_parameters_and_extras != len(loaded_parameters_and_extras):
+                            logger.error("Failed to load state from peer, received parameters, extras or metadata")
+                            return
+
+                        with torch.no_grad(), self.lock_averaged_tensors:
+                            try:
+                                load_optimizer_state(self.optimizer, metadata["optimizer_metadata"], loaded_opt_tensors)
+                            except StopIteration:
+                                logger.warning("Failed to load state from peer, received inconsistent number of optimizer statistics")
+                                return
+
+                            for local_param, loaded_param in zip(main_parameters_and_extras, loaded_parameters_and_extras):
+                                local_param.copy_(loaded_param, non_blocking=True)
+
+                        if self.offload_optimizer:
+                            self._apply_optimizer_parameters_()
+                        if not self.reuse_tensors:
+                            self._load_local_tensors_into_averager_()
+
+                        # self.local_epoch = metadata["epoch"]
+                        self._update_scheduler()
+
+                        return
+                    except Exception as e:
+                        logger.exception(f"Failed to download state from {peer} - {repr(e)}")
+
+        finally:
+            if not future.done():
+                future.set_result(None)
+
+
+def load_optimizer_state(optimizer: torch.optim.Optimizer, flat_metadata: Dict, flat_tensors: Sequence[torch.Tensor]):
+    """Load a state obtained by dump_optimizer_state back into the optimizer"""
+    flat_optimizer_state = []
+    for elem in flat_metadata:
+        if elem.get("type") == "tensor" and isinstance(elem.get("index"), int):
+            flat_optimizer_state.append(flat_tensors[elem["index"]])
+        elif elem.get("type") == "value" and "value" in elem:
+            flat_optimizer_state.append(elem["value"])
+    return optimizer.load_state_dict(nested_pack(flat_optimizer_state, structure=optimizer.state_dict()))
+
+def load_state_from_peer(self):
+
+    bt.logging.info('Model Weights Before Loading State')
+    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+    self.state_averager.load_state_from_peers()
+    bt.logging.info('Model Weights After Loading State')
+    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+
+    self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+    self.local_epoch = self.tracker.local_progress.epoch
