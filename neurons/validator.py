@@ -19,7 +19,6 @@
 
 import asyncio
 import time
-from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
@@ -29,7 +28,7 @@ import wandb
 
 from template.base.validator import BaseValidatorNeuron
 from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, init_dht
-from template.utils.hivemind import DTGradientAverager
+from template.utils.hivemind import DTGradientAverager, DTStateAverager
 from template.validator import forward
 from bitarray import bitarray
 
@@ -54,8 +53,25 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
-        # Init DHT
-        init_dht(self)
+        num_peers = 0
+        while num_peers == 0:
+
+            # Init DHT
+            init_dht(self)
+
+            # Init Tracker
+            self.tracker = ProgressTracker(
+                dht=self.dht, 
+                prefix=f"{self.config.neuron.run_id}", 
+                target_batch_size=self.config.neuron.global_batch_size_train,
+                start=True
+            )
+            num_peers = self.tracker.global_progress.num_peers
+
+            bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
+            if num_peers == 0:
+                bt.logging.info('Re-initialising the DHT')
+            time.sleep(10)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -95,16 +111,8 @@ class Validator(BaseValidatorNeuron):
             start = True
         )
         
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}", 
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True
-        )
-
         # Init State Averager
-        self.state_averager = TrainingStateAverager(
+        self.state_averager = DTStateAverager(
             optimizer = self.opt,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_state_averager",
@@ -118,11 +126,19 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
         self.peer_id = self.dht.peer_id
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
-    
+        
+        # Create mapping between uids to peerids 
+        self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (retries >= max_retries):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+                time.sleep(1)
+
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
 

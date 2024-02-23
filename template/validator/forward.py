@@ -47,7 +47,6 @@ async def forward(self):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
 
-    event = {}
     if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
         
         bt.logging.info("Scheduling all-reduce synapse call")
@@ -55,17 +54,19 @@ async def forward(self):
         next_step_control = self.grad_averager.schedule_step()
         self.step_scheduled = True  
         all_reduce = True
+        self.event.update({"synapse_type":"all_reduce"})
 
     else:
 
         sample_size = self.config.neuron.sample_size
         all_reduce = False
+        self.event.update({"synapse_type":"train"})
     
     # Get as many active miners as possible
     self.miner_uids = await get_random_uids(
         self, dendrite=self.dendrite, k=sample_size
     )
-    event.update({"uids":self.miner_uids})
+    self.event.update({"uids":self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
     query_tasks = []
@@ -138,15 +139,11 @@ async def forward(self):
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)
 
-    event = {}
-    event.update(self.get_validator_info())
+    self.event.update(self.get_validator_info())
     try:
-        event.update(get_bandwidth())
+        self.event.update(get_bandwidth())
     except:
         bt.logging.info("Error getting bandwidth metrics")
 
-    # Log to wandb
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log(event)
 
     return responses

@@ -39,7 +39,7 @@ from bitarray import bitarray
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.utils.misc import load_wandb, setup_logging, get_bandwidth, init_dht
-from template.utils.hivemind import DTGradientAverager, load_state_from_peer
+from template.utils.hivemind import DTGradientAverager, load_state_from_peer, DTStateAverager
 from template.data.dataset import SubsetFalconLoader
 from hivemind.optim.state_averager import TrainingStateAverager
 
@@ -82,7 +82,7 @@ class Miner(BaseMinerNeuron):
         )
 
         # Init State Averager
-        self.state_averager = TrainingStateAverager(
+        self.state_averager = DTStateAverager(
             optimizer = self.opt,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_state_averager",
@@ -213,7 +213,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
         # Store summed random gradients in the synapse
-        synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
+        synapse.gradients =  float(torch.sum(torch.abs(gradients[synapse.gradient_test_index])))
 
         average_loss = total_loss / index
         synapse.loss = average_loss
