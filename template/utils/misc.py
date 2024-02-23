@@ -17,8 +17,6 @@
 # DEALINGS IN THE SOFTWARE.
 
 import time
-import math
-import hashlib as rpccheckhealth
 from math import floor
 from typing import Callable, Any
 from functools import lru_cache, update_wrapper
@@ -29,13 +27,13 @@ import asyncio
 import wandb
 import logging
 from loguru import logger as bt_logger
-from typing import Iterator
 from hivemind.utils.logging import use_hivemind_log_handler
 import speedtest
 import hivemind
-from contextlib import contextmanager
-import torch
-
+import requests
+from hivemind import utils
+import re
+from ipaddress import ip_address
 
 
 # LRU Cache with TTL
@@ -151,10 +149,10 @@ class AsyncDendritePool:
         return await query_async()
     
 
-def load_wandb(config, wallet, neuron_type, peer_id):
+def load_wandb(self, config, wallet, neuron_type, peer_id):
 
     #signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = f"{config.neuron.run_id}_{neuron_type}_{wallet.hotkey.ss58_address}_{peer_id}" #+ signature 
+    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}" #+ signature 
     wandb_run = wandb.init(
         id = run_name,
         name=run_name,
@@ -187,7 +185,7 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
-def setup_logging():
+def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
@@ -197,7 +195,7 @@ def setup_logging():
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG) # Set this to DEBUG to check hivemind debug messages
+    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
     bt_handler = BittensorLogHandler()
     formatter = logging.Formatter('%(message)s')
@@ -221,31 +219,70 @@ def get_bandwidth():
 
     return bandwidth_dict
 
-class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
-    '''
-    Needs this wrapper class to ensure device is set properly when averaging gradients
-    see: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
-    '''
-    @contextmanager
-    @torch.no_grad()
-    def use_averaged_gradients(self):
-        """Substitute model's main gradients with averaged gradients"""
-        self._new_averaged_grads = False
-        with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
-            try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
-                    # move new_grad to the same device as param before assigning
-                    param.grad = new_grad.to(param.device)
-                yield averaged_grads
-            finally:
-                for param, old_grad in zip(self.parameters, old_grads):
-                    param.grad = old_grad
+def init_dht(self):
+    # Init DHT and model
+    if self.config.dht.use_google_dns:
+        request = requests.get("https://api.ipify.org")
+        request.raise_for_status()
 
-def grads_from_parameters(self) -> Iterator[torch.Tensor]:
-    """gradient buffers associated with parameters"""
-    for param in self.model.parameters():
-        if param.grad is None:
-            param.grad = torch.zeros_like(param)
-        yield param.grad
+        address = request.text
+        bt.logging.info(f"Received public IP address of this machine: {address}")
+        version = ip_address(address).version
+        announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
+    else:
+        version = "4"
+        address = self.config.dht.announce_ip
+        announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
+
+    # Init list of available DHT addresses from wandb
+    api = wandb.Api()
+    initial_peers_list = self.config.neuron.initial_peers
+    runs = api.runs(
+        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
+    )
+    for ru in runs:
+        if ru.state == "running":
+            if "dht_addresses" not in ru.config["neuron"].keys():
+                continue
+            else:
+                for peer in ru.config["neuron"]["dht_addresses"]:
+                    if peer not in initial_peers_list:
+                        initial_peers_list.append(peer)
+
+    # Init DHT
+    retries = 0
+    buffer = 2
+    max_retries = buffer * len(initial_peers_list)
+    successful_connection = False
+    while (retries <= max_retries) and (successful_connection is False):
+        if (retries == max_retries) and (successful_connection is False):
+            raise Exception("Max retries reached, operation failed.")
+        for i in range(0, buffer):
+            try:
+                # Init DHT
+                self.dht = hivemind.DHT(
+                    host_maddrs=[
+                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
+                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
+                    ],
+                    initial_peers=[initial_peers_list[retries]],
+                    announce_maddrs=announce_maddrs,
+                    start=True,
+                )
+                bt.logging.info(
+                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
+                )
+                successful_connection = True
+                break
+            except Exception as e:
+                bt.logging.error(
+                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
+                )
+                retries += 1
+                time.sleep(5)
+                bt.logging.error(f"Retrying...")
+
+    utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
+    # Add DHT address to wandb config
+    self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+

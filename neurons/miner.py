@@ -19,7 +19,7 @@
 import re
 import time
 import typing
-from functools import partial
+import random
 from ipaddress import ip_address
 
 import bittensor as bt
@@ -27,97 +27,34 @@ import hivemind
 import requests
 import torch
 import wandb
-from datasets import load_dataset
-from hivemind import utils
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    default_data_collator,
-    get_linear_schedule_with_warmup,
-)
 
+from hivemind import utils
+from hivemind.optim.progress_tracker import ProgressTracker
+from transformers import AutoModelForCausalLM
+    
 # Bittensor Miner Template:
 import template
 from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth, DTGradientAverager, grads_from_parameters
+from template.utils.misc import load_wandb, setup_logging, get_bandwidth, init_dht
+from template.utils.hivemind import DTGradientAverager, load_state_from_peer, DTStateAverager
 from template.data.dataset import SubsetFalconLoader
-
-import random
-import asyncio
-
+from hivemind.optim.state_averager import TrainingStateAverager
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
+        # Init DHT
+        init_dht(self)
+        
         # Init device
         self.device = self.config.neuron.device
 
-        # Init DHT and model
-        if self.config.dht.use_google_dns:
-            request = requests.get("https://api.ipify.org")
-            request.raise_for_status()
-
-            address = request.text
-            bt.logging.info(f"Received public IP address of this machine: {address}")
-            version = ip_address(address).version
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-        else:
-            version = "4"
-            address = self.config.dht.announce_ip
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-
-        # Init list of available DHT addresses from wandb
-        api = wandb.Api()
-        initial_peers_list = self.config.neuron.initial_peers
-        runs = api.runs(
-            f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-        )
-        for ru in runs:
-            if ru.state == "running":
-                for peer in ru.config["neuron"]["initial_peers"]:
-                    if peer not in initial_peers_list:
-                        initial_peers_list.append(peer)
-
-        # Init DHT
-        retries = 0
-        while retries <= len(initial_peers_list):
-            if retries == len(initial_peers_list):
-                raise Exception("Max retries reached, operation failed.")
-            try:
-                # Init DHT
-                self.dht = hivemind.DHT(
-                    host_maddrs=[
-                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                    ],
-                    initial_peers=[initial_peers_list[retries]],
-                    announce_maddrs=announce_maddrs,
-                    start=True,
-                )
-                bt.logging.info(
-                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
-                )
-                break
-            except Exception as e:
-                bt.logging.error(
-                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
-                )
-                retries += 1
-                bt.logging.error(f"Retrying...")
-        utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
+        # Init Model
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
-
-        # Add DHT address to wandb config
-        self.config.neuron.initial_peers = self.config.neuron.initial_peers + [
-            re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
-            for addr in self.dht.get_visible_maddrs()
-        ]
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -125,28 +62,39 @@ class Miner(BaseMinerNeuron):
         # Set up a decentralized optimizer that will average with peers in background
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
+        # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
-            # reuse_grad_buffers=True,
             compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device("cuda"),
-            start = True
+            # reuse_grad_buffers=True,
+            accumulate_grads_on=torch.device(self.device),
+            start = True,
         )
 
-        self.tracker = hivemind.optim.progress_tracker.ProgressTracker(
+        # Init Tracker
+        self.tracker = ProgressTracker(
             dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}_progress", 
+            prefix=f"{self.config.neuron.run_id}", 
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True
         )
+
+        # Init State Averager
+        self.state_averager = DTStateAverager(
+            optimizer = self.opt,
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            state_compression=hivemind.Uniform8BitQuantization(),
+            start = True,
+        )
+        
+        # Init UID
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
-
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
-        # Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
-        self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load dataset
         self.dataset_loader = ()
@@ -155,14 +103,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            # self.wandb = load_wandb(self.config, self.wallet, "miner", str(self.dht.peer_id))
-            self.wandb = load_wandb(self.config, self.wallet, "miner", str(1))
-
-    # Define encoding function
-    def encode(self, examples):
-        return self.tokenizer(
-            examples["text"], truncation=True, max_length=512, padding="max_length"
-        )
+            self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
 
     def get_miner_info(self):
         return {
@@ -186,25 +127,21 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         
         bt.logging.info("Received All Reduce Call")
-        # Sleep for 2 minutes and allow all-reduce to run in the background
-        # asyncio.sleep(120)
 
-        bt.logging.info("Scheduling Gradient Averaging Call")
-        next_step_control = self.grad_averager.schedule_step()
-        self.step_scheduled = True  # Set the flag to True
-
-        # # aggregate gradients and perform optimizer step when target batch size is reached
+        # Aggregate gradients and perform optimizer step when target batch size is reached
         with self.tracker.pause_updates():
             bt.logging.info("Performing Gradient Averaging")
-            self.grad_averager.step(control=next_step_control)
+            self.grad_averager.step(timeout = (synapse.timeout))
+            bt.logging.info('Model Weights Before Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged gradients
+            bt.logging.info('Model Weights After Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             self.grad_averager.reset_accumulated_grads_()  # prepare for next step
             self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
             self.local_samples = 0  
-            self.step_scheduled = False 
-
         synapse.completion = "True"
         return synapse
 
@@ -220,7 +157,9 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
-       
+        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+            load_state_from_peer(self)
+        
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
         group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
@@ -232,7 +171,6 @@ class Miner(BaseMinerNeuron):
         )
 
         total_loss = 0
-
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
@@ -248,35 +186,34 @@ class Miner(BaseMinerNeuron):
 
             # Backward Pass
             loss.backward()
-
-            # Log training to hivemind
-            # self.opt.step()
-
-            # Store gradients
-            gradients = tuple(
-                grad.detach().cpu().clone().share_memory_() for grad in grads_from_parameters(self)
-            )
-
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-            self.local_samples += 1
             
+            # Copy gradients
+            gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+
+            # Accumulate Gradients
+            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+            
+            # Zero Gradients
+            self.opt.zero_grad()
+
+            # Update Tracker
+            self.local_samples += 1    
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
+            # Log accumulation status
             if index % 10 == 0:
                 bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
                 bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
-            # Zero gradients
-            # self.opt.zero_grad()
-        
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
         
         if index % 10 != 0:
-            bt.logging.info(f"Loss: {outputs.loss.detach().item():.2f} | Local samples: {self.local_samples} | Local epoch: {self.local_epoch}")
-            bt.logging.info(f"Global_samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers:       {self.tracker.global_progress.num_peers}")
+            bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
+            bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
-        synapse.gradients = float(sum(gradients[synapse.gradient_test_index]))
+        # Store summed random gradients in the synapse
+        synapse.gradients =  float(torch.sum(torch.abs(gradients[synapse.gradient_test_index])))
 
         average_loss = total_loss / index
         synapse.loss = average_loss

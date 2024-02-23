@@ -130,8 +130,8 @@ def add_args(cls, parser):
         "--neuron.lr",
         type=float,
         help="The learning rate",
-        default=0.001
-        # default=5/((2**3)*(10**3))
+        # default=0.001
+        default=5/((2**3)*(10**3))
     )
 
     parser.add_argument(
@@ -180,14 +180,14 @@ def add_args(cls, parser):
         "--neuron.wandb_project",
         type=str,
         help="The wandb project to log to",
-        default="distributed_training",
+        default="subnet_test",
     )
 
     parser.add_argument(
         "--neuron.wandb_entity",
         type=str,
         help="The wandb project to log to",
-        default="kmfoda",
+        default="kf_ps",
     )
 
     parser.add_argument(
