@@ -283,6 +283,10 @@ def init_dht(self):
                 bt.logging.error(f"Retrying...")
 
     utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
+
+    # Commit Peer Id to Subtensor
+    self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
+
     # Add DHT address to wandb config
     self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
 
