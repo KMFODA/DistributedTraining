@@ -24,7 +24,9 @@ import bittensor as bt
 import hivemind
 from transformers import AutoModelForCausalLM
 import torch
-import wandb
+import threading
+import datetime as dt
+import traceback
 
 from template.base.validator import BaseValidatorNeuron
 from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, init_dht
@@ -44,6 +46,68 @@ from hivemind.p2p import PeerID
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
+
+import bisect
+import copy
+import threading
+from typing import List
+
+import random
+
+class MinerIterator:
+    """A thread safe infinite iterator to cyclically enumerate the current set of miner UIDs.
+
+    Why? To perform miner evaluations, the validator will enumerate through the miners in order to help ensure
+    each miner is evaluated at least once per epoch.
+    """
+
+    def __init__(self, miner_uids: List[int]):
+        self.miner_uids = sorted(copy.deepcopy(miner_uids))
+        # Start the index at a random position. This helps ensure that miners with high UIDs aren't penalized if
+        # the validator restarts frequently.
+        self.index = random.randint(0, len(self.miner_uids) - 1)
+        self.lock = threading.Lock()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> int:
+        with self.lock:
+            if len(self.miner_uids) == 0:
+                # This iterator should be infinite. If there are no miner UIDs, raise an error.
+                raise IndexError("No miner UIDs.")
+
+            uid = self.miner_uids[self.index]
+            self.index += 1
+            if self.index >= len(self.miner_uids):
+                self.index = 0
+            return uid
+
+    def peek(self) -> int:
+        """Returns the next miner UID without advancing the iterator."""
+        with self.lock:
+            if len(self.miner_uids) == 0:
+                # This iterator should be infinite. If there are no miner UIDs, raise an error.
+                raise IndexError("No miner UIDs.")
+
+            return self.miner_uids[self.index]
+
+    def set_miner_uids(self, miner_uids: List[int]):
+        """Updates the miner UIDs to iterate.
+
+        The iterator will be updated to the first miner uid that is greater than or equal to UID that would be next
+        returned by the iterator. This helps ensure that frequent updates to the miner_uids does not cause too much
+        churn in the sequence of UIDs returned by the iterator.
+        """
+        sorted_uids = sorted(copy.deepcopy(miner_uids))
+        with self.lock:
+            next_uid = self.miner_uids[self.index]
+            new_index = bisect.bisect_left(sorted_uids, next_uid)
+            if new_index >= len(sorted_uids):
+                new_index = 0
+            self.index = new_index
+            self.miner_uids = sorted_uids
+
 logger = get_logger(__name__)
 
 class Validator(BaseValidatorNeuron):
@@ -122,7 +186,6 @@ class Validator(BaseValidatorNeuron):
 
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
-
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -139,8 +202,71 @@ class Validator(BaseValidatorNeuron):
                 self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
                 time.sleep(1)
 
+        self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
+        self.stop_event = threading.Event()
+        self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
+        # self.update_thread.start()
+        
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+    def map_uids_to_peerids(self):
+        # Track how recently we updated each uid
+        uid_last_checked = dict()
+
+        # The below loop iterates across all miner uids and checks to see
+        # if they should be updated.
+        while not self.stop_event.is_set():
+            try:
+                # Get the next uid to check
+                next_uid = next(self.miner_iterator)
+
+                # Confirm that we haven't checked it in the last 5 minutes.
+                time_diff = (
+                    dt.datetime.now() - uid_last_checked[next_uid]
+                    if next_uid in uid_last_checked
+                    else None
+                )
+
+                if time_diff and time_diff < dt.timedelta(minutes=5):
+                    # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
+                    time_to_sleep = (
+                        dt.timedelta(minutes=5) - time_diff
+                    ).total_seconds()
+                    bt.logging.trace(
+                        f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
+                    )
+                    time.sleep(time_to_sleep)
+
+                uid_last_checked[next_uid] = dt.datetime.now()
+
+                # Get their hotkey from the metagraph.
+                hotkey = self.metagraph.hotkeys[next_uid]
+
+                # Compare metadata and tracker, syncing new model from remote store to local if necessary.
+                metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid,  self.metagraph.hotkeys[next_uid])
+
+                if not metadata:
+                    updated = None
+                else:
+                    commitment = metadata["info"]["fields"][0]
+                    hex_data = commitment[list(commitment.keys())[0]][2:]
+                    chain_str = bytes.fromhex(hex_data).decode()
+                    updated = PeerID(chain_str)
+
+                if self.uids_to_peerids[next_uid] != updated:
+                    bt.logging.trace(
+                        f"Updated peerID for UID={next_uid}. Was new = {updated}"
+                    )
+                    self.uids_to_peerids[next_uid] = updated
+
+            except Exception as e:
+                bt.logging.error(
+                    f"Error in update loop: {e} \n {traceback.format_exc()}"
+                )
+
+        bt.logging.info("Exiting update models loop.")
+
 
     def get_validator_info(self):
         return {

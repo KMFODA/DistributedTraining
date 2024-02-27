@@ -73,7 +73,7 @@ async def forward(self):
     if all_reduce:
         with self.tracker.pause_updates():
             bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False, timeout = 150 )
+            gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False)
 
         queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:

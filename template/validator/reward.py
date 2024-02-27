@@ -33,30 +33,30 @@ def score_gradients(self, response, uid):
         batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
     )
 
-    # Train data for one epoch
-    for index, batch in enumerate(dataloader):
+    # Train data for on last indices
+    for index, batch in enumerate(dataloader): continue
 
-        inputs = batch.to(self.device)
+    inputs = batch.to(self.device)
 
-        # Forward pass
-        outputs = self.model(input_ids=inputs, labels=inputs)
+    # Forward pass
+    outputs = self.model(input_ids=inputs, labels=inputs)
 
-        loss = outputs.loss
+    loss = outputs.loss
 
-        # Backward Pass
-        loss.backward()
+    # Backward Pass
+    loss.backward()
 
-        # Copy gradients
-        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+    # Copy gradients
+    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
 
-        # Accumulate Gradients
-        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-        
-        # Zero Gradients
-        self.opt.zero_grad()
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
     
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log({"loss": outputs.loss.detach().item()})
+    # Zero Gradients
+    self.opt.zero_grad()
+
+    if not self.config.neuron.dont_wandb_log:
+        self.wandb.log({"loss": outputs.loss.detach().item()})
 
     # Store summed random gradients in the synapse
     gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
@@ -144,7 +144,7 @@ async def get_rewards(
             scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
             
             # Update mapping of uids to peerids
-            self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+            self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
             
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
@@ -154,7 +154,7 @@ async def get_rewards(
 
             # Score miners bandwidth
             bandwidth_scores = await score_bandwidth(self, self.miner_uids.tolist())
-            bt.logging.info(f"Bandwidth Scores: {scores}")
+            bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
             self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
             scores *= bandwidth_scores
 
@@ -172,7 +172,7 @@ async def get_rewards(
         if ((self.step % 10)==0):
 
             # Update mapping of uids to peerids
-            self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+            self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
             
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())

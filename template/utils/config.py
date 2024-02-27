@@ -123,7 +123,7 @@ def add_args(cls, parser):
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
-        default="kmfoda/gpt2-677m",
+        default="kmfoda/gpt2-200m",
     )
 
     parser.add_argument(
@@ -131,7 +131,7 @@ def add_args(cls, parser):
         type=float,
         help="The learning rate",
         # default=0.001
-        default=5/((2**3)*(10**3))
+        default=5/((2)*(10**3))
     )
 
     parser.add_argument(
@@ -152,7 +152,7 @@ def add_args(cls, parser):
         "--neuron.global_batch_size_train",
         type=int,
         help="The hivemind global target_batch_size",
-        default=250*25,
+        default=32000,
     )
 
     parser.add_argument(
