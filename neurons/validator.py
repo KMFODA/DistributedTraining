@@ -186,7 +186,6 @@ class Validator(BaseValidatorNeuron):
 
         self.step_scheduled = False
         self.local_epoch, self.local_samples = 0, 0
-
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -206,8 +205,8 @@ class Validator(BaseValidatorNeuron):
         self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
         self.stop_event = threading.Event()
         self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
-        self.update_thread.start()
-
+        # self.update_thread.start()
+        
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
 
@@ -242,16 +241,18 @@ class Validator(BaseValidatorNeuron):
                 uid_last_checked[next_uid] = dt.datetime.now()
 
                 # Get their hotkey from the metagraph.
-                hotkey = "NoHotkey"
-                with self.metagraph_lock:
-                    hotkey = self.metagraph.hotkeys[next_uid]
+                hotkey = self.metagraph.hotkeys[next_uid]
 
                 # Compare metadata and tracker, syncing new model from remote store to local if necessary.
                 metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid,  self.metagraph.hotkeys[next_uid])
-                commitment = metadata["info"]["fields"][0]
-                hex_data = commitment[list(commitment.keys())[0]][2:]
-                chain_str = bytes.fromhex(hex_data).decode()
-                updated = PeerID(chain_str)
+
+                if not metadata:
+                    updated = None
+                else:
+                    commitment = metadata["info"]["fields"][0]
+                    hex_data = commitment[list(commitment.keys())[0]][2:]
+                    chain_str = bytes.fromhex(hex_data).decode()
+                    updated = PeerID(chain_str)
 
                 if self.uids_to_peerids[next_uid] != updated:
                     bt.logging.trace(
