@@ -65,6 +65,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
         return future.result(timeout=timeout) if wait else future
 
     async def _load_state_from_peers_with_latest_state(self, global_epoch, future: MPFuture, timeout: Optional[float] = None):
+        bt.logging.info(f"Timeout = {timeout}")
         if timeout is not None:
             timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
         try:
