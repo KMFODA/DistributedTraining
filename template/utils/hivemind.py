@@ -1,23 +1,26 @@
-from typing import Any, Dict, Optional, Sequence, Tuple
-import random
-from hivemind.utils import MPFuture
-from hivemind.p2p import PeerID
-from hivemind.utils.timed_storage import DHTExpiration, ValueWithExpiration, get_dht_time
-from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.optim.progress_tracker import LocalTrainingProgress
 import logging
-import hivemind
-from itertools import chain
-import torch
-from packaging.version import Version
+import random
 import re
 from contextlib import contextmanager
-import bittensor as bt
+from itertools import chain
+from typing import Any, Dict, Optional, Sequence, Tuple
 
+import bittensor as bt
+import hivemind
+import torch
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.optim.progress_tracker import LocalTrainingProgress
+from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
+from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
-from hivemind.compression import deserialize_torch_tensor
+from hivemind.utils.timed_storage import (
+    DHTExpiration,
+    ValueWithExpiration,
+    get_dht_time,
+)
+from packaging.version import Version
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -181,7 +184,7 @@ def load_state_from_peer(self):
 
     bt.logging.info('Model Weights Before Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    self.state_averager.load_final_state_from_peers(self.tracker.global_progress.epoch)
+    self.state_averager.load_final_state_from_peers(self.tracker.global_progress.epoch, timeout = self.state_averager.next_chunk_timeout)
     bt.logging.info('Model Weights After Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 

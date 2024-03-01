@@ -18,36 +18,31 @@
 
 
 import asyncio
+import datetime as dt
+import threading
 import time
+import traceback
+from typing import Optional
 
 import bittensor as bt
 import hivemind
-from transformers import AutoModelForCausalLM
 import torch
-import threading
-import datetime as dt
-import traceback
-
-from template.base.validator import BaseValidatorNeuron
-from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging, init_dht
-from template.utils.hivemind import DTGradientAverager, DTStateAverager
-from template.validator import forward
 from bitarray import bitarray
-
-import asyncio
-from typing import Optional
-from hivemind.utils import get_logger
-from hivemind.proto import averaging_pb2
-from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.optim.state_averager import TrainingStateAverager
-
 from hivemind.p2p import PeerID
-from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
+from transformers import AutoModelForCausalLM
 
-import threading
+from template.base.validator import BaseValidatorNeuron
+from template.utils.hivemind import DTGradientAverager, DTStateAverager
+from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging
+from template.validator import forward
 
 logger = get_logger(__name__)
 
@@ -113,7 +108,8 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device("cuda"),
-            start = True
+            start = True,
+            next_chunk_timeout = 30.0,
         )
         
         # Init State Averager
@@ -123,6 +119,7 @@ class Validator(BaseValidatorNeuron):
             prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
             start = True,
+            next_chunk_timeout = 30.0,
         )
 
         self.step_scheduled = False

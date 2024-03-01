@@ -16,10 +16,10 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import random
 import re
 import time
 import typing
-import random
 from ipaddress import ip_address
 
 import bittensor as bt
@@ -27,21 +27,25 @@ import hivemind
 import requests
 import torch
 import wandb
-
+from bitarray import bitarray
 from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
+from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
-    
+
 # Bittensor Miner Template:
 import template
-from bitarray import bitarray
 
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
-from template.utils.misc import load_wandb, setup_logging, get_bandwidth, init_dht
-from template.utils.hivemind import DTGradientAverager, load_state_from_peer, DTStateAverager
 from template.data.dataset import SubsetFalconLoader
-from hivemind.optim.state_averager import TrainingStateAverager
+from template.utils.hivemind import (
+    DTGradientAverager,
+    DTStateAverager,
+    load_state_from_peer,
+)
+from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging
+
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -71,6 +75,7 @@ class Miner(BaseMinerNeuron):
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device(self.device),
             start = True,
+            next_chunk_timeout = 30.0,
         )
 
         # Init Tracker
@@ -88,6 +93,7 @@ class Miner(BaseMinerNeuron):
             prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
             start = True,
+            next_chunk_timeout = 30.0,
         )
         
         # Init UID
