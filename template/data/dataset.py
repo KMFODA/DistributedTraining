@@ -25,7 +25,7 @@ import time
 import math
 
 model_name = "distilgpt2"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py

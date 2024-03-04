@@ -18,48 +18,32 @@
 
 
 import asyncio
-import re
+import datetime as dt
+import threading
 import time
-from functools import partial
-from ipaddress import ip_address
+import traceback
+from typing import Optional
 
 import bittensor as bt
 import hivemind
-import requests
 import torch
-import wandb
-from datasets import load_dataset
-from hivemind.optim.state_averager import TrainingStateAverager
+from bitarray import bitarray
+from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
-from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from hivemind.optim.state_averager import TrainingStateAverager
+from hivemind.p2p import PeerID
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
+from hivemind.utils.timed_storage import ValueWithExpiration
+from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.misc import AsyncDendritePool, load_wandb, setup_logging
+from template.utils.hivemind import DTGradientAverager, DTStateAverager
+from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging
 from template.validator import forward
-from template.validator.validator_core import DatasetState
-from bitarray import bitarray
 
-
-import asyncio
-import multiprocessing as mp
-from typing import Any, Dict, Optional, Sequence, Tuple
-from hivemind.utils import MPFuture, get_logger
-from hivemind.proto import averaging_pb2
-from hivemind.utils.asyncio import (
-    achain,
-    aiter_with_timeout,
-    anext,
-    as_aiter,
-    azip,
-    enter_asynchronously,
-    switch_to_uvloop,
-)
-from hivemind.p2p import P2P, P2PContext, P2PDaemonError, P2PHandlerError, PeerID, ServicerBase
-import random
-from hivemind.compression import CompressionBase, CompressionInfo, NoCompression, deserialize_torch_tensor
-from hivemind.utils.streaming import combine_from_streaming, split_for_streaming
-from hivemind.utils.timed_storage import DHTExpiration, ValueWithExpiration, get_dht_time
 logger = get_logger(__name__)
 
 class Validator(BaseValidatorNeuron):
@@ -69,11 +53,29 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
-        self.init_dht()
+        num_peers = 0
+        while num_peers == 0:
+
+            # Init DHT
+            init_dht(self)
+
+            # Init Tracker
+            self.tracker = ProgressTracker(
+                dht=self.dht, 
+                prefix=f"{self.config.neuron.run_id}", 
+                target_batch_size=self.config.neuron.global_batch_size_train,
+                start=True
+            )
+            num_peers = self.tracker.global_progress.num_peers
+
+            bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
+            if num_peers == 0:
+                bt.logging.info('Re-initialising the DHT')
+            time.sleep(10)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self.config, self.wallet, "validator", str(self.dht.peer_id))
+            self.wandb = load_wandb(self, self.config, self.wallet, "validator", str(self.dht.peer_id))
 
         # Init Dendrite Pool
         self.dendrite_pool = AsyncDendritePool(
@@ -83,99 +85,126 @@ class Validator(BaseValidatorNeuron):
         # # Init Dataset
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
-        # self.dataset_dict = dict()  # Init a dict to use as placeholder DHT
 
-        self.dataset_common_state = DatasetState(
-            self.dht, self.dataset_indices, self.config.neuron.run_id
-        )
-        
-        # self.dataset_indices_list_test = self.dataset_common_state.get_dht("dataset_indices_train")
-        # if self.dataset_indices_list_test is None:
-        #     self.dataset_indices_list_test = self.dataset_common_state.get_dht("dataset_indices_test")
-        self.dataset_indices_list_test = (
-            self.dataset_common_state.get_dataset_indices_test(
-                self.config.neuron.local_batch_size_test * self.config.neuron.local_gradient_accumilation_steps_test
-            )
-        )
-
-        self.global_step = self.dataset_common_state.get_dht("step")
-        if self.global_step is None:
-            self.global_step = 0
-            # self.dataset_common_state.set_dht("step")
-
-        # Init Loss
-        self.previous_loss = self.dataset_common_state.get_dht("loss")
-        self.latest_upload = 0
-        self.latest_weight_update = 0
-        self.step = 0
-        self.global_step = self.dataset_common_state.get_dht("step")
-
-        # Init device
+        # Init Device, Model & Tokenizer
         self.device = self.config.neuron.device
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model.to(self.device)
 
-        # Init Model
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name
-        ).to(self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
         # For simplicity only pick layers with a dim of 1
         self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
-
-        # # Init State Averager
-        # self.state_averager = TrainingStateAverager(
-        #     dht=self.dht,
-        #     optimizer=partial(torch.optim.AdamW, lr=self.config.neuron.lr),
-        #     scheduler=None,
-        #     params=self.model.parameters(),
-        #     allow_state_sharing=False,
-        #     start=True,
-        #     prefix=f"{self.config.neuron.run_id}_state_averager",
-        #     state_compression=hivemind.Uniform8BitQuantization(),
-        #     # **asdict(averager_args),
-        # )
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
-        self.opt = hivemind.Optimizer(
-            dht=self.dht,  # use a DHT that is connected with other peers
-            run_id=self.config.neuron.run_id,  # unique identifier of this collaborative run
-            scheduler=None,
-            # batch_size_per_step=self.config.neuron.local_batch_size_train*self.config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
-            target_batch_size=self.config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
-            optimizer=opt,  # wrap the SGD optimizer defined above
-            use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
-            load_state_timeout=240,
-            matchmaking_time=15.0,  # when averaging parameters, gather peers in background for up to this many seconds
-            averaging_timeout=60.0,  # give up on averaging if not successful in this many seconds
-            verbose=False,  # print logs incessently
-            grad_compression=hivemind.Uniform8BitQuantization(),
-            state_averaging_compression=hivemind.Uniform8BitQuantization(),
-            # client=True,
-            # auxiliary=True,
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+
+        # Init Gradient Averager
+        self.grad_averager = DTGradientAverager(
+            self.model.parameters(),
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_grad_averager",
+            compression=hivemind.Uniform8BitQuantization(),
+            # reuse_grad_buffers=True,
+            accumulate_grads_on=torch.device("cuda"),
+            start = True,
+            next_chunk_timeout = 30.0,
+        )
+        
+        # Init State Averager
+        self.state_averager = DTStateAverager(
+            optimizer = self.opt,
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            state_compression=hivemind.Uniform8BitQuantization(),
+            start = True,
+            next_chunk_timeout = 30.0,
         )
 
+        self.step_scheduled = False
+        self.local_epoch, self.local_samples = 0, 0
         self.loop = asyncio.new_event_loop()
-        # self._inner_pipe = self.state_averager._inner_pipe
-        # self._outer_pipe = self.state_averager._outer_pipe
-        self._inner_pipe, self._outer_pipe = mp.Pipe(duplex=True) 
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.opt.state_averager.prefix = self.opt.state_averager.matchmaking_kwargs["prefix"]
-        self.peer_id = self.dht.peer_id
-        self.training_progress_key = f"{self.config.neuron.run_id}_progress"
-        self.get_stub = self.opt.state_averager.get_stub
-        self.serializer = self.opt.state_averager.serializer
-
-        # TEST
-        self.loop.close()
-        self.loop = asyncio.new_event_loop()
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+        self.peer_id = self.dht.peer_id
+        self.get_stub = self.grad_averager.get_stub
+        self.serializer = self.grad_averager.serializer
+        
+        # Create mapping between uids to peerids 
+        self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (retries >= max_retries):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+                time.sleep(1)
 
+        # self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
+        # self.stop_event = threading.Event()
+        # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
+        # self.update_thread.start()
+        
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+    def map_uids_to_peerids(self):
+        # Track how recently we updated each uid
+        uid_last_checked = dict()
+
+        # The below loop iterates across all miner uids and checks to see
+        # if they should be updated.
+        while not self.stop_event.is_set():
+            try:
+                # Get the next uid to check
+                next_uid = next(self.miner_iterator)
+
+                # Confirm that we haven't checked it in the last 5 minutes.
+                time_diff = (
+                    dt.datetime.now() - uid_last_checked[next_uid]
+                    if next_uid in uid_last_checked
+                    else None
+                )
+
+                if time_diff and time_diff < dt.timedelta(minutes=5):
+                    # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
+                    time_to_sleep = (
+                        dt.timedelta(minutes=5) - time_diff
+                    ).total_seconds()
+                    bt.logging.trace(
+                        f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
+                    )
+                    time.sleep(time_to_sleep)
+
+                uid_last_checked[next_uid] = dt.datetime.now()
+
+                # Get their hotkey from the metagraph.
+                hotkey = self.metagraph.hotkeys[next_uid]
+
+                # Compare metadata and tracker, syncing new model from remote store to local if necessary.
+                metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid,  self.metagraph.hotkeys[next_uid])
+
+                if not metadata:
+                    updated = None
+                else:
+                    commitment = metadata["info"]["fields"][0]
+                    hex_data = commitment[list(commitment.keys())[0]][2:]
+                    chain_str = bytes.fromhex(hex_data).decode()
+                    updated = PeerID(chain_str)
+
+                if self.uids_to_peerids[next_uid] != updated:
+                    bt.logging.trace(
+                        f"Updated peerID for UID={next_uid}. Was new = {updated}"
+                    )
+                    self.uids_to_peerids[next_uid] = updated
+
+            except Exception as e:
+                bt.logging.error(
+                    f"Error in update loop: {e} \n {traceback.format_exc()}"
+                )
+
+        bt.logging.info("Exiting update models loop.")
+
 
     def get_validator_info(self):
         return {
@@ -187,46 +216,43 @@ class Validator(BaseValidatorNeuron):
             "emissions": self.metagraph.emission[self.uid],
         }
 
-    async def map_uid_to_peerid(self, uid):
-        miner_ip = self.metagraph.axons[uid].ip
+    async def map_uid_to_peerid(self, uids):
+        uids_to_peerids = {}
+        for uid in uids:
+            miner_ip = self.metagraph.axons[uid].ip
 
-        # Get all peers connected to our DHT and their ips
-        peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
+            # Get all peers connected to our DHT and their ips
+            peer_list_dht = await self._p2p.list_peers()
+            peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
 
-        # Get only peers connected to the current run id
-        metadata, _ = self.dht.get(self.opt.tracker.training_progress_key, latest=True) or (None, -float("inf"))
-        if metadata is None:
-            return None
-        peer_list_run = [str(PeerID(peer_state.value['peer_id'])) for peer_state in metadata.values() if peer_state.value is not None]
+            # Get only peers connected to the current run id
+            prefix = self.grad_averager.matchmaking_kwargs['prefix']
+            metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
 
-        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
-        if miner_ip not in peer_list_dht_addrs:
-            return None
-        else:
-            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-        
-        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in peer_list_run:
-            return None
-        else:
-            return peer_id
-        
-    def load_state_from_peers(
-        self, peer, wait: bool = True, timeout: Optional[float] = None,
-    ) -> Optional[Tuple[Any, Sequence[torch.Tensor]]]:
-        """
-        Try to download the latest optimizer state one of the existing peer.
-        :returns: on success, return a 2-tuple with (metadata, tensors), where
+            if metadata is None:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
 
-        - metadata is a small object containing metadata (e.g. hyperparameters, scalars, etc)
-        - tensors is a sequence of pytorch tensors meant to contain peer's model weights and optimizer statistics
+            # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
+            if miner_ip not in peer_list_dht_addrs:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            else:
+                peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
 
-        The exact contents of both metadata and tensors are determined by get_current_state method
-        """
-        future = MPFuture()
-        self._outer_pipe.send(("_load_state_from_peers", [], dict(peer = peer, timeout=timeout, future=future)))
-        return future.result(timeout=timeout) if wait else future
+            # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
+            if str(peer_id) not in peer_list_run:
+                # return None
+                uids_to_peerids[uid] = None
+                continue
+            else:
+                # return peer_id
+                uids_to_peerids[uid] = peer_id
+                continue
+        return uids_to_peerids
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         if timeout is not None:
@@ -235,7 +261,7 @@ class Validator(BaseValidatorNeuron):
         metadata = None
         logger.info(f"Downloading parameters from peer {peer}")
         try:
-            stub = self.get_stub(self._p2p, peer, namespace=self.opt.state_averager.prefix)
+            stub = self.get_stub(self._p2p, peer, namespace=self.grad_averager.matchmaking_kwargs['prefix'])
             stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
             current_tensor_parts, tensors = [], []
 
@@ -261,76 +287,6 @@ class Validator(BaseValidatorNeuron):
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
             return None, None
-
-    # Define encoding function
-    def encode(self, examples):
-        return self.tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=512,
-            padding="max_length",
-            return_tensors="pt",
-        )
-
-    def init_dht(self):
-        # Init DHT
-        if self.config.dht.use_google_dns:
-            request = requests.get("https://api.ipify.org")
-            request.raise_for_status()
-
-            address = request.text
-            bt.logging.info(f"Received public IP address of this machine: {address}")
-            version = ip_address(address).version
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-        else:
-            version = "4"
-            address = self.config.dht.announce_ip
-            announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
-
-        # Init list of available DHT addresses from wandb
-        api = wandb.Api()
-        initial_peers_list = self.config.neuron.initial_peers
-        runs = api.runs(
-            f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-        )
-        for ru in runs:
-            if ru.state == "running":
-                for peer in ru.config["neuron"]["initial_peers"]:
-                    if peer not in initial_peers_list:
-                        initial_peers_list.append(peer)
-
-        retries = 0
-        while retries <= len(initial_peers_list):
-            if retries == len(initial_peers_list):
-                raise Exception("Max retries reached, operation failed.")
-            try:
-                # Init DHT
-                self.dht = hivemind.DHT(
-                    host_maddrs=[
-                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                    ],
-                    initial_peers=[initial_peers_list[retries]],
-                    announce_maddrs=announce_maddrs,
-                    start=True,
-                    # client_mode = True,
-                )
-                bt.logging.info(
-                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
-                )
-                break
-            except Exception as e:
-                bt.logging.info(
-                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
-                )
-                retries += 1
-                bt.logging.info(f"Retrying...")
-
-        # Write local dht address to config
-        self.config.neuron.initial_peers = self.config.neuron.initial_peers + [
-            re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
-            for addr in self.dht.get_visible_maddrs()
-        ]
 
     async def forward(self):
         return await forward(self)

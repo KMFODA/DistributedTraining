@@ -20,13 +20,14 @@ import bittensor as bt
 
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
-from hivemind.utils.timed_storage import get_dht_time
+from template.utils.hivemind import load_state_from_peer
 
 import template
 import asyncio
 import random
 
 from template.utils.misc import get_bandwidth
+import time
 
 
 async def forward(self):
@@ -41,37 +42,44 @@ async def forward(self):
 
     """
 
-    if self.opt._should_load_state_from_peers():
-        bt.logging.info("_should_load_state_from_peers is True")
-        self.opt.load_state_from_peers()
-        self.opt.state_averager.load_state_from_peers()
-    
-    self.opt.load_state_from_peers()
-    self.opt.state_averager.load_state_from_peers()
+    bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+    if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+        bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
+        load_state_from_peer(self)
 
-    event = {}
-    self.miner_uids = await get_random_uids(
-        self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-    )
-    event.update({"uids":self.miner_uids})
-    bt.logging.info(f"UIDs:  {self.miner_uids}")
-
-    # if self.opt.tracker.estimated_next_update_time - get_dht_time() <= self.opt.matchmaking_time:
-    if False:
+    if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
+        
+        bt.logging.info("Scheduling all-reduce synapse call")
+        sample_size=int(self.metagraph.n)
+        next_step_control = self.grad_averager.schedule_step()
+        self.step_scheduled = True  
         all_reduce = True
+        self.event.update({"synapse_type":"all_reduce"})
+
     else:
+
+        sample_size = self.config.neuron.sample_size
         all_reduce = False
+        self.event.update({"synapse_type":"train"})
+    
+    # Get as many active miners as possible
+    self.miner_uids = await get_random_uids(
+        self, dendrite=self.dendrite, k=sample_size
+    )
+    self.event.update({"uids":self.miner_uids})
+    bt.logging.info(f"UIDs:  {self.miner_uids}")
 
     query_tasks = []
     if all_reduce:
-        self.opt.grad_averager.schedule_step(timeout=self.opt.averaging_timeout)
-        asyncio.sleep(self.opt.averaging_timeout)
-        queries = [template.protocol.AllReduce() for uid in self.miner_uids]
+        with self.tracker.pause_updates():
+            bt.logging.info("Performing Gradient Averaging")
+            gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False)
+
+        queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:
-        queries = [
-            template.protocol.Train( 
+        queries = [template.protocol.Train( 
                     gradient_test_index = random.choice(self.test_layer_indices),
-            ) for uid in self.miner_uids
+            ) for _ in self.miner_uids
         ]
 
     # The dendrite client queries the network.
@@ -84,7 +92,28 @@ async def forward(self):
     responses = await asyncio.gather(*query_tasks)
     if all_reduce and responses != []:
         responses = []
-        # Log the results for monitoring purposes.
+        sleep_counter = 1
+        while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+            time.sleep(1)
+            sleep_counter += 1
+        if gradient_averaging_step.done():
+            # Log the results for monitoring purposes.
+            bt.logging.info('Model Weights Before Optimizer Step')
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            with self.tracker.pause_updates():
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info('Model Weights After Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
+
+        else:
+            bt.logging.info("Averaging Failed. Loading State From Peer")
+            load_state_from_peer(self)
+
+        self.step_scheduled = False 
     else:
         bt.logging.info(
             "Received responses: " + str([
@@ -110,22 +139,11 @@ async def forward(self):
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)
 
-    # Update global step
-    step_update_status = self.dataset_common_state.update_step()
-    if step_update_status is None:
-        self.global_step += 1
-
-    self.step += 1
-
-    event = {}
-    event.update(self.get_validator_info())
+    self.event.update(self.get_validator_info())
     try:
-        event.update(get_bandwidth())
+        self.event.update(get_bandwidth())
     except:
         bt.logging.info("Error getting bandwidth metrics")
 
-    # Log to wandb
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log(event)
 
     return responses
