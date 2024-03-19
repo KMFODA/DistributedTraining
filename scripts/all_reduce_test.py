@@ -7,7 +7,7 @@ import torch
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
 from hivemind.utils import get_logger
-from hivemind_util import DTGradientAverager
+from template.utils.hivemind import DTGradientAverager
 from torch import nn
 
 logger = get_logger(__name__)
