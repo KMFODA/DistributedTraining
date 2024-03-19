@@ -21,10 +21,31 @@ from typing import List
 
 import bittensor as bt
 import torch
-from template.data.dataset import SubsetFalconLoader
+from template.data.dataset import SubsetFalconLoader, get_random_batches
 from template.utils.uids import get_random_uids
+from template.utils.misc import compute_losses
 import time
 import asyncio 
+
+def score_metrics(self):
+    """
+    Scores the metrics of the model after running AllReduce.
+    """
+    
+    # Load a random set of batches
+    batches = get_random_batches( n = self.config.pages_per_epoch, batch_size = self.config.bs, sequence_length = self.config.sl )
+    
+    # Compute the delta loss with the delta applied.
+    # TODO Should we do add/remove delta? Or just use the model as is?
+    delta_loss = self.previous_loss - compute_losses(self.model, batches, device=self.config.device)
+                    
+    
+    # Weights are the softmax of the loss deltas
+    score = self.config.alpha * torch.softmax(delta_loss, dim=0) + (1 - self.config.alpha) * weights
+    
+    self.previous_loss = delta_loss
+    
+
 
 def score_gradients(self, response, uid):
     
@@ -138,7 +159,7 @@ async def get_rewards(
         if all_reduce:
 
             # Now that we've called all_reduce on all available UIDs only score a sample of them to spread scoring burden across all validators
-            self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=self.config.neuron.sample_size)
+            # self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=self.config.neuron.sample_size)
             
             # Set up the scores tensor
             scores = torch.FloatTensor([1 for _ in uids]).to(self.device)

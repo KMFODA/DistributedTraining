@@ -16,25 +16,27 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-from math import floor
-from typing import Callable, Any
-import functools
-from functools import lru_cache, update_wrapper
-import bittensor as bt
-from typing import Any, List
-from template.protocol import Train
 import asyncio
-import wandb
+import functools
 import logging
-from loguru import logger as bt_logger
-from hivemind.utils.logging import use_hivemind_log_handler
-import speedtest
+import re
+import time
+from functools import lru_cache, update_wrapper
+from ipaddress import ip_address
+from math import floor
+from typing import Any, Callable, List
+
+import bittensor as bt
 import hivemind
 import requests
+import speedtest
+import torch
+import wandb
 from hivemind import utils
-import re
-from ipaddress import ip_address
+from hivemind.utils.logging import use_hivemind_log_handler
+from loguru import logger as bt_logger
+
+from template.protocol import Train
 from template.utils.chain_storage import run_in_subprocess
 
 
@@ -302,3 +304,62 @@ def init_dht(self):
 
     # Add DHT address to wandb config
     self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+
+# From: https://github.com/unconst/gradient/blob/main/neurons/validator.py#L53
+def compute_losses(model: torch.nn.Module, batches: List[torch.Tensor], device: str = 'cpu') -> float:
+    """
+    Computes and returns the average loss of a model evaluated over a given set of batches.
+
+    This function iterates through each batch, feeds it to the model, and accumulates the loss to compute
+    the average loss across all batches. This is useful for evaluating the model's performance on a dataset.
+
+    Args:
+        model (torch.nn.Module): The model to be evaluated.
+        batches (List[torch.Tensor]): A list of batches to evaluate the model on. Each batch is a torch.Tensor.
+        device (str, optional): The device (e.g., 'cpu' or 'cuda') on which to perform the computations. Defaults to 'cpu'.
+
+    Returns:
+        float: The average loss computed over all the batches.
+
+    Note:
+        This function does not compute gradients and is typically used for model evaluation.
+
+    Raises:
+        ValueError: If `batches` is empty, raising a ValueError to indicate that no batches were provided for evaluation.
+    """
+    # Ensure there are batches to compute the loss on
+    if not batches:
+        bt.logging.error("No batches provided for loss computation.")
+        raise ValueError("No batches provided for loss computation.")
+
+    # Initialize total_loss to accumulate losses over batches
+    total_loss: float = 0.0
+
+    # Calculate the number of batches for averaging the loss later
+    num_batches: int = len(batches)
+
+    # Disable gradient computations for efficiency and to prevent model updates
+    with torch.no_grad():
+        for batch in batches:
+            try:
+                # Move the batch to the specified device (e.g., CPU or GPU)
+                inputs: torch.Tensor = batch.to(device)
+                # Forward pass: Compute the model's output and loss for the given inputs
+                outputs = model(inputs, labels=inputs)
+                # Accumulate the loss
+                total_loss += outputs.loss.item()
+            except Exception as e:
+                bt.logging.error(f"Error during loss computation for a batch: {e}")
+                raise Exception(f"Error during loss computation for a batch: {e}")
+
+    # Compute the average loss across all batches
+    try:
+        average_loss: float = total_loss / num_batches
+    except ZeroDivisionError as e:
+        bt.logging.error("Division by zero encountered while computing average loss. This should not happen.")
+        raise ZeroDivisionError("Division by zero encountered while computing average loss.")
+
+    # Log the computed average loss
+    bt.logging.debug(f"Average loss computed successfully: {average_loss}")
+
+    return average_loss

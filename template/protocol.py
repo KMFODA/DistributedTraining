@@ -95,7 +95,19 @@ class Train( bt.Synapse ):
     # Epoch
     epoch: int | None
 
+class Group(pydantic.BaseModel):
+    peer_count: Optional[int] = None
+    peer_ids: Optional[List[str]] = None
+    bandwidth: Optional[int] = None
+    #started_at: Optional[int] = None
+    #session_time: Optional[int] = 300
+    #status: Optional[str] = None
+    #reason: Optional[str] = None
+
 class AllReduce( bt.Synapse ):
+    
+    group: Optional[Group] = None
+    
     answer: Optional[str] = None
     completion: str = pydantic.Field(
         "",

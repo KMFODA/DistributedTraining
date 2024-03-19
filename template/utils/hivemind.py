@@ -62,7 +62,7 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         """
         Set up the averager to look for a group and run one round of averaging, return True on success, False on failure.
-        If custom_group_info is provided, it directly uses this group for averaging without matchmaking.
+        If custom_group_info is provided, it directly uses this group for averaging without original hivemind matchmaking.
         
         Example:
         

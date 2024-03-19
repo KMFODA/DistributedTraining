@@ -15,18 +15,25 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-import torch
+
+import math
+import random
+import time
 import typing
-import requests
+
 import bittensor as bt
+import requests
+import torch
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
-import time
-import math
 
 model_name = "distilgpt2"
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
+
+# From: https://github.com/unconst/gradient/blob/main/neurons/validator.py#L53
+def get_random_batches( n: int, batch_size: int, sequence_length: int ) -> typing.List[torch.FloatTensor]:
+    return list( SubsetFalconLoader( batch_size, sequence_length, [ random.randint(0, SubsetFalconLoader.max_pages) for _ in range( n ) ] ) )
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
