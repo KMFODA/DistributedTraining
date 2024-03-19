@@ -1,21 +1,25 @@
 #import hivemind
 #from hivemind.utils.logging import use_hivemind_log_handler
-import torch
-import random
-from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
-from template.data.dataset import SubsetFalconLoader
 import logging
-from contextlib import contextmanager
-from template.base.neuron import BaseNeuron
+import math
+import random
 import time
+from contextlib import contextmanager
+
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import wandb
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-import math
-import matplotlib.pyplot as plt
-import torch.nn as nn
 from tqdm import tqdm
-import wandb
-from transformers.optimization import get_linear_schedule_with_warmup, get_inverse_sqrt_schedule
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          default_data_collator)
+from transformers.optimization import (get_inverse_sqrt_schedule,
+                                       get_linear_schedule_with_warmup)
+
+from template.base.neuron import BaseNeuron
+from template.data.dataset import SubsetFalconLoader
 
 # class WarmupCosineSchedule(LambdaLR):
 #     """ Linear warmup and then cosine decay.

@@ -1,8 +1,10 @@
-import hivemind
 import argparse
 from time import sleep
-from template.base.neuron import BaseNeuron
+
 import bittensor as bt
+import hivemind
+
+from template.base.neuron import BaseNeuron
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--netuid", type=int, help="Network netuid", default=25)
