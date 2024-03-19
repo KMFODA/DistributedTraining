@@ -45,50 +45,52 @@ def score_metrics(self):
     
     self.previous_loss = delta_loss
     
-
-
-def score_gradients(self, response, uid):
-    
-    # Create Dataloader
-    dataloader = SubsetFalconLoader(
-        batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
-    )
-
-    # Train data for on last indices
-    for index, batch in enumerate(dataloader): continue
-
-    inputs = batch.to(self.device)
-
-    # Forward pass
-    outputs = self.model(input_ids=inputs, labels=inputs)
-
-    loss = outputs.loss
-
-    # Backward Pass
-    loss.backward()
-
-    # Copy gradients
-    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-    
-    # Zero Gradients
-    self.opt.zero_grad()
-
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log({"loss": outputs.loss.detach().item()})
-
-    # Store summed random gradients in the synapse
-    gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
-        
-    bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
-    bt.logging.info(f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}")
-
-    # TODO Address issue where gradient sum is negative
-    score = 1-(abs(gradients-response.gradients))
-    
     return score
+    
+
+
+# def score_gradients(self, response, uid):
+    
+#     # Create Dataloader
+#     dataloader = SubsetFalconLoader(
+#         batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
+#     )
+
+#     # Train data for on last indices
+#     for index, batch in enumerate(dataloader): continue
+
+#     inputs = batch.to(self.device)
+
+#     # Forward pass
+#     outputs = self.model(input_ids=inputs, labels=inputs)
+
+#     loss = outputs.loss
+
+#     # Backward Pass
+#     loss.backward()
+
+#     # Copy gradients
+#     gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+
+#     # Accumulate Gradients
+#     self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+    
+#     # Zero Gradients
+#     self.opt.zero_grad()
+
+#     if not self.config.neuron.dont_wandb_log:
+#         self.wandb.log({"loss": outputs.loss.detach().item()})
+
+#     # Store summed random gradients in the synapse
+#     gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
+        
+#     bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
+#     bt.logging.info(f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}")
+
+#     # TODO Address issue where gradient sum is negative
+#     score = 1-(abs(gradients-response.gradients))
+    
+#     return score
 
 
 async def score_blacklist(self, uids):
@@ -202,11 +204,14 @@ async def get_rewards(
             scores *= blacklist_scores
 
         # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
-        gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
-        bt.logging.info(f"Gradient Scores: {gradient_scores}")
-        self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
-        scores *= gradient_scores
-
+        #gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
+        #bt.logging.info(f"Gradient Scores: {gradient_scores}")
+        #self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
+        #scores *= gradient_scores
+        
+        loss_and_perplexity_score = score_metrics()
+        scores *= loss_and_perplexity_score
+        
         # Calculate Data Indices Scores
         steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
         bt.logging.info(f"Steps Scores: {steps_scores}")
