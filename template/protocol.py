@@ -99,6 +99,7 @@ class Group(pydantic.BaseModel):
     peer_count: Optional[int] = None
     peer_ids: Optional[List[str]] = None
     bandwidth: Optional[int] = None
+    group_id: Optional[bytes] = None
     #started_at: Optional[int] = None
     #session_time: Optional[int] = 300
     #status: Optional[str] = None

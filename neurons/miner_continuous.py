@@ -48,6 +48,8 @@ from template.utils.misc import (get_bandwidth, init_dht, load_wandb,
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
+        
+        self.stage = AveragingStage.AWAITING_TRIGGER
 
         # Init DHT
         init_dht(self)
@@ -157,93 +159,29 @@ class Miner(BaseMinerNeuron):
             load_state_from_peer(self)
 
     async def forward(
-        self, synapse: template.protocol.Train
-    ) -> template.protocol.Train:
-        """
-        Processes the incoming 'Train' synapse by performing a training run
-
-        Args:
-            synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
-
-        Returns:
-            template.protocol.Train: The synapse object with the 'loss' field set to models loss.
-        """
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            load_state_from_peer(self)
+        self, synapse: template.protocol.AllReduce
+    ) -> template.protocol.AllReduce:
         
-        search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
-        start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
-        group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
-        self.dataset_indices[group] = True
-
-        # Create Dataloader
-        dataloader = SubsetFalconLoader(
-            batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
-        )
-
-        total_loss = 0
-        # Train data for one epoch
-        for index, batch in enumerate(dataloader):
-            inputs = batch.to(self.device)
-
-            # Forward pass
-            outputs = self.model(input_ids=inputs, labels=inputs)
-
-            # Normalize loss to account for batch accumulation
-            loss = outputs.loss
-            
-            # Accumulate Total Loss
-            total_loss += outputs.loss.detach().item() 
-
-            # Backward Pass
-            loss.backward()
-            
-            # Copy gradients
-            gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-
-            # Accumulate Gradients
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-            
-            # Zero Gradients
-            self.opt.zero_grad()
-
-            # Update Tracker
-            self.local_samples += 1    
-            self.tracker.report_local_progress(self.local_epoch, self.local_samples)
-
-            # Log accumulation status
-            if index % 10 == 0:
-                bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-                bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
+        self.stage = AveragingStage.RUNNING_ALLREDUCE
         
-        if index % 10 != 0:
-            bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-            bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
-        # Store summed random gradients in the synapse
-        synapse.gradients =  float(torch.sum(torch.abs(gradients[synapse.gradient_test_index])))
-
-        average_loss = total_loss / index
-        synapse.loss = average_loss
-        synapse.dataset_indices = group
-
-        event = {}
-        event.update(self.get_miner_info())
-        try:
-            event.update(get_bandwidth())
-        except:
-            bt.logging.info("Error getting bandwidth metrics")
-        event.update({'steps':index})
-        
-        # bt.logging.debug(f"Events: {str(event)}")
-        # bt.logging.info("EVENTS", "events", **event)
-
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(event)
-
+        if self.gradient_averaging_step.done():
+                # Log the results for monitoring purposes.
+                bt.logging.info('Model Weights Before Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info('Model Weights After Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
+                self.local_samples = 0  
+                synapse.completion = "True"
+                return synapse
+            else:
+                bt.logging.info("Averaging Failed. Loading State From Peer")
+                load_state_from_peer(self)
+            
         return synapse
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:

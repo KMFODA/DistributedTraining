@@ -50,6 +50,7 @@ async def forward(self):
     #     load_state_from_peer(self)
 
     #if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
+    
     if self.next_step_time - self.dtraining_time <= 60 * 2:  
         
         sample_size = self.config.neuron.sample_size_allreduce
@@ -71,11 +72,16 @@ async def forward(self):
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
     query_tasks = []
+    
     if all_reduce:
+        
         group_peerids = self.map_uid_to_peerid(self.miner_uids+self.uid)
+        group_id = DHTID.generate().to_bytes()
+        
         group = template.protocol.Group(
             peer_count=len(group_peerids), # Including the local peer
             peer_ids=group_peerids,
+            group_id=group_id,
         )
         
         queries = [template.protocol.AllReduce(
@@ -83,9 +89,10 @@ async def forward(self):
             ) for _ in self.miner_uids
         ]
         bt.logging.info("Performing Gradient Averaging")
+        
+        # TODO should group_peerids be ordered with validator peerid first? As done in hivemind averaging.py
+        
         # Define a custom group for all-reduce
-        # TODO should group_peerids be ordered with validator peerid first?
-        group_id = DHTID.generate().to_bytes()
         custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
 
         # Perform AllReduce step with queried miners to get averaged gradients

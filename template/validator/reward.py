@@ -30,20 +30,24 @@ import asyncio
 def score_metrics(self):
     """
     Scores the metrics of the model after running AllReduce.
+    We are using both loss and perplexity here to get a more nuanced view of the model's performance to balance the validation of miners more fairly.
     """
     
     # Load a random set of batches
     batches = get_random_batches( n = self.config.pages_per_epoch, batch_size = self.config.bs, sequence_length = self.config.sl )
     
-    # Compute the delta loss with the delta applied.
     # TODO Should we do add/remove delta? Or just use the model as is?
-    delta_loss = self.previous_loss - compute_losses(self.model, batches, device=self.config.device)
+    average_loss, ppl = self.previous_loss - compute_losses(self.model, batches, device=self.config.device)
                     
+    delta_loss = average_loss - self.previous_loss
+    delta_ppl = ppl - self.previous_ppl
     
-    # Weights are the softmax of the loss deltas
-    score = self.config.alpha * torch.softmax(delta_loss, dim=0) + (1 - self.config.alpha) * weights
+    # Weights are the softmax of the loss and perplexity deltas, i.e. scaled according to how much the metrics have changed.
+    score = self.config.alpha * torch.softmax(delta_loss, dim=0) + (1 - self.config.alpha)
+    score *= self.config.beta * torch.softmax(delta_ppl, dim=0) + (1 - self.config.beta)
     
-    self.previous_loss = delta_loss
+    self.previous_loss = average_loss
+    self.previous_ppl = ppl
     
     return score
     
@@ -157,15 +161,21 @@ async def get_rewards(
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
-        
         if all_reduce:
-
-            # Now that we've called all_reduce on all available UIDs only score a sample of them to spread scoring burden across all validators
-            # self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=self.config.neuron.sample_size)
-            
             # Set up the scores tensor
             scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
-            
+            scores *= score_metrics()
+        else:
+            # Set up the scores tensor
+            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
+
+    else:
+        scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
+        bt.logging.info(f"Timeout Scores: {scores}")
+
+        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not as well as score their bandwidth
+        if ((self.step % 10)==0):
+
             # Update mapping of uids to peerids
             self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
             
@@ -181,42 +191,17 @@ async def get_rewards(
             self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
             scores *= bandwidth_scores
 
-        else:
-
-            # Set up the scores tensor
-            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
-
-    else:
-
-        scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
-        bt.logging.info(f"Timeout Scores: {scores}")
-
-        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-        if ((self.step % 10)==0):
-
-            # Update mapping of uids to peerids
-            self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
-            
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
-            bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-            self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
-            scores *= blacklist_scores
-
         # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
         #gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
         #bt.logging.info(f"Gradient Scores: {gradient_scores}")
         #self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
         #scores *= gradient_scores
         
-        loss_and_perplexity_score = score_metrics()
-        scores *= loss_and_perplexity_score
-        
         # Calculate Data Indices Scores
-        steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
-        bt.logging.info(f"Steps Scores: {steps_scores}")
-        self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids, steps_scores)})
-        scores *= steps_scores
+        # steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
+        # bt.logging.info(f"Steps Scores: {steps_scores}")
+        # self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids, steps_scores)})
+        # scores *= steps_scores
 
     return scores
 

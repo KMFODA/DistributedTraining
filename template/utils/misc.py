@@ -355,6 +355,8 @@ def compute_losses(model: torch.nn.Module, batches: List[torch.Tensor], device: 
     # Compute the average loss across all batches
     try:
         average_loss: float = total_loss / num_batches
+        # TODO Should we add same loss/ppl calculation as in sn9? https://github.com/RaoFoundation/pretraining/blob/d2faaec9737c8858cd22373140bd5db0ace02c4c/scripts/run_benchmarks.py#L37
+        perplexity: float = torch.exp(torch.tensor(average_loss)).item()
     except ZeroDivisionError as e:
         bt.logging.error("Division by zero encountered while computing average loss. This should not happen.")
         raise ZeroDivisionError("Division by zero encountered while computing average loss.")
@@ -362,4 +364,4 @@ def compute_losses(model: torch.nn.Module, batches: List[torch.Tensor], device: 
     # Log the computed average loss
     bt.logging.debug(f"Average loss computed successfully: {average_loss}")
 
-    return average_loss
+    return average_loss, perplexity

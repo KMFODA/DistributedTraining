@@ -85,7 +85,9 @@ class Validator(BaseValidatorNeuron):
         # Init epcoh countdown
         self.dtraining_time = time.time()
         self.next_step_time = self.dtraining_time + 60 * 10   # runs global steps every 10 minutes
+        # TODO set correctly
         self.previous_loss = 0
+        self.previous_ppl = 0
         
         # # Init Dataset
         dataset_length = 968000015
