@@ -89,6 +89,7 @@ class Miner(BaseMinerNeuron):
         # Init State Averager
         self.state_averager = DTStateAverager(
             optimizer = self.opt,
+            initialize_optimizer = False,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
