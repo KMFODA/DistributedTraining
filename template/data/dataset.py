@@ -15,25 +15,18 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-
-import math
-import random
-import time
-import typing
-
-import bittensor as bt
-import requests
 import torch
+import typing
+import requests
+import bittensor as bt
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
+import time
+import math
 
 model_name = "distilgpt2"
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
-
-# From: https://github.com/unconst/gradient/blob/main/neurons/validator.py#L53
-def get_random_batches( n: int, batch_size: int, sequence_length: int ) -> typing.List[torch.FloatTensor]:
-    return list( SubsetFalconLoader( batch_size, sequence_length, [ random.randint(0, SubsetFalconLoader.max_pages) for _ in range( n ) ] ) )
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
@@ -54,11 +47,12 @@ class SubsetFalconLoader(IterableDataset):
         self.retry_limit = 10  # Number of retries
         self.retry_delay = 5  # Seconds to wait between retries
         self.fetch_data_for_page(min(self.rows), len(self.rows))
+
     def fetch_data_for_page(self, offset, length):
         iterations = math.ceil(length/100)
         for iteration in range(iterations):
             self.params["offset"] = offset + (iteration*100)
-            self.params["limit"] = min(100, length - (iteration*100))
+            self.params["length"] = min(100, length - (iteration*100))
             attempt = 0
             while attempt < self.retry_limit:
                 try:

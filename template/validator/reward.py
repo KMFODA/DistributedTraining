@@ -51,50 +51,49 @@ def score_metrics(self):
     
     return score
     
-
-
-# def score_gradients(self, response, uid):
     
-#     # Create Dataloader
-#     dataloader = SubsetFalconLoader(
-#         batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
-#     )
-
-#     # Train data for on last indices
-#     for index, batch in enumerate(dataloader): continue
-
-#     inputs = batch.to(self.device)
-
-#     # Forward pass
-#     outputs = self.model(input_ids=inputs, labels=inputs)
-
-#     loss = outputs.loss
-
-#     # Backward Pass
-#     loss.backward()
-
-#     # Copy gradients
-#     gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-
-#     # Accumulate Gradients
-#     self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+def score_gradients(self, response, uid):
     
-#     # Zero Gradients
-#     self.opt.zero_grad()
+    # Create Dataloader
+    dataloader = SubsetFalconLoader(
+        batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=response.dataset_indices
+    )
 
-#     if not self.config.neuron.dont_wandb_log:
-#         self.wandb.log({"loss": outputs.loss.detach().item()})
+    # Train data for on last indices
+    for index, batch in enumerate(dataloader): continue
 
-#     # Store summed random gradients in the synapse
-#     gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
+    inputs = batch.to(self.device)
+
+    # Forward pass
+    outputs = self.model(input_ids=inputs, labels=inputs)
+
+    loss = outputs.loss
+
+    # Backward Pass
+    loss.backward()
+
+    # Copy gradients
+    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+    
+    # Zero Gradients
+    self.opt.zero_grad()
+
+    if not self.config.neuron.dont_wandb_log:
+        self.wandb.log({"loss": outputs.loss.detach().item()})
+
+    # Store summed random gradients in the synapse
+    gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
         
-#     bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
-#     bt.logging.info(f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}")
+    bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
+    bt.logging.info(f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}")
 
-#     # TODO Address issue where gradient sum is negative
-#     score = 1-(abs(gradients-response.gradients))
+    # TODO Address issue where gradient sum is negative
+    score = 1-(abs(gradients-response.gradients))
     
-#     return score
+    return score
 
 
 async def score_blacklist(self, uids):
@@ -161,19 +160,22 @@ async def get_rewards(
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
+        
         if all_reduce:
             # Set up the scores tensor
             scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
-            scores *= score_metrics()
+            # TODO Add more metrics after the all-reduce?
+            #scores *= score_metrics()
         else:
             # Set up the scores tensor
             scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
-
+            
     else:
+
         scores = torch.FloatTensor([1 if response.dendrite.status_code == 200 and response.loss != [] else 0 for _, response in zip(uids, responses[0])]).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
-        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not as well as score their bandwidth
+        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if ((self.step % 10)==0):
 
             # Update mapping of uids to peerids
@@ -185,23 +187,16 @@ async def get_rewards(
             self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
             scores *= blacklist_scores
 
-            # Score miners bandwidth
-            bandwidth_scores = await score_bandwidth(self, self.miner_uids.tolist())
-            bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-            self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
-            scores *= bandwidth_scores
-
         # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
-        #gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
-        #bt.logging.info(f"Gradient Scores: {gradient_scores}")
-        #self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
-        #scores *= gradient_scores
-        
+        gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
+        bt.logging.info(f"Gradient Scores: {gradient_scores}")
+        self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
+        scores *= gradient_scores
+
         # Calculate Data Indices Scores
-        # steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
-        # bt.logging.info(f"Steps Scores: {steps_scores}")
-        # self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids, steps_scores)})
-        # scores *= steps_scores
+        steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
+        bt.logging.info(f"Steps Scores: {steps_scores}")
+        self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids, steps_scores)})
+        scores *= steps_scores
 
     return scores
-

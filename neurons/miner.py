@@ -17,21 +17,16 @@
 # DEALINGS IN THE SOFTWARE.
 
 import random
-import re
 import time
 import typing
 from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
-import requests
 import torch
-import wandb
 from bitarray import bitarray
-from hivemind import utils
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
