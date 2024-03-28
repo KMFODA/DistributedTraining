@@ -40,7 +40,7 @@ from hivemind.utils.timed_storage import ValueWithExpiration
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import DTGradientAverager, DTStateAverager, TrainingStateAverager2
+from template.utils.hivemind import DTGradientAverager, DTStateAverager
 from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging
 from template.validator import forward
 
