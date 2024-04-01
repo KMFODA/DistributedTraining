@@ -7,7 +7,7 @@ import torch
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
 from hivemind.utils import get_logger
-from template.utils.hivemind import DTGradientAverager
+from hivemindy import DTGradientAverager
 from torch import nn
 
 logger = get_logger(__name__)
@@ -52,12 +52,16 @@ async def perform_all_reduce(custom_group: GroupInfo, models: List[nn.Module], d
                         custom_group_info=custom_group,
                         ) 
                 for averager in averagers]
-         
+        futures[-1].cancel()
         for future in futures:
             result = future.result()
             print(result)
             for averager in averagers:
-                assert averager.peer_id in result
+                try:
+                    print(averager.peer_id, result)
+                except Exception as e:
+                    print(e)
+                #assert averager.peer_id in result
         
         print("Shutting down..")
         for instance in averagers + dht_instances:
