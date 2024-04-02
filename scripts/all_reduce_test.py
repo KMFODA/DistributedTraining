@@ -9,6 +9,7 @@ from hivemind.dht import DHT, DHTID
 from hivemind.utils import get_logger
 from hivemindy import DTGradientAverager
 from torch import nn
+from hivemind.optim.grad_averager import GradientAverager
 
 logger = get_logger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -52,7 +53,7 @@ async def perform_all_reduce(custom_group: GroupInfo, models: List[nn.Module], d
                         custom_group_info=custom_group,
                         ) 
                 for averager in averagers]
-        futures[-1].cancel()
+        #futures[-1].cancel()
         for future in futures:
             result = future.result()
             print(result)
