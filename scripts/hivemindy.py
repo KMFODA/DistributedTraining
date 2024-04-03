@@ -20,8 +20,9 @@ from hivemind.optim.progress_tracker import LocalTrainingProgress
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
-                                    as_aiter, attach_event_on_finished, azip,
+from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
+                                    amap_in_executor, as_aiter,
+                                    attach_event_on_finished, azip,
                                     enter_asynchronously)
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
@@ -82,7 +83,7 @@ class DTAllReduceRunner(AllReduceRunner):
             except BaseException as e:
                 if isinstance(e, Exception):
                     logger.debug(f"Caught {repr(e)} when communicating to {peer_id}", exc_info=True)
-                # Removing fault-tolerant method here
+                #? Remove fault-tolerant method here
                 #self.tensor_part_container.register_failed_reducer(peer_index) 
                 raise
 
@@ -92,8 +93,16 @@ class DTAllReduceRunner(AllReduceRunner):
         or failure in communication, it directly raises an exception.
         """
         try:
-            async for message in super().rpc_aggregate_part(stream, context):
+            async for i, message in aenumerate(super().rpc_aggregate_part(stream, context)):
+            # async for i, message in super().rpc_aggregate_part(stream, context): <- This is the original line, when not testing fault-tolerance
                 yield message
+                #! Test fault-tolerance here:
+                if i == 2: # Fail Sending
+                    yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
+                    break
+                else: # Slow Reducing
+                    await asyncio.sleep(10)
+                    
         except Exception as e:
             logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
             raise e
@@ -112,18 +121,25 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
+            #! Test Fault-tolerance here:
+            last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
+            if peer_index == last_reducer_index:    
+                raise Exception("Oops, I failed!")
+            
             async for part in parts_aiter:
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
+            
+            
         except Exception as e:
             logger.error(f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}")
             raise e
     
-    # This is hit if the rpc_aggregate_with_peer is failing - so maybe we are using double Exceptions atm    
+    #TODO This is hit if the rpc_aggregate_with_peer is failing - so maybe we are using double Exceptions atm    
     async def _ban_sender(self, peer_id: PeerID):
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
-                # Remove fault-tolerant method here:
+                #? Remove fault-tolerant method here:
                 #self.tensor_part_reducer.on_sender_failed(self.sender_peer_ids.index(peer_id))
                 error_message = f"Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
@@ -302,7 +318,7 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
                     async for tensor, update in azip(as_aiter(*local_tensors), iter_results):
                         # all-reduce is performed asynchronously while iterating
                         tensor.add_(update, alpha=self._averaging_alpha)
-                    self._state_updated.set()
+                        self._state_updated.set()
 
                 else:
                     async for _ in runner:  # trigger all-reduce by iterating

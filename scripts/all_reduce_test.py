@@ -100,4 +100,12 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+    # TODO
+    # 1. Add various faulty scenarios - test if it correctly faults                                             (almost done)
+    # 2. Fix so we only hit one Expecption instead of multiple                                                  (not done)
+    # 3. Add peer_fraction param to avoid averaging the "validator" peer                                        (almost done)
+    # - - We just need to set validator GradAverager to client_mode=True, then it's peer_fraction will be 0     
+    # - - How do we ensure equal fractions for the rest of the peers?
+    # 4. Should we use the bandwith scores to do load_balancing during AllReduce? 
+    # - - Or should we just equally distribute the gradients?
+    # - - Butterfly AllReduce uses load balancing, but does load balancing make our bandwidth incentive obsolete?
