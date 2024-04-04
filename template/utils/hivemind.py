@@ -14,7 +14,8 @@ from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import deserialize_torch_tensor
+from hivemind.compression import (deserialize_torch_tensor,
+                                  serialize_torch_tensor)
 from hivemind.optim.progress_tracker import LocalTrainingProgress
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
@@ -31,12 +32,10 @@ logger = get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
 import asyncio
-from hivemind import averaging_pb2, AllReduceRunner
-from hivemind.utils.grpc import serialize_torch_tensor, deserialize_torch_tensor
-import torch
 from typing import AsyncIterator
 
-class SimpleAllReduceRunner(AllReduceRunner):
+
+class DTAllReduceRunner(AllReduceRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
@@ -270,46 +269,47 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
             #     None, load_balance_peers, self.total_size, download_bandwidths, min_vector_size
             # )
             
+            # TODO!!!: This is a temporary fix to ensure equal part sizes for all peers
             # compute equal part sizes for all peers instead of load balancing
             num_peers = len(group_info.peer_ids)
             peer_fractions = [1.0 / num_peers] * num_peers
 
+            # async with enter_asynchronously(self.get_tensors()) as local_tensors:
+            #     await self._run_allreduce_inplace_(
+            #                                     local_tensors, 
+            #                                     group_info, 
+            #                                     peer_fractions=peer_fractions, 
+            #                                     **kwargs)
+                
+                
+                
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
-                await self._run_allreduce_inplace_(
-                                                local_tensors, 
-                                                group_info, 
-                                                peer_fractions=peer_fractions, 
-                                                **kwargs)
-                
-                
-                
-        #     async with enter_asynchronously(self.get_tensors()) as local_tensors:
-        #         runner = AllReduceRunner(
-        #             p2p=self._p2p,
-        #             servicer_type=type(self),
-        #             prefix=self.prefix,
-        #             group_id=group_info.group_id,
-        #             tensors=local_tensors,
-        #             ordered_peer_ids=group_info.peer_ids,
-        #             peer_fractions=peer_fractions,
-        #             **kwargs,
-        #         )
+                runner = DTAllReduceRunner(
+                    p2p=self._p2p,
+                    servicer_type=type(self),
+                    prefix=self.prefix,
+                    group_id=group_info.group_id,
+                    tensors=local_tensors,
+                    ordered_peer_ids=group_info.peer_ids,
+                    peer_fractions=peer_fractions,
+                    **kwargs,
+                )
 
-        #         self._running_groups[group_info.group_id].set_result(runner)
-        #         # TODO maybe this can be extracted into a method that checks if register_... context is active.
+                self._running_groups[group_info.group_id].set_result(runner)
+                # TODO maybe this can be extracted into a method that checks if register_... context is active.
 
-        #         if runner.modes[group_info.peer_ids.index(self.peer_id)] != AveragingMode.AUX:
-        #             iter_results = runner.run()
-        #             async for tensor, update in azip(as_aiter(*local_tensors), iter_results):
-        #                 # all-reduce is performed asynchronously while iterating
-        #                 tensor.add_(update, alpha=self._averaging_alpha)
-        #             self._state_updated.set()
+                if runner.modes[group_info.peer_ids.index(self.peer_id)] != AveragingMode.AUX:
+                    iter_results = runner.run()
+                    async for tensor, update in azip(as_aiter(*local_tensors), iter_results):
+                        # all-reduce is performed asynchronously while iterating
+                        tensor.add_(update, alpha=self._averaging_alpha)
+                        self._state_updated.set()
 
-        #         else:
-        #             async for _ in runner:  # trigger all-reduce by iterating
-        #                 raise ValueError("aux peers should not receive averaged tensors")
+                else:
+                    async for _ in runner:  # trigger all-reduce by iterating
+                        raise ValueError("aux peers should not receive averaged tensors")
                 
-        #         return group_info
+                return group_info
         except BaseException as e:
             if isinstance(e, Exception):
                 logger.exception(e)

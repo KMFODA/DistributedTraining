@@ -24,6 +24,7 @@ from ipaddress import ip_address
 import bittensor as bt
 import hivemind
 import torch
+import torch.distributed as dist
 from bitarray import bitarray
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.optim.progress_tracker import ProgressTracker
@@ -49,6 +50,10 @@ class Miner(BaseMinerNeuron):
         
         # Init device
         self.device = self.config.neuron.device
+        
+        # Setup for distributed training
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        torch.cuda.set_device(rank)
 
         # Init Model
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
@@ -180,6 +185,9 @@ class Miner(BaseMinerNeuron):
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
+            
+            # Zero Gradients
+            self.opt.zero_grad()
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=inputs)
@@ -193,14 +201,8 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
             
-            # Copy gradients
-            gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-            
-            # Zero Gradients
-            self.opt.zero_grad()
 
             # Update Tracker
             self.local_samples += 1    
@@ -219,6 +221,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
 
         # Store summed random gradients in the synapse
+        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
         synapse.gradients =  float(torch.sum(torch.abs(gradients[synapse.gradient_test_index])))
 
         average_loss = total_loss / index

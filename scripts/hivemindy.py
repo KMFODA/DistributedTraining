@@ -4,10 +4,13 @@ import random
 import re
 from contextlib import contextmanager
 from itertools import chain
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, AsyncIterator, Dict, Optional, Sequence, Tuple, Union
 
 import bittensor as bt
 import hivemind
+import hivemind.averaging
+import hivemind.averaging.averager
+import numpy as np
 import torch
 from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
                                           AveragingMode)
@@ -17,7 +20,8 @@ from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import (deserialize_torch_tensor,
                                   serialize_torch_tensor)
 from hivemind.optim.progress_tracker import LocalTrainingProgress
-from hivemind.p2p import PeerID
+from hivemind.p2p import (P2PDaemonError, P2PHandlerError,
+                          PeerID)
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
@@ -32,14 +36,9 @@ GatheredData = Any
 logger = get_logger(__name__)
 logger.setLevel(logging.DEBUG)
 
-import asyncio
-from typing import AsyncIterator
-
 
 class DTAllReduceRunner(AllReduceRunner):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
+    
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
@@ -93,16 +92,27 @@ class DTAllReduceRunner(AllReduceRunner):
         or failure in communication, it directly raises an exception.
         """
         try:
-            async for i, message in aenumerate(super().rpc_aggregate_part(stream, context)):
-            # async for i, message in super().rpc_aggregate_part(stream, context): <- This is the original line, when not testing fault-tolerance
-                yield message
-                #! Test fault-tolerance here:
-                if i == 2: # Fail Sending
-                    yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-                    break
-                else: # Slow Reducing
-                    await asyncio.sleep(10)
-                    
+            #! Test fault-tolerance here:
+            # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])  
+            test_fault = True
+            if test_fault:
+                condition = None
+                
+                async for message in super().rpc_aggregate_part(stream, context):
+                    self.count+=1
+                    yield message
+                    if self.count == 2:
+                        if condition == "FAIL_SENDING":
+                            yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
+                            break
+                        elif condition == "SLOW_REDUCE":
+                            await asyncio.sleep(10)
+                        elif condition == "CANCEL":  
+                            yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
+            else:
+                async for message in super().rpc_aggregate_part(stream, context):
+                    yield message
+
         except Exception as e:
             logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
             raise e
@@ -122,9 +132,14 @@ class DTAllReduceRunner(AllReduceRunner):
                 weight=self.weight,
             )
             #! Test Fault-tolerance here:
-            last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
-            if peer_index == last_reducer_index:    
-                raise Exception("Oops, I failed!")
+            # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
+            # if peer_index == last_reducer_index:
+            #     # Create random condition:
+            #     condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE"])    
+            #     if condition == "FAIL_SENDING":
+            #         raise Exception("Oops, I failed!")
+            #     else:
+            #         await asyncio.sleep(10)
             
             async for part in parts_aiter:
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
@@ -146,7 +161,8 @@ class DTAllReduceRunner(AllReduceRunner):
                 raise Exception(error_message)
             
         
-class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
+# class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
+class DTGradientAverager(hivemind.averaging.averager.DecentralizedAverager):
     '''
     Needs this wrapper class to ensure device is set properly when averaging gradients
     See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
@@ -234,28 +250,49 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
         return step.result() if wait else step
     
     async def _step_custom(self, *, step: StepControl, future_for_init: MPFuture, custom_group_info: GroupInfo):
+        
         try:
             trigger, cancel = MPFuture(), MPFuture()
             step.attach(trigger, cancel)
             future_for_init.set_result((trigger, cancel))
             
-            self._pending_groups_registered.clear()
-            step.stage = AveragingStage.LOOKING_FOR_GROUP
-                        
-            with self._register_allreduce_group(custom_group_info):
-                step.stage = AveragingStage.RUNNING_ALLREDUCE
-                step.set_result(
-                    await asyncio.wait_for(
-                        self._aggregate_with_group(
-                            custom_group_info,
-                            tensor_infos=self.tensor_infos,
-                            weight=step.weight,
-                            **self.allreduce_kwargs,
-                            ),
-                        timeout=self._allreduce_timeout,
-                        )
-                    )
+            #while not step.done():
+            try:
+                self._pending_groups_registered.clear()
+                step.stage = AveragingStage.LOOKING_FOR_GROUP
+                            
+                with self._register_allreduce_group(custom_group_info):
                 
+                    step.stage = AveragingStage.RUNNING_ALLREDUCE
+                    step.set_result(
+                        await asyncio.wait_for(
+                            self._aggregate_with_group(
+                                custom_group_info,
+                                tensor_infos=self.tensor_infos,
+                                weight=step.weight,
+                                **self.allreduce_kwargs,
+                                ),
+                            timeout=self._allreduce_timeout,
+                            )
+                        )
+            except (
+                AllreduceException,
+                MatchmakingException,
+                AssertionError,
+                StopAsyncIteration,
+                asyncio.CancelledError,
+                asyncio.InvalidStateError,
+                P2PHandlerError,
+                P2PDaemonError,
+            ) as e:
+                if step.done() or not step.allow_retries or get_dht_time() >= step.deadline:
+                    if not step.cancelled():
+                        logger.exception(e)
+                    if not step.done():
+                        step.set_exception(e)
+                else:
+                    logger.warning(f"{self.__class__.__name__} caught {repr(e)}, retrying")
+            
         except BaseException as e:
             if not step.done():
                 step.set_exception(e)
@@ -297,7 +334,6 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
             #                                     **kwargs)
                 
                 
-                
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
                     p2p=self._p2p,
@@ -311,17 +347,16 @@ class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
                 )
 
                 self._running_groups[group_info.group_id].set_result(runner)
-                # TODO maybe this can be extracted into a method that checks if register_... context is active.
 
                 if runner.modes[group_info.peer_ids.index(self.peer_id)] != AveragingMode.AUX:
                     iter_results = runner.run()
                     async for tensor, update in azip(as_aiter(*local_tensors), iter_results):
                         # all-reduce is performed asynchronously while iterating
                         tensor.add_(update, alpha=self._averaging_alpha)
+                        self.last_updated = get_dht_time()
                         self._state_updated.set()
-
                 else:
-                    async for _ in runner:  # trigger all-reduce by iterating
+                    async for _ in runner:
                         raise ValueError("aux peers should not receive averaged tensors")
                 
                 return group_info

@@ -64,6 +64,9 @@ def score_gradients(self, response, uid):
 
     inputs = batch.to(self.device)
 
+    # Zero Gradients
+    self.opt.zero_grad()
+    
     # Forward pass
     outputs = self.model(input_ids=inputs, labels=inputs)
 
@@ -72,19 +75,14 @@ def score_gradients(self, response, uid):
     # Backward Pass
     loss.backward()
 
-    # Copy gradients
-    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-
     # Accumulate Gradients
     self.grad_averager.accumulate_grads_(batch_size=len(inputs))
     
-    # Zero Gradients
-    self.opt.zero_grad()
-
     if not self.config.neuron.dont_wandb_log:
         self.wandb.log({"loss": outputs.loss.detach().item()})
 
     # Store summed random gradients in the synapse
+    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
     gradients =  float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
         
     bt.logging.info(f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}")
