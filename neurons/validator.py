@@ -114,6 +114,7 @@ class Validator(BaseValidatorNeuron):
             accumulate_grads_on=torch.device("cuda"),
             start = True,
             next_chunk_timeout = 30.0,
+            client_mode=True,
         )
         
         # Init State Averager

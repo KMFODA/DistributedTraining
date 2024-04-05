@@ -94,15 +94,16 @@ async def forward(self):
         ]
         bt.logging.info("Performing Gradient Averaging")
 
-        # TODO should group_peerids be ordered with validator peerid first? As done in hivemind averaging.py
-        # TODO - should also remove validator from allreduce via "peer_fractions" inside grad_averager._step()
         # Define a custom group for all-reduce
         custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
-
-        # Perform AllReduce step with queried miners to get averaged gradients
-        gradient_averaging_step = self.grad_averager.step(
-            group=custom_group, wait=False
-        )
+        
+        try:
+            # Perform AllReduce step with queried miners to get averaged gradients
+            gradient_averaging_step = self.grad_averager.step(
+                group=custom_group, wait=False
+            )
+        except Exception as e:
+            print("Exception occurred in averager.step():", e)
 
     else:
         queries = [template.protocol.Train( 
