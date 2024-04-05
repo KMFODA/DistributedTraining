@@ -9,7 +9,7 @@ from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
 from hivemind.optim.grad_averager import GradientAverager
 from hivemind.utils import get_logger, use_hivemind_log_handler
-from hivemindy import DTGradientAverager
+from hivemindy import DTGradientAverager, DTAverager
 from torch import nn
 
 logger = logging.getLogger()
@@ -63,7 +63,7 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             #model.parameters(),
             dht=dht,
             prefix="diller",
-            #client_mode=True if i == 0 else False,
+            client_mode=True if i == 0 else False,
             start=True,
         )
         for i, (dht, model) in enumerate(zip(dht_instances, models))
@@ -101,9 +101,9 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
         exit()
 
     finally:
+        print("Shutting down finally..")
         for instance in averagers + dht_instances:
             if instance.is_alive():
-                print("Shutting down after success..")
                 print(instance)
                 instance.shutdown()
 
@@ -125,8 +125,7 @@ def main():
     # Define a custom group for all-reduce
     group_id = DHTID.generate().to_bytes()
     ordered_peer_ids = [dht.peer_id for dht in dht_instances]
-    print(ordered_peer_ids)
-    exit()
+    
     custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
     perform_all_reduce(custom_group, models, dht_instances)
