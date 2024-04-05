@@ -20,8 +20,7 @@ from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import (deserialize_torch_tensor,
                                   serialize_torch_tensor)
 from hivemind.optim.progress_tracker import LocalTrainingProgress
-from hivemind.p2p import (P2PDaemonError, P2PHandlerError,
-                          PeerID)
+from hivemind.p2p import P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
@@ -38,7 +37,10 @@ logger.setLevel(logging.DEBUG)
 
 
 class DTAllReduceRunner(AllReduceRunner):
-    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.count = 0
+        
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
@@ -82,6 +84,7 @@ class DTAllReduceRunner(AllReduceRunner):
             except BaseException as e:
                 if isinstance(e, Exception):
                     logger.debug(f"Caught {repr(e)} when communicating to {peer_id}", exc_info=True)
+                self.finalize(exception=e)
                 #? Remove fault-tolerant method here
                 #self.tensor_part_container.register_failed_reducer(peer_index) 
                 raise
@@ -92,26 +95,26 @@ class DTAllReduceRunner(AllReduceRunner):
         or failure in communication, it directly raises an exception.
         """
         try:
-            #! Test fault-tolerance here:
-            # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])  
-            test_fault = True
-            if test_fault:
-                condition = None
+            # #! Test fault-tolerance here:
+            # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])  
+            # test_fault = True
+            # if test_fault:
+            #     condition = "FAIL_SENDING"
                 
-                async for message in super().rpc_aggregate_part(stream, context):
-                    self.count+=1
-                    yield message
-                    if self.count == 2:
-                        if condition == "FAIL_SENDING":
-                            yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-                            break
-                        elif condition == "SLOW_REDUCE":
-                            await asyncio.sleep(10)
-                        elif condition == "CANCEL":  
-                            yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-            else:
-                async for message in super().rpc_aggregate_part(stream, context):
-                    yield message
+            #     async for message in super().rpc_aggregate_part(stream, context):
+            #         self.count+=1
+            #         yield message
+            #         if self.count == 2:
+            #             if condition == "FAIL_SENDING":
+            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
+            #                 break
+            #             elif condition == "SLOW_REDUCE":
+            #                 await asyncio.sleep(10)
+            #             elif condition == "CANCEL":  
+            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
+            # else:
+            async for message in super().rpc_aggregate_part(stream, context):
+                yield message
 
         except Exception as e:
             logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
@@ -131,7 +134,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
-            #! Test Fault-tolerance here:
+            # #! Test Fault-tolerance here:
             # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
             # if peer_index == last_reducer_index:
             #     # Create random condition:
@@ -139,6 +142,7 @@ class DTAllReduceRunner(AllReduceRunner):
             #     if condition == "FAIL_SENDING":
             #         raise Exception("Oops, I failed!")
             #     else:
+            #         print("Waiting...sloooow...")
             #         await asyncio.sleep(10)
             
             async for part in parts_aiter:
@@ -147,9 +151,9 @@ class DTAllReduceRunner(AllReduceRunner):
             
         except Exception as e:
             logger.error(f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}")
+            self.finalize(exception=e)
             raise e
-    
-    #TODO This is hit if the rpc_aggregate_with_peer is failing - so maybe we are using double Exceptions atm    
+       
     async def _ban_sender(self, peer_id: PeerID):
         async with self.banlock:
             if peer_id not in self.banned_senders:
@@ -158,32 +162,13 @@ class DTAllReduceRunner(AllReduceRunner):
                 #self.tensor_part_reducer.on_sender_failed(self.sender_peer_ids.index(peer_id))
                 error_message = f"Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
+                self.finalize(exception=error_message)
                 raise Exception(error_message)
             
+class DTAverager(hivemind.DecentralizedAverager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         
-# class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
-class DTGradientAverager(hivemind.averaging.averager.DecentralizedAverager):
-    '''
-    Needs this wrapper class to ensure device is set properly when averaging gradients
-    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
-    '''
-    @contextmanager
-    @torch.no_grad()
-    def use_averaged_gradients(self):
-        """Substitute model's main gradients with averaged gradients"""
-        self._new_averaged_grads = False
-        with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
-            try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
-                    # move new_grad to the same device as param before assigning
-                    param.grad = new_grad.to(param.device)
-                yield averaged_grads
-            finally:
-                for param, old_grad in zip(self.parameters, old_grads):
-                    param.grad = old_grad
-    
     def step(
         self,
         gather: Optional[GatheredData] = None,
@@ -364,6 +349,42 @@ class DTGradientAverager(hivemind.averaging.averager.DecentralizedAverager):
             if isinstance(e, Exception):
                 logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
+        
+class DTGradientAverager(DTAverager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    @contextmanager
+    @torch.no_grad()
+    def use_averaged_gradients(self):
+        """Substitute model's main gradients with averaged gradients"""
+        self._new_averaged_grads = False
+        with self.get_tensors() as averaged_grads:
+            assert len(averaged_grads) == len(self.parameters)
+            try:
+                old_grads = [param.grad for param in self.parameters]
+                for param, new_grad in zip(self.parameters, averaged_grads):
+                    # move new_grad to the same device as param before assigning
+                    param.grad = new_grad.to(param.device)
+                yield averaged_grads
+            finally:
+                for param, old_grad in zip(self.parameters, old_grads):
+                    param.grad = old_grad
+                    
+    def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
+        """
+        Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
+
+        :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
+        :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
+        :note: setting weight at this stage is not supported, please leave this parameter as None
+        :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
+        :note: in the current implementation, each step_control can only be used in one step.
+        """
+        assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
+        return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
+
+
+
 
 
 class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
