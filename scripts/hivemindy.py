@@ -121,36 +121,35 @@ class DTAllReduceRunner(AllReduceRunner):
     #     except Exception as e:
     #         logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
     #         raise e
-    #! Test Fault-tolerance here:
-    # async def _generate_input_for_peer(self, peer_index: int) -> AsyncIterator[averaging_pb2.AveragingData]:
-    #     try:
-    #         parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
-    #         first_part = await anext(parts_aiter)
-    #         yield averaging_pb2.AveragingData(
-    #             code=averaging_pb2.PART_FOR_AVERAGING,
-    #             group_id=self.group_id,
-    #             tensor_part=first_part,
-    #             weight=self.weight,
-    #         )
+    
+    async def _generate_input_for_peer(self, peer_index: int) -> AsyncIterator[averaging_pb2.AveragingData]:
+        try:
+            parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
+            first_part = await anext(parts_aiter)
+            yield averaging_pb2.AveragingData(
+                code=averaging_pb2.PART_FOR_AVERAGING,
+                group_id=self.group_id,
+                tensor_part=first_part,
+                weight=self.weight,
+            )
+            #! Test Fault-tolerance here:
+            # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
+            # if peer_index == last_reducer_index:
+            #     # Create random condition:
+            #     condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE"])    
+            #     if condition == "FAIL_SENDING":
+            #         raise Exception("Oops, I failed!")
+            #     else:
+            #         print("Waiting...sloooow...")
+            #         await asyncio.sleep(10)
             
-    #         # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
-    #         # if peer_index == last_reducer_index:
-    #         #     # Create random condition:
-    #         #     condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE"])    
-    #         #     if condition == "FAIL_SENDING":
-    #         #         raise Exception("Oops, I failed!")
-    #         #     else:
-    #         #         print("Waiting...sloooow...")
-    #         #         await asyncio.sleep(10)
+            async for part in parts_aiter:
+                yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
             
-    #         async for part in parts_aiter:
-    #             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
-            
-            
-    #     except Exception as e:
-    #         logger.error(f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}")
-    #         self.finalize(exception=e)
-    #         raise e
+        except Exception as e:
+            logger.error(f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}")
+            self.finalize(exception=e)
+            raise e
        
     async def _ban_sender(self, peer_id: PeerID):
         async with self.banlock:
