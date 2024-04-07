@@ -111,6 +111,7 @@ class Miner(BaseMinerNeuron):
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
+    
     def get_miner_info(self):
         return {
             "block": self.metagraph.block.item(),
@@ -158,8 +159,6 @@ class Miner(BaseMinerNeuron):
 
                 bt.logging.info(f"Gradient averaging step failed with error {e}")
                 load_state_from_peer(self)
-                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-                self.local_samples = 0
                 synapse.completion = "False"
 
         return synapse
@@ -179,8 +178,6 @@ class Miner(BaseMinerNeuron):
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
             with self.tracker.pause_updates():
                 load_state_from_peer(self)
-                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-                self.local_samples = 0
         
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
