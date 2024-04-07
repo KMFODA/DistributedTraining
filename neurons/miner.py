@@ -111,7 +111,6 @@ class Miner(BaseMinerNeuron):
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
-
     def get_miner_info(self):
         return {
             "block": self.metagraph.block.item(),
@@ -137,19 +136,32 @@ class Miner(BaseMinerNeuron):
 
         # Aggregate gradients and perform optimizer step when target batch size is reached
         with self.tracker.pause_updates():
+            
             bt.logging.info("Performing Gradient Averaging")
-            self.grad_averager.step(timeout = (synapse.timeout))
-            bt.logging.info('Model Weights Before Optimizer Step')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                bt.logging.info("Performing Optimizer Step")
-                self.opt.step()  # update model parameters using averaged gradients
-            bt.logging.info('Model Weights After Optimizer Step')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-            self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-            self.local_samples = 0  
-        synapse.completion = "True"
+
+            try:
+                
+                self.grad_averager.step(timeout = (synapse.timeout-20))
+                bt.logging.info('Model Weights Before Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged gradients
+                bt.logging.info('Model Weights After Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
+                self.local_samples = 0
+                synapse.completion = "True"
+
+            except Exception as e:
+
+                bt.logging.info(f"Gradient averaging step failed with error {e}")
+                load_state_from_peer(self)
+                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
+                self.local_samples = 0
+                synapse.completion = "False"
+
         return synapse
 
     async def forward(
@@ -165,7 +177,10 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            load_state_from_peer(self)
+            with self.tracker.pause_updates():
+                load_state_from_peer(self)
+                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
+                self.local_samples = 0
         
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)

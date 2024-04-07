@@ -124,7 +124,6 @@ class BaseMinerNeuron(BaseNeuron):
                         break
 
                 # Sync metagraph and potentially set weights.
-                self.sync()
                 self.step += 1
                 
             # Await the training task to ensure it completes before exiting
