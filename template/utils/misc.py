@@ -36,6 +36,7 @@ from hivemind import utils
 import re
 from ipaddress import ip_address
 from template.utils.chain_storage import run_in_subprocess
+from datetime import datetime
 
 
 # LRU Cache with TTL
@@ -203,6 +204,18 @@ def setup_logging(level=logging.INFO):
     formatter = logging.Formatter('%(message)s')
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
+
+    # Create a file handler that logs debug and higher level messages
+    
+    fh = logging.FileHandler(f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt")
+    fh.setLevel(logging.DEBUG)
+
+    # Create a formatter and set the formatter for the handler.
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+
+    # Add the FileHandler to the root logger
+    root_logger.addHandler(fh)
 
 def get_bandwidth():
     # Get speedtest results
