@@ -181,11 +181,14 @@ def load_optimizer_state(optimizer: torch.optim.Optimizer, flat_metadata: Dict, 
             flat_optimizer_state.append(elem["value"])
     return optimizer.load_state_dict(nested_pack(flat_optimizer_state, structure=optimizer.state_dict()))
 
-def load_state_from_peer(self):
+def load_state_from_peer(self, epoch = None):
+
+    if epoch == None:
+        epoch = self.tracker.global_progress.epoch
 
     bt.logging.info('Model Weights Before Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    self.state_averager.load_final_state_from_peers(self.tracker.global_progress.epoch, timeout = self.state_averager.next_chunk_timeout)
+    self.state_averager.load_final_state_from_peers(epoch, timeout = self.state_averager.next_chunk_timeout)
     bt.logging.info('Model Weights After Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 

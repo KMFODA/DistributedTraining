@@ -49,10 +49,10 @@ async def forward(self):
 
     if ((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated) <= 25) and (not self.step_scheduled) and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch):
         
-        bt.logging.info("Scheduling all-reduce synapse call")
+        # bt.logging.info("Scheduling all-reduce synapse call")
         sample_size=int(self.metagraph.n)
-        next_step_control = self.grad_averager.schedule_step()
-        self.step_scheduled = True  
+        # next_step_control = self.grad_averager.schedule_step()
+        # self.step_scheduled = True  
         all_reduce = True
         self.event.update({"synapse_type":"all_reduce"})
 
@@ -73,7 +73,7 @@ async def forward(self):
     if all_reduce:
         with self.tracker.pause_updates():
             bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(control=next_step_control, wait=False)
+            gradient_averaging_step = self.grad_averager.step(wait=False)
 
         queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:
