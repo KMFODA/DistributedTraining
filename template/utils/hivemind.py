@@ -188,9 +188,10 @@ def load_state_from_peer(self, epoch = None):
 
     bt.logging.info('Model Weights Before Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    self.state_averager.load_final_state_from_peers(epoch, timeout = self.state_averager.next_chunk_timeout)
+    self.state_averager.load_final_state_from_peers(epoch)
     bt.logging.info('Model Weights After Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 
-    self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
-    self.local_epoch = self.tracker.local_progress.epoch
+    with self.tracker.pause_updates():
+        self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
+        self.local_epoch = self.tracker.local_progress.epoch

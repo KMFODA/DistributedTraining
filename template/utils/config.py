@@ -115,7 +115,7 @@ def add_args(cls, parser):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8001/p2p/12D3KooWHHRKVpgnCDohfjZuvSa6GWSPRWM8ryuYZmkN4aD6wjPc",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN",
         ],
     )
 

@@ -134,13 +134,10 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         
         bt.logging.info("Received All Reduce Call")
-
-        # Aggregate gradients and perform optimizer step when target batch size is reached
-        with self.tracker.pause_updates():
-            
+        try:
+            # Aggregate gradients and perform optimizer step when target batch size is reached 
             bt.logging.info("Performing Gradient Averaging")
-
-            try:
+            with self.tracker.pause_updates():
                 
                 self.grad_averager.step(timeout = (synapse.timeout-20))
                 bt.logging.info('Model Weights Before Optimizer Step')
@@ -155,11 +152,11 @@ class Miner(BaseMinerNeuron):
                 self.local_samples = 0
                 synapse.completion = "True"
 
-            except Exception as e:
+        except Exception as e:
 
-                bt.logging.info(f"Gradient averaging step failed with error {e}")
-                load_state_from_peer(self)
-                synapse.completion = "False"
+            bt.logging.info(f"Gradient averaging step failed with error {e}")
+            load_state_from_peer(self)
+            synapse.completion = "False"
 
         return synapse
 
