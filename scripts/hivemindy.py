@@ -346,8 +346,226 @@ class DTAverager(hivemind.DecentralizedAverager):
             if isinstance(e, Exception):
                 logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
+
+class DTAverager2(hivemind.DecentralizedAverager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def step(
+        self,
+        gather: Optional[GatheredData] = None,
+        scheduled_time: Optional[DHTExpiration] = None,
+        weight: Optional[float] = None,
+        timeout: Optional[float] = None,
+        allow_retries: bool = True,
+        require_trigger: bool = False,
+        wait: bool = True,
+        custom_group_info: Optional[GroupInfo] = None,  # New parameter to accept custom GroupInfo
+    ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
+        """
+        Set up the averager to look for a group and run one round of averaging, return True on success, False on failure.
+        If custom_group_info is provided, it directly uses this group for averaging without original hivemind matchmaking.
+        
+        Example:
+        
+        >>> group_id = DHTID.generate().to_bytes()
+        >>> ordered_peer_ids = [PeerID.generate() for _ in range(4)]
+        >>> gathered = None
+        >>> group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered)
+        >>> DTGradientAverager.step(custom_group_info = group)
+        
+        """
+        if self.mode == AveragingMode.AUX and weight is not None:
+            logger.warning("Averager is running in auxiliary mode, weight is unused")
+        if scheduled_time is None:
+            scheduled_time = get_dht_time() + self.matchmaking_kwargs["min_matchmaking_time"]
+        if weight is None:
+            weight = float(self.mode != AveragingMode.AUX)
+        deadline = get_dht_time() + timeout if timeout is not None else float("inf")
+        assert isinstance(weight, (int, float)) and weight >= 0, f"Expected a positive int/float, got {type(weight)}"
+        assert not (wait and require_trigger), "Non-asynchronous step cannot wait for trigger (use wait=False)"
+        assert scheduled_time < deadline, "Scheduled start time does not fit within timeout"
+
+        user_data_for_gather = self.serializer.dumps(gather)  # serialize here to avoid imports in the averager process
+        data_for_gather = self.serializer.dumps([self.bandwidth, self.mode.value, user_data_for_gather])
+        step = StepControl(
+            scheduled_time=scheduled_time,
+            deadline=deadline,
+            allow_retries=allow_retries,
+            weight=weight,
+            data_for_gather=data_for_gather,
+        )
+
+        future_for_init = MPFuture()
+        
+        self._pending_groups_registered = asyncio.Event()
+        self._pending_groups_registered.set()
+        
+        # When custom_group_info is provided, bypass matchmaking and proceed directly
+        if custom_group_info is not None:
+            self._outer_pipe.send(("_step_custom", [], dict(step=step, future_for_init=future_for_init, custom_group_info=custom_group_info)))
+            step.attach(*future_for_init.result())
+            # future_for_init.set_result(None)  # No need for the result from matchmaking
+        else:
+            # Default behavior: initiate matchmaking and proceed as originally designed
+            self._outer_pipe.send(("_step", [], dict(step=step, future_for_init=future_for_init)))
+            step.attach(*future_for_init.result())
+
+        if not require_trigger:
+            step.allow_allreduce()
+        return step.result() if wait else step
+    
+    async def _step_custom(self, *, step: StepControl, future_for_init: MPFuture, custom_group_info: GroupInfo):
+        
+        try:
+            trigger, cancel = MPFuture(), MPFuture()
+            step.attach(trigger, cancel)
+            future_for_init.set_result((trigger, cancel))
+            
+            #while not step.done():
+            try:
+                self._pending_groups_registered.clear()
+                step.stage = AveragingStage.LOOKING_FOR_GROUP
+                            
+                with self._register_allreduce_group(custom_group_info):
+                
+                    step.stage = AveragingStage.RUNNING_ALLREDUCE
+                    step.set_result(
+                        await asyncio.wait_for(
+                            self._aggregate_with_group(
+                                custom_group_info,
+                                tensor_infos=self.tensor_infos,
+                                weight=step.weight,
+                                **self.allreduce_kwargs,
+                                ),
+                            timeout=self._allreduce_timeout,
+                            )
+                        )
+            except (
+                AllreduceException,
+                MatchmakingException,
+                AssertionError,
+                StopAsyncIteration,
+                asyncio.CancelledError,
+                asyncio.InvalidStateError,
+                P2PHandlerError,
+                P2PDaemonError,
+            ) as e:
+                if step.done() or not step.allow_retries or get_dht_time() >= step.deadline:
+                    if not step.cancelled():
+                        logger.exception(e)
+                    if not step.done():
+                        step.set_exception(e)
+                else:
+                    logger.warning(f"{self.__class__.__name__} caught {repr(e)}, retrying")
+            
+        except BaseException as e:
+            if not step.done():
+                step.set_exception(e)
+            raise
+        finally:
+            step.stage = AveragingStage.FINISHED
+            if not step.done():
+                step.set_exception(
+                    RuntimeError(
+                        "Internal sanity check failed: averager.step left future pending."
+                        " Please report this to hivemind issues."
+                    )
+                )
+            
+    async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, **kwargs) -> GatheredData:
+        """Run aggregation in a given group and update tensors in place, return gathered metadata"""
+        try:
+            # bandwidths, mode_ids, user_gathered_bytes = zip(*map(self.serializer.loads, group_info.gathered))
+            # user_gathered = dict(zip(group_info.peer_ids, map(self.serializer.loads, user_gathered_bytes)))
+            # modes = tuple(map(AveragingMode, mode_ids))
+
+            # # compute optimal part sizes from peer bandwidths; TODO: replace with proper load balancing
+            # download_bandwidths = [
+            #     thr if mode != AveragingMode.CLIENT else 0.0 for thr, mode in zip(bandwidths, modes)
+            # ]
+            # peer_fractions = await asyncio.get_event_loop().run_in_executor(
+            #     None, load_balance_peers, self.total_size, download_bandwidths, min_vector_size
+            # )
+            
+            # TODO DO we actually need the group_info.gathered data???
+            # TODO Check here: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/averaging/matchmaking.py#L380
+            # compute equal part sizes for all peers instead of load balancing
+            num_peers = len(group_info.peer_ids)
+            peer_fractions = [0] * num_peers
+            # peer_fractions = [0] + [1.0 / (num_peers - 1)] * (num_peers - 1)
+            # async with enter_asynchronously(self.get_tensors()) as local_tensors:
+            #     await self._run_allreduce_inplace_(
+            #                                     local_tensors, 
+            #                                     group_info, 
+            #                                     peer_fractions=peer_fractions, 
+            #                                     **kwargs)
+                
+                
+            async with enter_asynchronously(self.get_tensors()) as local_tensors:
+                runner = DTAllReduceRunner(
+                    p2p=self._p2p,
+                    servicer_type=type(self),
+                    prefix=self.prefix,
+                    group_id=group_info.group_id,
+                    tensors=local_tensors,
+                    ordered_peer_ids=group_info.peer_ids,
+                    peer_fractions=peer_fractions,
+                    **kwargs,
+                )
+
+                self._running_groups[group_info.group_id].set_result(runner)
+
+                if runner.modes[group_info.peer_ids.index(self.peer_id)] != AveragingMode.AUX:
+                    async for tensor, update in azip(as_aiter(*local_tensors), runner):
+                        # all-reduce is performed asynchronously while iterating
+                        tensor.add_(update, alpha=self._averaging_alpha)
+                        self.last_updated = get_dht_time()
+                        self._state_updated.set()
+                else:
+                    async for _ in runner:
+                        raise ValueError("aux peers should not receive averaged tensors")
+                
+                return group_info
+        except BaseException as e:
+            if isinstance(e, Exception):
+                logger.exception(e)
+            raise MatchmakingException(f"Unable to run All-Reduce: {e}")
         
 class DTGradientAverager(DTAverager):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    @contextmanager
+    @torch.no_grad()
+    def use_averaged_gradients(self):
+        """Substitute model's main gradients with averaged gradients"""
+        self._new_averaged_grads = False
+        with self.get_tensors() as averaged_grads:
+            assert len(averaged_grads) == len(self.parameters)
+            try:
+                old_grads = [param.grad for param in self.parameters]
+                for param, new_grad in zip(self.parameters, averaged_grads):
+                    # move new_grad to the same device as param before assigning
+                    param.grad = new_grad.to(param.device)
+                yield averaged_grads
+            finally:
+                for param, old_grad in zip(self.parameters, old_grads):
+                    param.grad = old_grad
+                    
+    def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
+        """
+        Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
+
+        :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
+        :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
+        :note: setting weight at this stage is not supported, please leave this parameter as None
+        :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
+        :note: in the current implementation, each step_control can only be used in one step.
+        """
+        assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
+        return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
+
+class DTGradientAverager2(DTAverager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     @contextmanager

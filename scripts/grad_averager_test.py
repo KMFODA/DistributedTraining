@@ -6,10 +6,12 @@ import random
 import time
 from contextlib import contextmanager
 
+import hivemind
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import wandb
+
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -21,24 +23,6 @@ from transformers.optimization import (get_inverse_sqrt_schedule,
 from template.base.neuron import BaseNeuron
 from template.data.dataset import SubsetFalconLoader
 
-# class WarmupCosineSchedule(LambdaLR):
-#     """ Linear warmup and then cosine decay.
-#         Linearly increases learning rate from 0 to 1 over `warmup_steps` training steps.
-#         Decreases learning rate from 1. to 0. over remaining `t_total - warmup_steps` steps following a cosine curve.
-#         If `cycles` (default=0.5) is different from default, learning rate follows cosine function after warmup.
-#     """
-#     def __init__(self, optimizer, warmup_steps, t_total, cycles=.5, last_epoch=-1):
-#         self.warmup_steps = warmup_steps
-#         self.t_total = t_total
-#         self.cycles = cycles
-#         super(WarmupCosineSchedule, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
-
-#     def lr_lambda(self, step):
-#         if step < self.warmup_steps:
-#             return float(step) / float(max(1.0, self.warmup_steps))
-#         # progress after warmup
-#         progress = float(step - self.warmup_steps) / float(max(1, self.t_total - self.warmup_steps))
-#         return max(0.0, 0.5 * (1. + math.cos(math.pi * float(self.cycles) * 2.0 * progress)))
 
 # class MyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
 #     '''
@@ -64,8 +48,8 @@ from template.data.dataset import SubsetFalconLoader
 
 #warmup_iters = 4 # how many steps to warm up for (opt.step)
 lr_decay_iters = 150 # total opt.steps (global_target_batch_size*100)
-learning_rate = 2.726e-3 #2.5e-3 #2.5e-4 # max learning rate 0.001 1e-3
-min_lr = 2.5e-7 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+learning_rate = 5e-3 #5e-3 2.5e-3 #2.5e-4 # max learning rate 0.001 1e-3
+min_lr = learning_rate/10 #1e-7 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 
 # def get_lr(it): # From: https://github.com/karpathy/nanoGPT/blob/master/train.py
 #     # 1) linear warmup for warmup_iters steps
@@ -95,52 +79,25 @@ config = BaseNeuron.config()
 # address = "64.247.206.230"
 # announce_maddrs = [f"/ip{version}/{address}/tcp/26822"]
 
-# dht = hivemind.DHT(
-#     host_maddrs=["/ip4/0.0.0.0/tcp/26822", "/ip4/0.0.0.0/udp/26822/quic"],
-#     #initial_peers=[""], 
-#     announce_maddrs=announce_maddrs,
-#     start=True
-# )
+dht = hivemind.DHT(
+    #host_maddrs=["/ip4/0.0.0.0/tcp/26822", "/ip4/0.0.0.0/udp/26822/quic"],
+    #initial_peers=[""], 
+    #announce_maddrs=announce_maddrs,
+    start=True
+)
 
 # print(dht.get_visible_maddrs())
 # file_path = 'visible_maddrs.txt'
 # with open(file_path, 'w') as file:
 #     file.write(f"{dht.get_visible_maddrs()}\n")
-wandb.init(project="test_single_instance_LRScheduler_0.0025LR")
+#wandb.init(project="test_single_instance_LRScheduler_0.0025LR")
 # time.sleep(20)
 model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-200m")
+
+num_params = sum(p.numel() for p in model.parameters())
+
 # Move the model to the appropriate device
 model = model.to("cuda")
-
-# # Set a new dropout value 
-# new_dropout_value = 0.0  # Good for pretraining - as per nanoGPT
-# for module in model.modules():
-#     if hasattr(module, 'dropout'):
-#         module.dropout.p = new_dropout_value
-
-# # apply special scaled init to the residual projections, per GPT-2 paper
-# for pn, p in model.named_parameters():
-#     if pn.endswith('c_proj.weight'):
-#         torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * model.config.n_layer))
-
-
-# for module in model.modules():
-#     if isinstance(module, nn.Linear):
-#         torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-#         if module.bias is not None:
-#             torch.nn.init.zeros_(module.bias)
-#     elif isinstance(module, nn.Embedding):
-#         torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-# # # From: https://github.com/karpathy/nanoGPT/blob/eba36e84649f3c6d840a93092cb779a260544d08/model.py#L264C9-L275C10
-# param_dict = {pn: p for pn, p in model.named_parameters()}
-# param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-# decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-# nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-# params = [
-#     {'params': decay_params, 'weight_decay': 0.01},
-#     {'params': nodecay_params, 'weight_decay': 0.0}
-# ]
 
 # Set up a decentralized optimizer that will average with peers in background
 opt = torch.optim.AdamW(
@@ -148,10 +105,7 @@ opt = torch.optim.AdamW(
         lr=learning_rate)
         #betas=(0.9, 0.95), 
         #eps=1e-8)
-#scheduler = WarmupCosineSchedule(opt, warmup_steps=warmup_iters, t_total=lr_decay_iters)
-scheduler = get_linear_schedule_with_warmup(opt, num_warmup_steps=5, num_training_steps=50)
-# scheduler = get_inverse_sqrt_schedule(opt, num_warmup_steps=5)
-# print(dict(scheduler))
+
 
 # opt = Lamb(
 #         params,
@@ -165,7 +119,7 @@ scheduler = get_linear_schedule_with_warmup(opt, num_warmup_steps=5, num_trainin
 
 
 # Target batch size for gradient accumulation
-global_target_batch_size = 10_000
+global_target_batch_size = 32_000
 
 #global_target_batch_size = 200  # set your target batch size
 # grad_averager = MyGradientAverager(
@@ -183,9 +137,57 @@ global_target_batch_size = 10_000
 #     start=True
 # )
 
-tokenizer = AutoTokenizer.from_pretrained("kmfoda/gpt2-677m")
-# Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
+model_name = "distilgpt2"
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)# Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
 tokenizer.pad_token = tokenizer.eos_token
+
+# Define encoding function
+def encode(examples):
+    return tokenizer(examples['text'], truncation=True, max_length=1024, padding='max_length')
+
+# Load dataset
+# dataset = load_dataset("wikitext", 'wikitext-103-v1', split='train')
+
+# Load the full dataset
+# dataset = load_dataset("tiiuae/falcon-refinedweb")
+
+# Calculate 10% of the dataset size for each split
+data_files = {
+    "validation": [
+        "data/train-00000-of-05534-b8fc5348cbe605a5.parquet",
+        "data/train-00001-of-05534-9bca3ce859516338.parquet",
+        "data/train-00002-of-05534-01680948bd81de83.parquet",
+        "data/train-00003-of-05534-b7806bb8ca893c23.parquet",
+        "data/train-00004-of-05534-cbe1137f523084a7.parquet",
+        "data/train-00005-of-05534-e4a5eae6c1419c9b.parquet",
+        "data/train-00006-of-05534-5bc49be138fd315b.parquet",
+        "data/train-00007-of-05534-c185da59aece723d.parquet",
+        "data/train-00008-of-05534-8ed029166c6795cf.parquet",
+        "data/train-00009-of-05534-f0954d1648b16e88.parquet"
+    ],
+    
+    "train": ""
+}
+
+dataset = load_dataset("tiiuae/falcon-refinedweb", data_files=data_files, split="validation")
+print(len(dataset))
+exit()
+encoded_dataset = dataset.map(encode, batched=True)
+
+
+print(len(encoded_dataset))
+
+# Assuming num_items, effective_batch_size, and num_epochs are already defined
+num_training_steps = math.ceil(len(encoded_dataset) / global_target_batch_size) # 1 Epoch only
+
+# Warmup steps as a fraction of total training steps, e.g., 10%
+warmup_fraction = 0.2
+warmup_steps = int(warmup_fraction * num_training_steps)
+
+print(f"Total training steps: {num_training_steps}")
+print(f"Warmup steps: {warmup_steps}")
+
+scheduler = get_linear_schedule_with_warmup(opt, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
 
 #total_batch_size = 0
 # step_scheduled = False
@@ -196,8 +198,6 @@ accumulated_batch_size = 0
 
 loss_values = []
 
-# opt.zero_grad()
-
 # iter_num = 1
 print("Starting training..")
 current_epoch = 0
@@ -207,41 +207,58 @@ pbar = tqdm(total=global_target_batch_size, desc="Training Progress")
 # for param_group in opt.param_groups:
 #     param_group['lr'] = get_lr(iter_num)
 
+# Flatten the tokens
+# from torch.nn import CrossEntropyLoss
+
+# loss_fct = CrossEntropyLoss()
+opt.zero_grad()
+
 while True:
 
-    # Define the size of the group as per "training_examples_per_miner"
-    group_size = 25
-    total_dataset_size = 968000015  # Example dataset size
-    max_index_value = total_dataset_size - group_size
-    start_index = random.randint(0, max_index_value)
-    group = list(range(start_index, start_index + group_size))
-    # Use this group in your DataLoader
-    #print("Getting new data..")
-    dataloader = SubsetFalconLoader(
-        batch_size=1, sequence_length=1024, rows=group
-    )
+    # # Define the size of the group as per "training_examples_per_miner"
+    # group_size = 25
+    # total_dataset_size = 968000015  # Example dataset size
+    # max_index_value = total_dataset_size - group_size
+    # start_index = random.randint(0, max_index_value)
+    # group = list(range(start_index, start_index + group_size))
+    # # Use this group in your DataLoader
+    # #print("Getting new data..")
+    # dataloader = SubsetFalconLoader(
+    #     batch_size=10, sequence_length=1024, rows=group
+    # )
+    
+
+    dataloader = DataLoader(encoded_dataset, batch_size=6, collate_fn=default_data_collator)
     
     for i, batch in enumerate(dataloader):
+                
+        # inputs = batch.to("cuda")
+        input_ids = batch['input_ids'].to("cuda")
+        attention_mask = batch['attention_mask'].to("cuda")
+        labels = input_ids.clone()
         
-        inputs = batch.to("cuda")
-
-        # Forward pass
-        outputs = model(input_ids=inputs, labels=inputs)
-        
+        # outputs = model(input_ids=inputs, labels=inputs)
+        outputs = model(
+        input_ids = input_ids, 
+        attention_mask = attention_mask,
+        labels = labels
+        )     
         loss = outputs.loss 
         #print(loss.item())
-        loss = loss / global_target_batch_size
-        loss.backward()
+        scaled_loss = loss / global_target_batch_size
+        scaled_loss.backward()
 
-        #grad_averager.accumulate_grads_(batch_size=inputs.size(0))
+        # grad_averager.accumulate_grads_(batch_size=inputs.size(0))
+        
         #local_samples += inputs.size(0)  # increment the local batch size
         
         # Accumulate batch size
-        accumulated_batch_size += inputs.size(0)
+        accumulated_batch_size += input_ids.size(0)
 
+        loss_values.append(loss.item())  # Append the loss to the list
         # Check if accumulated batch size reached the target
         if accumulated_batch_size >= global_target_batch_size:
-            print("Opt stepping..")
+            #print("Opt stepping..")
             # Update model parameters
             opt.step()
             opt.zero_grad()
@@ -252,30 +269,27 @@ while True:
             #     param_group['lr'] = get_lr(iter_num)
             accumulated_batch_size = 0
             #iter_num +=1
-            
+        
             # Update the current_epoch 
             current_epoch += 1
+            # # Plotting the loss values
+            plt.figure(figsize=(10, 6))
+            plt.plot(loss_values, label='Loss Value')
+            plt.title('Training Loss')
+            plt.xlabel('Step')
+            plt.ylabel('Loss')
+            plt.legend()
+            plt.grid(True)
+
+            # Save the plot to a file
+            plt.savefig('training_loss_plot.png')
+            plt.close()  # Close the plot to free memory
             
         # Log loss and update progress bar
-        loss_value = loss.item() * global_target_batch_size
-        wandb.log({"loss": loss_value})
+        loss_value = loss.item()
+        #wandb.log({"loss": loss_value})
         pbar.set_description(f'Epoch: {current_epoch} - Current loss: {loss_value:.4f}')
         pbar.update()
-        
-        #loss_values.append(loss.item())  # Append the loss to the list
-
-        # # Plotting the loss values
-        # plt.figure(figsize=(10, 6))
-        # plt.plot(loss_values, label='Loss Value')
-        # plt.title('Training Loss')
-        # plt.xlabel('Step')
-        # plt.ylabel('Loss')
-        # plt.legend()
-        # plt.grid(True)
-
-        # # Save the plot to a file
-        # plt.savefig('training_loss_plot.png')
-        # plt.close()  # Close the plot to free memory
         
         # tracker.report_local_progress(local_epoch, local_samples)
         # print("local samples:", local_samples, "global_samples:", tracker.global_progress.samples_accumulated)

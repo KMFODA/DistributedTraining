@@ -7,9 +7,8 @@ import hivemind
 import torch
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
-from hivemind.optim.grad_averager import GradientAverager
-from hivemind.utils import get_logger, use_hivemind_log_handler
-from hivemindy import DTGradientAverager, DTAverager
+from hivemind.utils import use_hivemind_log_handler
+from hivemindy import DTGradientAverager, DTGradientAverager2
 from torch import nn
 
 logger = logging.getLogger()
@@ -66,8 +65,18 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             client_mode=True if i == 0 else False,
             start=True,
         )
-        for i, (dht, model) in enumerate(zip(dht_instances, models))
+        for i, (dht, model) in enumerate(zip(dht_instances[:-1], models))
     ]
+    
+    averagers.append(DTGradientAverager2(
+                        _make_tensors(), # Does it only work with _make_tensors() currently, because the model hasnt accumulated any gradients?
+                        #model.parameters(),
+                        dht=dht_instances[-1],
+                        prefix="diller",
+                        client_mode=False,
+                        start=True,
+                    )
+    )
 
     try:
         futures = [
@@ -124,6 +133,9 @@ def main():
 
     # Define a custom group for all-reduce
     group_id = DHTID.generate().to_bytes()
+    dht_instances.append(DHT(
+                            initial_peers=dht_instances[0].get_visible_maddrs(), 
+                            start=True))
     ordered_peer_ids = [dht.peer_id for dht in dht_instances]
     
     custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
