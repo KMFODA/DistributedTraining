@@ -112,6 +112,10 @@ class Miner(BaseMinerNeuron):
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
     
+        # Load state from peers if miner is not on latest epoch
+        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+            load_state_from_peer(self)
+
     def get_miner_info(self):
         return {
             "block": self.metagraph.block.item(),
@@ -173,8 +177,7 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            with self.tracker.pause_updates():
-                load_state_from_peer(self)
+            load_state_from_peer(self)
         
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
         start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
