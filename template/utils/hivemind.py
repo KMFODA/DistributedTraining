@@ -7,12 +7,12 @@ from itertools import chain
 from typing import (Any, AsyncIterator, Dict, Iterable, Optional, Sequence,
                     Tuple, Union)
 
+import torch
 import bittensor as bt
+
 import hivemind
 import hivemind.averaging
 import hivemind.averaging.averager
-import numpy as np
-import torch
 from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
                                           AveragingMode)
 from hivemind.averaging.control import AveragingStage, StepControl
@@ -339,7 +339,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
 
 class DTGradientAverager(DTAverager):
-    
+   
     def __init__(
         self,
         parameters: Iterable[torch.nn.Parameter],
@@ -383,6 +383,115 @@ class DTGradientAverager(DTAverager):
                     raise ValueError("Averaged gradients don't have same shape as gradients from parameters")
         super().__init__(averaged_tensors=averaged_grads, dht=dht, prefix=prefix, client_mode=client_mode, **kwargs)
 
+    def _grads_from_parameters(self) -> Iterator[torch.Tensor]:
+        """gradient buffers associated with parameters"""
+        for param in self.parameters:
+            if param.grad is None:
+                param.grad = torch.zeros_like(param)
+            yield param.grad
+
+    @torch.no_grad()
+    def _grad_accumulators(self) -> Iterator[torch.Tensor]:
+        """averager-based gradient accumulators"""
+        assert (self._local_accumulators is None) == self.reuse_grad_buffers
+        yield from self._grads_from_parameters() if self.reuse_grad_buffers else self._local_accumulators
+
+    @torch.no_grad()
+    def accumulate_grads_(self, batch_size: int):
+        """add current gradients to local grad accumulators (if used)"""
+        if self._accumulators_used_in_step and self.warn:
+            logger.warning(
+                "[warn=True] Gradient accumulators were not reset since the last averaging round. Please "
+                "call .reset_accumulated_grads_ after every step or use .step(reset_accumulators=True)"
+            )
+            self._accumulators_used_in_step = False  # warn once per round
+        if self._anchor_batch_size is None:
+            # remember the first batch size to correctly re-scale gradients if subsequent batches have a different size
+            self._anchor_batch_size = batch_size
+        self.local_samples_accumulated += batch_size
+        self.local_times_accumulated += 1
+        if self.reuse_grad_buffers:
+            pass  # user is responsible for accumulating gradients in .grad buffers
+        else:
+            alpha = float(batch_size) / self._anchor_batch_size
+            for grad_buf, grad_acc in zip(self._grads_from_parameters(), self._grad_accumulators()):
+                grad_acc.add_(grad_buf.to(grad_acc.device), alpha=alpha)
+
+    def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
+        """
+        Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
+
+        :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
+        :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
+        :note: setting weight at this stage is not supported, please leave this parameter as None
+        :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
+        :note: in the current implementation, each step_control can only be used in one step.
+        """
+        assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
+        return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
+
+    def step(
+        self,
+        weight: Optional[float] = None,
+        reset_accumulators: bool = True,
+        control: Optional[StepControl] = None,
+        timeout: Optional[float] = None,
+        wait: bool = True,
+        **kwargs,
+    ):
+        """
+        Average accumulated gradients with peers, optionally load averaged gradients and reset accumulators
+
+        :param weight: overrides the averaging weight; by default, weight equals the number of accumulated samples
+        :param reset_accumulators: by default, set local gradient accumulators to zeros after averaging succeeds
+        :param control: reuse a pre-arranged group of peers (or a matchmaking in progress) from averager.schedule_step
+        :param timeout: if specified, await for averaging round for at most this number of seconds (if wait=True)
+        :param wait: if True, await for the step to finish (or fail), otherwise run all-reduce in background
+        """
+        if control is None:
+            control = self.schedule_step(timeout=timeout, **kwargs)
+        elif len(kwargs) > 0:
+            raise RuntimeError(f"Averaging with a pre-scheduled group, parameters {kwargs} will have no effect")
+        assert not control.triggered, f"This {type(control)} instance was already used"
+        if self._new_averaged_grads and self.warn:
+            logger.warning(
+                "[warn=True] Starting new averaging round, but previous round results were not used. "
+                "This may be a sign of incorrect optimizer behavior"
+            )
+
+        self.load_accumulators_into_averager_()
+        self._accumulators_used_in_step = True
+        self._new_averaged_grads = True
+
+        control.weight = self.local_samples_accumulated if weight is None else weight
+        if reset_accumulators:
+            self.reset_accumulated_grads_()
+        control.allow_allreduce()
+
+        return control.result(timeout) if wait else control
+
+    @torch.no_grad()
+    def load_accumulators_into_averager_(self):
+        """load locally accumulated gradients into the averager for aggregation"""
+        # divide locally accumulated gradients by the number of times they were accumulated
+        grad_scale = (1.0 / self.local_times_accumulated) if self.local_times_accumulated != 0 else 0.0
+        with self.get_tensors() as averaged_grads:
+            for grad_acc, averaged_grad in zip(self._grad_accumulators(), averaged_grads):
+                averaged_grad.copy_(grad_acc, non_blocking=True).mul_(grad_scale)
+
+    @torch.no_grad()
+    def reset_accumulated_grads_(self):
+        """reset averager-internal gradient accumulators and the denominator"""
+        self._accumulators_used_in_step = False
+        self.local_samples_accumulated = self.local_times_accumulated = 0
+        self._anchor_batch_size = None
+        for grad_buf in self._grad_accumulators():
+            grad_buf.zero_()
+
+    '''
+    Needs this wrapper class to ensure device is set properly when averaging gradients
+    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
+    '''
     @contextmanager
     @torch.no_grad()
     def use_averaged_gradients(self):
@@ -399,19 +508,44 @@ class DTGradientAverager(DTAverager):
             finally:
                 for param, old_grad in zip(self.parameters, old_grads):
                     param.grad = old_grad
-                    
-    def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
-        """
-        Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
 
-        :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
-        :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
-        :note: setting weight at this stage is not supported, please leave this parameter as None
-        :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
-        :note: in the current implementation, each step_control can only be used in one step.
-        """
-        assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
-        return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
+    def notify_used_averaged_gradients(self):
+        """Notify averager that the results of a previous averaging round are accounted for"""
+        self._new_averaged_grads = False
+
+# class DTGradientAverager(DTAverager):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+
+#     @contextmanager
+#     @torch.no_grad()
+#     def use_averaged_gradients(self):
+#         """Substitute model's main gradients with averaged gradients"""
+#         self._new_averaged_grads = False
+#         with self.get_tensors() as averaged_grads:
+#             assert len(averaged_grads) == len(self.parameters)
+#             try:
+#                 old_grads = [param.grad for param in self.parameters]
+#                 for param, new_grad in zip(self.parameters, averaged_grads):
+#                     # move new_grad to the same device as param before assigning
+#                     param.grad = new_grad.to(param.device)
+#                 yield averaged_grads
+#             finally:
+#                 for param, old_grad in zip(self.parameters, old_grads):
+#                     param.grad = old_grad
+                    
+#     def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
+#         """
+#         Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
+
+#         :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
+#         :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
+#         :note: setting weight at this stage is not supported, please leave this parameter as None
+#         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
+#         :note: in the current implementation, each step_control can only be used in one step.
+#         """
+#         assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
+#         return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
 
 
 class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
