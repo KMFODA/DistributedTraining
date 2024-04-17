@@ -5,7 +5,7 @@ import re
 from contextlib import contextmanager
 from itertools import chain
 from typing import (Any, AsyncIterator, Dict, Iterable, Optional, Sequence,
-                    Tuple, Union)
+                    Tuple, Union, Iterator)
 
 import torch
 import bittensor as bt
