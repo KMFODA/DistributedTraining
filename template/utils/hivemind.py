@@ -513,7 +513,7 @@ class DTGradientAverager(DTAverager):
         """Notify averager that the results of a previous averaging round are accounted for"""
         self._new_averaged_grads = False
 
-# class DTGradientAverager(DTAverager):
+# class DTGradientAverager(hivemind.optim.grad_averager.GradientAverager):
 #     def __init__(self, *args, **kwargs):
 #         super().__init__(*args, **kwargs)
 
@@ -533,19 +533,6 @@ class DTGradientAverager(DTAverager):
 #             finally:
 #                 for param, old_grad in zip(self.parameters, old_grads):
 #                     param.grad = old_grad
-                    
-#     def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
-#         """
-#         Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
-
-#         :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
-#         :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
-#         :note: setting weight at this stage is not supported, please leave this parameter as None
-#         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
-#         :note: in the current implementation, each step_control can only be used in one step.
-#         """
-#         assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
-#         return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
 
 
 class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):

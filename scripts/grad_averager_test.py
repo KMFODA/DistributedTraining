@@ -1,165 +1,165 @@
-import hivemind
-from hivemind.utils.logging import use_hivemind_log_handler
-import torch
-import random
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from template.data.dataset import SubsetFalconLoader
-import logging
-from contextlib import contextmanager
+
 from template.base.neuron import BaseNeuron
 import os
+from template.utils.misc import init_dht, setup_logging
+from hivemind.optim.progress_tracker import ProgressTracker
+from hivemind.optim.state_averager import TrainingStateAverager
+from transformers import AutoModelForCausalLM
+import torch
+from template.utils.hivemind import (
+    DTGradientAverager,
+    DTStateAverager,
+    load_state_from_peer,
+)
+import hivemind
+from bitarray import bitarray
+import random
+import bittensor as bt
+from template.data.dataset import SubsetFalconLoader
 import time
 
-class MyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
-    '''
-    Needs this wrapper class to ensure device is set properly when averaging gradients
-    see: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
-    '''
-    @contextmanager
-    @torch.no_grad()
-    def use_averaged_gradients(self):
-        """Substitute model's main gradients with averaged gradients"""
-        self._new_averaged_grads = False
-        with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
-            try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
-                    # move new_grad to the same device as param before assigning
-                    param.grad = new_grad.to(param.device)
-                yield averaged_grads
-            finally:
-                for param, old_grad in zip(self.parameters, old_grads):
-                    param.grad = old_grad
+setup_logging()
 
+class Dummy:
 
-use_hivemind_log_handler("in_root_logger")
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
+    def __init__(*args, **kwargs):
+        pass
 
-config = BaseNeuron.config()
+self = Dummy()
+self.subtensor = 'dummy'
+self.config = BaseNeuron.config()
+self.config.wallet.name = "test_dt"
+self.config.wallet.hotkey = "validator_1"
+self.config.netuid = 80
+self.config.subtensor.network = "test"
+self.config.axon.port = os.environ["RUNPOD_TCP_PORT_70000"]
+self.config.dht.port = os.environ["RUNPOD_TCP_PORT_70001"]
+self.config.dht.announce_ip = os.environ["RUNPOD_PUBLIC_IP"]
+self.config.model_name = 'kmfoda/gpt-250m'
 
-version = "4"
-address = "206.125.129.213"
-announce_maddrs = [f"/ip{version}/{address}/tcp/43312"]
+init_dht(self)
 
-dht = hivemind.DHT(
-    host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/43312",
-                f"/ip4/0.0.0.0/udp/43312/quic",
-                ],
-    #initial_peers=["/ip4/161.97.156.125/tcp/8001/p2p/12D3KooWF7Ryy6537eehmd19DpSpexQ8gZbsgNornpFNknhRGmqX"], 
-    announce_maddrs=announce_maddrs,
-    start=True
-)
-print(dht.get_visible_maddrs())
+self.device = self.config.neuron.device
 
-# Write the visible_maddrs to a text file
-with open('visible_maddrs.txt', 'w') as f:
-    for maddr in dht.get_visible_maddrs():
-        f.write(str(maddr) + "\n")
+# Init Model
+self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
-time.sleep(15)
-
-model = AutoModelForCausalLM.from_pretrained(config.neuron.model_name)
 # Move the model to the appropriate device
-model = model.to("cuda")
+self.model = self.model.to(self.device)
 
 # Set up a decentralized optimizer that will average with peers in background
-opt = torch.optim.AdamW(model.parameters(), lr=config.neuron.lr)
+self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
-global_target_batch_size = 200  # set your target batch size
-grad_averager = MyGradientAverager(
-    model.parameters(), 
-    dht=dht, 
-    prefix=f"test",
-    start=True,
-    reuse_grad_buffers=True,
+# Init Gradient Averager
+self.grad_averager = DTGradientAverager(
+    self.model.parameters(),
+    dht=self.dht,
+    prefix=f"{self.config.neuron.run_id}_grad_averager",
+    compression=hivemind.Uniform8BitQuantization(),
+    # reuse_grad_buffers=True,
+    accumulate_grads_on=torch.device(self.device),
+    start = True,
+    next_chunk_timeout = 30.0,
 )
 
-tracker = hivemind.optim.progress_tracker.ProgressTracker(
-    dht=dht, 
-    prefix="test", 
-    target_batch_size=global_target_batch_size,
+# Init Tracker
+self.tracker = ProgressTracker(
+    dht=self.dht, 
+    prefix=f"{self.config.neuron.run_id}", 
+    target_batch_size=self.config.neuron.global_batch_size_train,
     start=True
 )
 
-tokenizer = AutoTokenizer.from_pretrained(config.neuron.model_name)
-# Add the EOS token as PAD token to ensure our dataloader doesn't throw an error for sequences of unequal length
-tokenizer.pad_token = tokenizer.eos_token
+# Init State Averager
+self.state_averager = DTStateAverager(
+    optimizer = self.opt,
+    initialize_optimizer = False,
+    dht=self.dht,
+    prefix=f"{self.config.neuron.run_id}_state_averager",
+    state_compression=hivemind.Uniform8BitQuantization(),
+    start = True,
+    next_chunk_timeout = 30.0,
+)
 
-#total_batch_size = 0
-step_scheduled = False
-local_epoch, local_samples = 0, 0
+# Load dataset
+self.dataset_loader = ()
+dataset_length = 968000015
+self.dataset_indices = bitarray(dataset_length)
 
-# Log gradients to a file
-#log_file = "/workspace/DTraining/logs/gradients.txt"
-#os.makedirs(os.path.dirname(log_file), exist_ok=True)
-#with open(log_file, "w") as f:
-print("Starting training..")
-for i in range(0, 100):
-    print("Getting new data..")
-    dataloader = SubsetFalconLoader(
-    batch_size=1, sequence_length=1024, rows=random.choices(range(0,968000015), k = 25)
-    )
+self.step_scheduled = False
+self.local_epoch, self.local_samples = 0, 0
+
+search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
+start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
+group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
+self.dataset_indices[group] = True
+
+self.config.neuron.local_batch_size_train = 100
+# Create Dataloader
+dataloader = SubsetFalconLoader(
+    batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
+)
+
+total_loss = 0
+# Train data for one epoch
+for index, batch in enumerate(dataloader):
+    inputs = batch.to(self.device)
+
+    # Forward pass
+    outputs = self.model(input_ids=inputs, labels=inputs)
+
+    # Normalize loss to account for batch accumulation
+    loss = outputs.loss
     
-    for i, batch in enumerate(dataloader):
-        
-        inputs = batch.to("cuda")
+    # Accumulate Total Loss
+    total_loss += outputs.loss.detach().item() 
 
-        # Forward pass
-        outputs = model(input_ids=inputs, labels=inputs)
-        
-        loss = outputs.loss
-        print(loss)
-        loss.backward()
-
-        # Only use this if reuse_grad_buffers=False
-        #grad_averager.accumulate_grads_(batch_size=1)
-        
-        # # Store gradients
-        # gradients_2 = list(grad_averager._grad_accumulators())[-1]
-        # gradients_3 = list(grad_averager._grads_from_parameters())[-1]
-        # # Get the gradients directly from the model parameters
-        # gradients_model = [param.grad for param in model.parameters()][-1]
-
-        # # Write the gradients to a text file
-        # with open('gradients.txt', 'w') as f:
-        #     for gradients in [gradients_2, gradients_3, gradients_model]:
-        #         for gradient in gradients:
-        #             f.write(str(gradient) + "\n")
-        #         f.write("\n")
-
-        # # Compare the gradients programmatically
-        # print(torch.allclose(gradients_2, gradients_3)) #False
-        # print(torch.allclose(gradients_3, gradients_model)) #True
-        # print(torch.allclose(gradients_2, gradients_model)) #False
+    # Backward Pass
+    loss.backward()
     
-    local_samples += 1  # increment the total batch size
-    
-    tracker.report_local_progress(local_epoch, local_samples)
-    print("local samples:", local_samples, "global_samples:", tracker.global_progress.samples_accumulated)
-    print("local epoch:", local_epoch, "global epoch", tracker.global_progress.epoch)
-    
-    if local_epoch < tracker.global_progress.epoch:
-        # if peer is out of sync, synchronize it with the swarm
-        grad_averager.load_state_from_peers()
+    # Copy gradients
+    gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
 
-    time.sleep(1)
-    if global_target_batch_size - tracker.global_progress.samples_accumulated <= 25 and not step_scheduled:  # Prepare groups for averaging
-       print("scheduling grad step..")
-       next_step_control = grad_averager.schedule_step()
-       step_scheduled = True  # Set the flag to True
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+    
+    # Zero Gradients
+    self.opt.zero_grad()
 
-    # aggregate gradients and perform optimizer step when target batch size is reached
-    if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-        with tracker.pause_updates():
-            print("grad stepping..")
-            grad_averager.step(control=next_step_control)
-            with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                print("opt stepping..")
-                opt.step()  # update model parameters using averaged gradients
-            grad_averager.reset_accumulated_grads_()  # prepare for next step
-            local_epoch = tracker.update_epoch(local_epoch + 1)
-            local_samples = 0  
-            step_scheduled = False 
+    # Update Tracker
+    self.local_samples += 1    
+    self.tracker.report_local_progress(self.local_epoch, self.local_samples)
+
+    # Log accumulation status
+    bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
+    bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+
+# breakpoint()
+from datetime import datetime
+
+while True:
+    if datetime.now().strftime("%H:%M:%S") <= '16:40:00':
+        continue
+    else:
+        break
+
+# bt.logging.info("Scheduling Step")  
+# next_step_time = hivemind.get_dht_time() + 15
+# next_step_control = self.grad_averager.schedule_step(scheduled_time = next_step_time)
+# time.sleep(15)
+
+bt.logging.info("Performing Gradient Averaging")    
+# self.grad_averager.step(control = next_step_control)
+# next_step_control = self.grad_averager.schedule_step()
+time.sleep(10)
+bt.logging.info("Scheduling Grad Step")
+# self.grad_averager.step(control = next_step_control, timeout=120)
+self.grad_averager.step()
+bt.logging.info('Model Weights Before Optimizer Step')
+bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+    bt.logging.info("Performing Optimizer Step")
+    self.opt.step()  # update model parameters using averaged gradients
+bt.logging.info('Model Weights After Optimizer Step')
+bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+self.grad_averager.reset_accumulated_grads_()  # prepare for next step

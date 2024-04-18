@@ -206,16 +206,15 @@ def setup_logging(level=logging.INFO):
     root_logger.addHandler(bt_handler)
 
     # Create a file handler that logs debug and higher level messages
-    
-    fh = logging.FileHandler(f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt")
-    fh.setLevel(logging.DEBUG)
-
-    # Create a formatter and set the formatter for the handler.
+    hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    hivemind_logger = logging.getLogger('hivemind')
+    hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
+    file_handler = logging.FileHandler(hivemind_log_file)
+    file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-
-    # Add the FileHandler to the root logger
-    root_logger.addHandler(fh)
+    file_handler.setFormatter(formatter)
+    hivemind_logger.addHandler(file_handler)
+    hivemind_logger.propagate = False  # Stop hivemind logs from propagating to the root logger
 
 def get_bandwidth():
     # Get speedtest results
@@ -302,12 +301,12 @@ def init_dht(self):
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
     # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.
-    partial = functools.partial(
-        self.subtensor.commit,
-        self.wallet,
-        self.config.netuid,
-       self.dht.peer_id.to_base58(),
-    )
+    # partial = functools.partial(
+    #     self.subtensor.commit,
+    #     self.wallet,
+    #     self.config.netuid,
+    #    self.dht.peer_id.to_base58(),
+    # )
     # try:
     #     run_in_subprocess(partial, 60)
     # except Exception as e:
