@@ -109,8 +109,9 @@ time.sleep(5)
 loop = asyncio.new_event_loop()
 _p2p = loop.run_until_complete(dht.replicate_p2p())
         
-group_id = DHTID.generate().to_bytes()
-ordered_peer_ids = [dht.peer_id]
+# group_id = DHTID.generate().to_bytes()
+group_id = b'"}\xf3\xca\x86\xfe\xbb&\xdd\xb3\xe2\xffCtZ~\x8e\x10\xf9\xb5'
+ordered_peer_ids = [dht.peer_id] # TODO REMEMBER SAME ORDER FOR OTHER PEERS
 remote_peer = loop.run_until_complete(_p2p.list_peers())
 remote_peer = [peer.peer_id for peer in remote_peer]
 ordered_peer_ids += remote_peer
