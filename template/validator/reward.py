@@ -16,16 +16,18 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 import random
+import time
 from typing import List
 
 import bittensor as bt
 import torch
+
 from template.data.dataset import SubsetFalconLoader, get_random_batches
-from template.utils.uids import get_random_uids
 from template.utils.misc import compute_losses
-import time
-import asyncio 
+from template.utils.uids import get_random_uids
+
 
 def score_metrics(self):
     """
@@ -144,6 +146,7 @@ async def get_rewards(
     uids: List[int],
     responses: list,
     all_reduce: bool,
+    scores = None,
 ) -> torch.FloatTensor:
     """
     Returns a tensor of rewards for the given query and responses.
@@ -159,14 +162,26 @@ async def get_rewards(
     """
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
         
-        if all_reduce:
-            # Set up the scores tensor
-            scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
+        if all_reduce:            
+            # Check if peer is connected to DHT & run_id and blacklist them if they are not
+            blacklist_scores = await score_blacklist(self, uids)
+            bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
+            self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
+            scores *= blacklist_scores
+
+            # Score miners bandwidth
+            bandwidth_scores = await score_bandwidth(self, uids)
+            bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
+            self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
+            scores *= bandwidth_scores
+            
             # TODO Add more metrics after the all-reduce?
             #scores *= score_metrics()
         else:
             # Set up the scores tensor
-            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
+            # TODO Fix above if-statment
+            return scores
+            #scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
             
     else:
 

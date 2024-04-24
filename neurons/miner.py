@@ -50,10 +50,6 @@ class Miner(BaseMinerNeuron):
         
         # Init device
         self.device = self.config.neuron.device
-        
-        # Setup for distributed training
-        dist.init_process_group("nccl", rank=rank, world_size=world_size)
-        torch.cuda.set_device(rank)
 
         # Init Model
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
@@ -133,27 +129,32 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         
         custom_group = GroupInfo(synapse.Group.group_id, tuple(synapse.Group.peerids), gathered=None)
-
-        # Perform AllReduce step with queried miners to get averaged gradients
-        bt.logging.info("Performing Gradient Averaging")
-        gradient_averaging_step = self.grad_averager.step(group=custom_group, wait=False) # TODO Should we await this?
-        
-        if gradient_averaging_step.done():
-            # Log the results for monitoring purposes.
-            bt.logging.info('Model Weights Before Optimizer Step')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                bt.logging.info("Performing Optimizer Step")
-                self.opt.step()  # update model parameters using averaged grad
-            bt.logging.info('Model Weights After Optimizer Step')
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-            self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-            self.local_samples = 0  
-            synapse.completion = "True"
-            return synapse
-        else:
-            bt.logging.info("Averaging Failed. Loading State From Peer")
+        try:
+            # Perform AllReduce step with queried miners to get averaged gradients
+            bt.logging.info("Performing Gradient Averaging")
+            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group)
+            
+            sleep_counter = 1
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+                time.sleep(1)
+                sleep_counter += 1
+            if gradient_averaging_step.done():
+                # Log the results for monitoring purposes.
+                bt.logging.info('Model Weights Before Optimizer Step') # TODO - do we need this here?
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info('Model Weights After Optimizer Step')
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
+                self.local_samples = 0  
+                synapse.completion = "True"
+                return synapse
+        except Exception as e:
+            bt.logging.info(f"AllReduce Failed With Error: {e}")
+            bt.logging.info("Loading State From Peer..")
             load_state_from_peer(self)
 
     async def forward(
