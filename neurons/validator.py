@@ -82,10 +82,6 @@ class Validator(BaseValidatorNeuron):
             wallet=self.wallet, metagraph=self.metagraph
         )
         
-        # TODO set correctly
-        self.previous_loss = 0
-        self.previous_ppl = 0
-        
         # # Init Dataset
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
@@ -108,7 +104,7 @@ class Validator(BaseValidatorNeuron):
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
+            prefix=f"{self.config.neuron.run_id}",
             compression=hivemind.Uniform8BitQuantization(),
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device("cuda"),
@@ -121,7 +117,7 @@ class Validator(BaseValidatorNeuron):
         self.state_averager = DTStateAverager(
             optimizer = self.opt,
             dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
+            prefix=f"{self.config.neuron.run_id}",
             state_compression=hivemind.Uniform8BitQuantization(),
             start = True,
             next_chunk_timeout = 30.0,
@@ -132,6 +128,8 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+        #breakpoint()
+        
         self.peer_id = self.dht.peer_id
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
@@ -140,6 +138,8 @@ class Validator(BaseValidatorNeuron):
         self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
         max_retries = 3
         retries = 0
+        print(self.uids_to_peerids)
+        exit()
         while all(value is None for value in self.uids_to_peerids.values()) and (retries >= max_retries):
             for retries in range(0, max_retries):
                 self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
@@ -238,7 +238,8 @@ class Validator(BaseValidatorNeuron):
                 # return None
                 uids_to_peerids[uid] = None
                 continue
-            peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
+            peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() 
+                             if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
 
             # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
             if miner_ip not in peer_list_dht_addrs:

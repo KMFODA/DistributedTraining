@@ -24,7 +24,7 @@ from typing import List
 import bittensor as bt
 import torch
 
-from template.data.dataset import SubsetFalconLoader, get_random_batches
+from template.data.dataset import SubsetFalconLoader#, get_random_batches
 from template.utils.misc import compute_losses
 from template.utils.uids import get_random_uids
 
@@ -145,7 +145,7 @@ async def get_rewards(
     self,
     uids: List[int],
     responses: list,
-    all_reduce: bool,
+    all_reduce: bool = False,
     scores = None,
 ) -> torch.FloatTensor:
     """

@@ -148,7 +148,14 @@ async def forward(self):
             )
             for _ in self.miner_uids
         ]
-        responses = await self.dendrite_pool.async_forward(self.miner_uids, queries)
+        query_tasks.append(
+            self.dendrite_pool.async_forward(
+                self.miner_uids,
+                queries
+            )
+        )
+        
+        responses = await asyncio.gather(*query_tasks)
 
         bt.logging.info(
             "Received responses: "
