@@ -71,7 +71,7 @@ class Validator(BaseValidatorNeuron):
             bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
             if num_peers == 0:
                 bt.logging.info('Re-initialising the DHT')
-            time.sleep(10)
+            break
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -116,6 +116,7 @@ class Validator(BaseValidatorNeuron):
         # Init State Averager
         self.state_averager = DTStateAverager(
             optimizer = self.opt,
+            initialize_optimizer = False,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}",
             state_compression=hivemind.Uniform8BitQuantization(),

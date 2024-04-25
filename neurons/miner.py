@@ -83,6 +83,7 @@ class Miner(BaseMinerNeuron):
         # Init State Averager
         self.state_averager = DTStateAverager(
             optimizer = self.opt,
+            initialize_optimizer = False,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
@@ -104,6 +105,10 @@ class Miner(BaseMinerNeuron):
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
+    
+        # Load state from peers if miner is not on latest epoch
+        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+            load_state_from_peer(self)
 
     def get_miner_info(self):
         return {

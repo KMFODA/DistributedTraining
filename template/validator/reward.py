@@ -100,7 +100,6 @@ async def score_blacklist(self, uids):
     
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-
         if self.uids_to_peerids[uid] == None:
             scores[i] = 0.0
         else:
@@ -195,21 +194,21 @@ async def get_rewards(
             self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
             
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+            blacklist_scores = await score_blacklist(self, uids.tolist())
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
             scores *= blacklist_scores
 
         # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
-        gradient_scores = torch.FloatTensor([score_gradients(self,response, self.miner_uids[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
+        gradient_scores = torch.FloatTensor([score_gradients(self,response, uids.tolist()[index]) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
         bt.logging.info(f"Gradient Scores: {gradient_scores}")
-        self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids, gradient_scores)})
+        self.event.update({f"rewards.gradient.uid{uid}": gradient_score for uid, gradient_score in zip(uids.tolist(), gradient_scores)})
         scores *= gradient_scores
 
         # Calculate Data Indices Scores
         steps_scores = torch.FloatTensor([len(response.dataset_indices) if (response.dendrite.status_code == 200) and (scores[index] != 0) else 0 for index, response in enumerate(responses[0])]).to(self.device)
         bt.logging.info(f"Steps Scores: {steps_scores}")
-        self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids, steps_scores)})
+        self.event.update({f"rewards.steps.uid{uid}": steps_score for uid, steps_score in zip(uids.tolist(), steps_scores)})
         scores *= steps_scores
 
     return scores
