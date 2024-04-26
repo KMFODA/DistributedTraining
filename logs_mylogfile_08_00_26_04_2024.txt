@@ -1,2 +1,0 @@
-2024-04-26 08:01:21,022 - hivemind.utils.networking - INFO - Running a DHT instance. To connect other peers to this one, use [1m[34m--initial_peers /p2p/12D3KooWNBxACzNRgMgfZdoR6tj69Xdy5utamrbCLNA9iVoE8VKX[0m
-2024-04-26 08:01:21,022 - hivemind.utils.networking - INFO - Full list of visible multiaddresses: /ip4/149.36.0.162/tcp/46963/p2p/12D3KooWNBxACzNRgMgfZdoR6tj69Xdy5utamrbCLNA9iVoE8VKX
