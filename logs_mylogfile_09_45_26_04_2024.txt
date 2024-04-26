@@ -1,0 +1,32 @@
+2024-04-26 09:45:41,271 - hivemind.utils.networking - INFO - Running a DHT instance. To connect other peers to this one, use [1m[34m--initial_peers /p2p/12D3KooWKQV9Y4eBdHik7DgE8XSvxiDGdGQikgHdNQprrBbYEYD6[0m
+2024-04-26 09:45:41,272 - hivemind.utils.networking - INFO - Full list of visible multiaddresses: /ip4/149.36.0.162/tcp/46963/p2p/12D3KooWKQV9Y4eBdHik7DgE8XSvxiDGdGQikgHdNQprrBbYEYD6
+2024-04-26 09:46:17,308 - template.utils.hivemind - ERROR - peer_id is not a part of the group
+Traceback (most recent call last):
+  File "/workspace/DTraining/template/utils/hivemind.py", line 318, in _aggregate_with_group
+    runner = DTAllReduceRunner(
+  File "/workspace/DTraining/template/utils/hivemind.py", line 46, in __init__
+    super().__init__(*args, **kwargs)
+  File "/opt/conda/envs/bthive/lib/python3.10/site-packages/hivemind/averaging/allreduce.py", line 81, in __init__
+    assert self.peer_id in ordered_peer_ids, "peer_id is not a part of the group"
+AssertionError: peer_id is not a part of the group
+2024-04-26 09:46:17,314 - hivemind.averaging.averager - WARN - All-reduce group b'\xfb\x13\xd8\x19\xf6C\x07`Yt\x95\xca+V\x08\xff\xfcU&N' did not finish.
+2024-04-26 09:46:17,315 - template.utils.hivemind - ERROR - Unable to run All-Reduce: peer_id is not a part of the group
+Traceback (most recent call last):
+  File "/workspace/DTraining/template/utils/hivemind.py", line 318, in _aggregate_with_group
+    runner = DTAllReduceRunner(
+  File "/workspace/DTraining/template/utils/hivemind.py", line 46, in __init__
+    super().__init__(*args, **kwargs)
+  File "/opt/conda/envs/bthive/lib/python3.10/site-packages/hivemind/averaging/allreduce.py", line 81, in __init__
+    assert self.peer_id in ordered_peer_ids, "peer_id is not a part of the group"
+AssertionError: peer_id is not a part of the group
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/workspace/DTraining/template/utils/hivemind.py", line 244, in _step_custom
+    await asyncio.wait_for(
+  File "/opt/conda/envs/bthive/lib/python3.10/asyncio/tasks.py", line 408, in wait_for
+    return await fut
+  File "/workspace/DTraining/template/utils/hivemind.py", line 345, in _aggregate_with_group
+    raise MatchmakingException(f"Unable to run All-Reduce: {e}")
+hivemind.averaging.matchmaking.MatchmakingException: Unable to run All-Reduce: peer_id is not a part of the group

@@ -53,25 +53,28 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
-        num_peers = 0
-        while num_peers == 0:
+        init_dht(self)
+        # num_peers = 0
+        # while num_peers == 0:
+            
+            # # Init DHT
+            # init_dht(self)
 
-            # Init DHT
-            init_dht(self)
+            # # Init Tracker
+            # self.tracker = ProgressTracker(
+            #     dht=self.dht, 
+            #     prefix=f"{self.config.neuron.run_id}", 
+            #     target_batch_size=self.config.neuron.global_batch_size_train,
+            #     start=True
+            # )
+            # time.sleep(3)
+            # num_peers = self.tracker.global_progress.num_peers
 
-            # Init Tracker
-            self.tracker = ProgressTracker(
-                dht=self.dht, 
-                prefix=f"{self.config.neuron.run_id}", 
-                target_batch_size=self.config.neuron.global_batch_size_train,
-                start=True
-            )
-            num_peers = self.tracker.global_progress.num_peers
-
-            bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
-            if num_peers == 0:
-                bt.logging.info('Re-initialising the DHT')
-            break
+            # bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
+            # if num_peers == 0:
+            #     bt.logging.info('Re-initialising the DHT')
+            # break
+        
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -104,7 +107,7 @@ class Validator(BaseValidatorNeuron):
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
+            prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device("cuda"),
@@ -113,12 +116,20 @@ class Validator(BaseValidatorNeuron):
             auxiliary = True
         )
         
+        # Init Tracker
+        self.tracker = ProgressTracker(
+            dht=self.dht, 
+            prefix=f"{self.config.neuron.run_id}_progress", 
+            target_batch_size=self.config.neuron.global_batch_size_train,
+            start=True
+        )
+        
         # Init State Averager
         self.state_averager = DTStateAverager(
             optimizer = self.opt,
             initialize_optimizer = False,
             dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
+            prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
             start = True,
             next_chunk_timeout = 30.0,
@@ -139,8 +150,7 @@ class Validator(BaseValidatorNeuron):
         self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
         max_retries = 3
         retries = 0
-        print(self.uids_to_peerids)
-        exit()
+        
         while all(value is None for value in self.uids_to_peerids.values()) and (retries >= max_retries):
             for retries in range(0, max_retries):
                 self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))

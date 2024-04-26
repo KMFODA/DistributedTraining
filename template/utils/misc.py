@@ -191,33 +191,27 @@ class BittensorLogHandler(logging.Handler):
             bt_logger.trace(log_entry)
 
 def setup_logging(level=logging.INFO):
+    
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
     bt_logger_ = logging.getLogger('bittensor')
     bt_logger_.propagate = False
 
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG) 
+
     use_hivemind_log_handler("nowhere")
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
+    # Create a file handler
+    handler = logging.FileHandler('logfile.log')
 
-    bt_handler = BittensorLogHandler()
-    formatter = logging.Formatter('%(message)s')
-    bt_handler.setFormatter(formatter)
-    root_logger.addHandler(bt_handler)
-
-    # Create a file handler that logs debug and higher level messages
-    
-    fh = logging.FileHandler(f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt")
-    fh.setLevel(logging.DEBUG)
-
-    # Create a formatter and set the formatter for the handler.
+    # Create a formatter and add it to the handler
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
+    handler.setFormatter(formatter)
 
-    # Add the FileHandler to the root logger
-    root_logger.addHandler(fh)
+    # Add the handler to the logger
+    logger.addHandler(handler)
 
 def get_bandwidth():
     # Get speedtest results

@@ -75,7 +75,7 @@ class Miner(BaseMinerNeuron):
         # Init Tracker
         self.tracker = ProgressTracker(
             dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}", 
+            prefix=f"{self.config.neuron.run_id}_progress", 
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True
         )

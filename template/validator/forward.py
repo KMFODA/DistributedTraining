@@ -84,6 +84,9 @@ async def forward(self):
         ordered_peer_ids = [str(self.dht.peer_id)]
         remote_peer = [str(value) for value in group_peerids.values()]
         ordered_peer_ids += remote_peer
+        
+        print(self.miner_uids)
+        print(ordered_peer_ids)
 
         group = template.protocol.Group(
             peer_count=len(group_peerids),  # Including the local peer
@@ -101,14 +104,19 @@ async def forward(self):
         # Define a custom group for all-reduce
         custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
         
-        responses = self.dendrite_pool.async_forward(self.miner_uids, queries) # Don't need to await this, as we will wait for the all-reduce step instead
-
+        query_tasks.append(
+            self.dendrite_pool.async_forward(
+                self.miner_uids,
+                queries
+            )
+        )
         try:
             bt.logging.info("Performing Gradient Averaging")
             # Perform AllReduce step with queried miners to get averaged gradients
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group
             )
+            responses = await asyncio.gather(*query_tasks)
             
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
