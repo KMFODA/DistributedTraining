@@ -57,7 +57,7 @@ async def forward(self):
     ):
 
         bt.logging.info("Scheduling all-reduce synapse call")
-        sample_size = self.config.neuron.sample_size_allreduce
+        sample_size = self.config.neuron.sample_size
         # next_step_control = self.grad_averager.schedule_step()
         # self.step_scheduled = True
         all_reduce = True
@@ -117,7 +117,6 @@ async def forward(self):
                 custom_group_info=custom_group
             )
             responses = await asyncio.gather(*query_tasks)
-            
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
                 time.sleep(1)
@@ -149,6 +148,7 @@ async def forward(self):
 
 
     else:
+
         # Regular training synapse
         queries = [
             template.protocol.Train(
@@ -156,6 +156,7 @@ async def forward(self):
             )
             for _ in self.miner_uids
         ]
+
         query_tasks.append(
             self.dendrite_pool.async_forward(
                 self.miner_uids,

@@ -161,15 +161,25 @@ async def get_rewards(
     """
     if (responses == [[]]) or ([response[0] for response in responses if response[0].dendrite.status_code == 200 and response[0].loss != []] == []):
         
-        if all_reduce:            
+        if all_reduce:          
+
+            # Now that we've called all_reduce on all available UIDs only score a sample of them to spread scoring burden across all validators
+            self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=self.config.neuron.sample_size)
+            
+            # Set up the scores tensor
+            scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
+            
+            # Update mapping of uids to peerids
+            self.uids_to_peerids = await self.map_uid_to_peerid(range(0, self.metagraph.n))
+
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, uids)
+            blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
             scores *= blacklist_scores
 
             # Score miners bandwidth
-            bandwidth_scores = await score_bandwidth(self, uids)
+            bandwidth_scores = await score_bandwidth(self, self.miner_uids.tolist())
             bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
             self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
             scores *= bandwidth_scores
@@ -179,8 +189,8 @@ async def get_rewards(
         else:
             # Set up the scores tensor
             # TODO Fix above if-statment
+            scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
             return scores
-            #scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
             
     else:
 

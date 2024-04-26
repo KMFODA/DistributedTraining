@@ -119,7 +119,7 @@ class Validator(BaseValidatorNeuron):
         # Init Tracker
         self.tracker = ProgressTracker(
             dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}_progress", 
+            prefix=f"{self.config.neuron.run_id}", 
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True
         )
@@ -140,7 +140,6 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        #breakpoint()
         
         self.peer_id = self.dht.peer_id
         self.get_stub = self.grad_averager.get_stub
