@@ -77,6 +77,7 @@ async def forward(self):
     query_tasks = []
 
     if all_reduce:
+
         # All-reduce synapse
         group_peerids = await self.map_uid_to_peerid(self.miner_uids)
         group_id = DHTID.generate().to_bytes()
@@ -88,10 +89,11 @@ async def forward(self):
         print(self.miner_uids)
         print(ordered_peer_ids)
 
+        group_id = '1'
         group = template.protocol.Group(
             peer_count=len(group_peerids),  # Including the local peer
             peer_ids=ordered_peer_ids,
-            group_id=group_id,
+            group_id=str(group_id),
         )
 
         queries = [
@@ -102,7 +104,7 @@ async def forward(self):
         ]
 
         # Define a custom group for all-reduce
-        custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
+        custom_group = GroupInfo(group_id.encode(), tuple(group_peerids), gathered=None)
         
         query_tasks.append(
             self.dendrite_pool.async_forward(

@@ -96,10 +96,11 @@ class Train( bt.Synapse ):
     epoch: int | None
 
 class Group(pydantic.BaseModel):
+
     peer_count: Optional[int] = None
     peer_ids: Optional[List[str]] = None
     bandwidth: Optional[int] = None
-    group_id: Optional[bytes] = None
+    group_id: Optional[str] = None
     #started_at: Optional[int] = None
     #session_time: Optional[int] = 300
     #status: Optional[str] = None
