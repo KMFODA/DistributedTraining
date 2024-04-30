@@ -89,7 +89,8 @@ async def forward(self):
         print(self.miner_uids)
         print(ordered_peer_ids)
 
-        group_id = '1'
+        group_id = str(random.choice([i for i in range(0, 10000)]))
+
         group = template.protocol.Group(
             peer_count=len(group_peerids),  # Including the local peer
             peer_ids=ordered_peer_ids,
@@ -103,8 +104,9 @@ async def forward(self):
             for _ in self.miner_uids
         ]
 
+        from hivemind.p2p import PeerID
         # Define a custom group for all-reduce
-        custom_group = GroupInfo(group_id.encode(), tuple(group_peerids), gathered=None)
+        custom_group = GroupInfo(group_id.encode(), tuple([PeerID(i) for i in ordered_peer_ids]), gathered=None)
         
         query_tasks.append(
             self.dendrite_pool.async_forward(
@@ -112,12 +114,16 @@ async def forward(self):
                 queries
             )
         )
+
         try:
+            
             bt.logging.info("Performing Gradient Averaging")
+            
             # Perform AllReduce step with queried miners to get averaged gradients
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group
             )
+            
             responses = await asyncio.gather(*query_tasks)
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):

@@ -16,30 +16,28 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import asyncio
-import functools
-import logging
-import re
 import time
-from functools import lru_cache, update_wrapper
-from ipaddress import ip_address
 from math import floor
-from typing import Any, Callable, List
-
+from typing import Callable, Any
+import functools
+from functools import lru_cache, update_wrapper
 import bittensor as bt
+from typing import Any, List
+from template.protocol import Train
+import asyncio
+import wandb
+import logging
+from loguru import logger as bt_logger
+from hivemind.utils.logging import use_hivemind_log_handler
+import speedtest
 import hivemind
 import requests
-import speedtest
-import torch
-import wandb
 from hivemind import utils
-from hivemind.utils.logging import use_hivemind_log_handler
-from loguru import logger as bt_logger
-
-from template.protocol import Train
+import re
+from ipaddress import ip_address
 from template.utils.chain_storage import run_in_subprocess
 from datetime import datetime
-
+import torch
 
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
@@ -190,28 +188,40 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
+def logging_filter(record):
+    if record.name != "hivemind.dht.protocol":
+        return True
+    else:
+        return False
+
 def setup_logging(level=logging.INFO):
-    
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
     bt_logger_ = logging.getLogger('bittensor')
     bt_logger_.propagate = False
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG) 
-
     use_hivemind_log_handler("nowhere")
 
-    # Create a file handler
-    handler = logging.FileHandler('logfile.log')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
-    # Create a formatter and add it to the handler
+    bt_handler = BittensorLogHandler()
+    formatter = logging.Formatter('%(message)s')
+    bt_handler.setFormatter(formatter)
+    root_logger.addHandler(bt_handler)
+
+    # Create a file handler that logs debug and higher level messages
+    hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    hivemind_logger = logging.getLogger('hivemind')
+    hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
+    file_handler = logging.FileHandler(hivemind_log_file)
+    file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-
-    # Add the handler to the logger
-    logger.addHandler(handler)
+    file_handler.setFormatter(formatter)
+    file_handler.addFilter(logging_filter)
+    hivemind_logger.addHandler(file_handler)
+    hivemind_logger.propagate = False  # Stop hivemind logs from propagating to the root logger
 
 def get_bandwidth():
     # Get speedtest results
@@ -298,12 +308,12 @@ def init_dht(self):
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
     # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.
-    partial = functools.partial(
-        self.subtensor.commit,
-        self.wallet,
-        self.config.netuid,
-       self.dht.peer_id.to_base58(),
-    )
+    # partial = functools.partial(
+    #     self.subtensor.commit,
+    #     self.wallet,
+    #     self.config.netuid,
+    #    self.dht.peer_id.to_base58(),
+    # )
     # try:
     #     run_in_subprocess(partial, 60)
     # except Exception as e:

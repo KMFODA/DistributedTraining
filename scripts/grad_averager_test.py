@@ -54,15 +54,15 @@ class MyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
                     param.grad = old_grad
 
 version = "4"
-address = "85.167.195.137"
-announce_maddrs = [f"/ip{version}/{address}/tcp/47130"]
+address = os.environ["RUNPOD_PUBLIC_IP"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/{os.environ['RUNPOD_TCP_PORT_70001']}"]
 
 dht = hivemind.DHT(
     host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/47130",
-                f"/ip4/0.0.0.0/udp/47130/quic",
+                f"/ip4/0.0.0.0/tcp/{os.environ['RUNPOD_TCP_PORT_70001']}",
+                f"/ip4/0.0.0.0/udp/{os.environ['RUNPOD_TCP_PORT_70001']}/quic",
                 ],
-    #initial_peers=["/ip4/161.97.156.125/tcp/8001/p2p/12D3KooWF7Ryy6537eehmd19DpSpexQ8gZbsgNornpFNknhRGmqX"], 
+    initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
     announce_maddrs=announce_maddrs,
     start=True
 )
@@ -75,7 +75,7 @@ with open('visible_maddrs.txt', 'w') as f:
 
 time.sleep(15)
 
-model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-1b")
+model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
 # Move the model to the appropriate device
 model = model.to("cuda")
 
@@ -119,58 +119,60 @@ custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
 
 print("Starting training..")
-for i in range(0, 100):
-    print("Getting new data..")
-    dataloader = SubsetFalconLoader(
-    batch_size=1, sequence_length=256, rows=random.choices(range(0,968000015), k = 25)
-    )
+# for i in range(0, 1):
+print("Getting new data..")
+dataloader = SubsetFalconLoader(
+    batch_size=1, sequence_length=1024, rows=random.choices(range(0,968000015), k = 200)
+)
+
+for i, batch in enumerate(dataloader):
     
-    for i, batch in enumerate(dataloader):
-        
-        inputs = batch.to("cuda")
+    inputs = batch.to("cuda")
 
-        # Forward pass
-        outputs = model(input_ids=inputs, labels=inputs)
-        
-        loss = outputs.loss
-        print(loss)
-        loss.backward()
-
-        # Only use this if reuse_grad_buffers=False
-        grad_averager.accumulate_grads_(batch_size=1)
-        
-        # # Store gradients
-        # gradients_2 = list(grad_averager._grad_accumulators())[-1]
-        # gradients_3 = list(grad_averager._grads_from_parameters())[-1]
-        # # Get the gradients directly from the model parameters
-        # gradients_model = [param.grad for param in model.parameters()][-1]
-
-        # # Write the gradients to a text file
-        # with open('gradients.txt', 'w') as f:
-        #     for gradients in [gradients_2, gradients_3, gradients_model]:
-        #         for gradient in gradients:
-        #             f.write(str(gradient) + "\n")
-        #         f.write("\n")
-
-        # # Compare the gradients programmatically
-        # print(torch.allclose(gradients_2, gradients_3)) #False
-        # print(torch.allclose(gradients_3, gradients_model)) #True
-        # print(torch.allclose(gradien0ts_2, gradients_model)) #False
+    # Forward pass
+    outputs = model(input_ids=inputs, labels=inputs)
     
-        local_samples += 1  # increment the total batch size
-        
-        tracker.report_local_progress(local_epoch, local_samples)
-        print("local samples:", local_samples, "global_samples:", tracker.global_progress.samples_accumulated)
-        print("local epoch:", local_epoch, "global epoch", tracker.global_progress.epoch)
+    loss = outputs.loss
+    print(loss)
+    loss.backward()
 
-        # aggregate gradients and perform optimizer step when target batch size is reached
-        if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-            with tracker.pause_updates():
-                print("grad stepping..")
-                grad_averager.step(custom_group_info=custom_group)
-                with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    print("opt stepping..")
-                    opt.step()  # update model parameters using averaged gradients
-                grad_averager.reset_accumulated_grads_()  # prepare for next step
-                local_epoch = tracker.update_epoch(local_epoch + 1)
-                local_samples = 0  
+    # Only use this if reuse_grad_buffers=False
+    grad_averager.accumulate_grads_(batch_size=1)
+    
+    # # Store gradients
+    # gradients_2 = list(grad_averager._grad_accumulators())[-1]
+    # gradients_3 = list(grad_averager._grads_from_parameters())[-1]
+    # # Get the gradients directly from the model parameters
+    # gradients_model = [param.grad for param in model.parameters()][-1]
+
+    # # Write the gradients to a text file
+    # with open('gradients.txt', 'w') as f:
+    #     for gradients in [gradients_2, gradients_3, gradients_model]:
+    #         for gradient in gradients:
+    #             f.write(str(gradient) + "\n")
+    #         f.write("\n")
+
+    # # Compare the gradients programmatically
+    # print(torch.allclose(gradients_2, gradients_3)) #False
+    # print(torch.allclose(gradients_3, gradients_model)) #True
+    # print(torch.allclose(gradien0ts_2, gradients_model)) #False
+
+    local_samples += 1  # increment the total batch size
+    
+    tracker.report_local_progress(local_epoch, local_samples)
+    print("local samples:", tracker.local_progress.samples_accumulated, "global_samples:", tracker.global_progress.samples_accumulated)
+    print("local epoch:", tracker.local_progress.epoch, "global epoch", tracker.global_progress.epoch)
+
+    # aggregate gradients and perform optimizer step when target batch size is reached
+    if tracker.global_progress.samples_accumulated >= global_target_batch_size:
+        breakpoint()
+        with tracker.pause_updates():
+            print("grad stepping..")
+            grad_averager.step(custom_group_info=custom_group)
+            with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                print("opt stepping..")
+                opt.step()  # update model parameters using averaged gradients
+            grad_averager.reset_accumulated_grads_()  # prepare for next step
+            local_epoch = tracker.update_epoch(local_epoch + 1)
+            local_samples = 0  
+            breakpoint()
