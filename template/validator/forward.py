@@ -109,6 +109,9 @@ async def forward(self):
                 self.grad_averager.reset_accumulated_grads_()  # prepare for next step
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
 
+            bt.logging.info('Pushing New Model Weights To HF Hub')
+            self.model.push_to_hub(self.config.neuron.model_name, tags = [str(self.tracker.local_progress.epoch)])
+            
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
             load_state_from_peer(self)

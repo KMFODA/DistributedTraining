@@ -33,6 +33,7 @@ from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
                                           get_dht_time)
+from transformers import AutoModelForCausalLM
 
 GatheredData = Any
 
@@ -675,8 +676,15 @@ def load_state_from_peer(self, epoch = None):
         epoch = self.tracker.global_progress.epoch
 
     bt.logging.info('Model Weights Before Loading State')
-    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    self.state_averager.load_final_state_from_peers(epoch)
+    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])\
+    
+    try:
+        self.state_averager.load_final_state_from_peers(epoch)
+    except:
+        bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model.to(self.device)
+
     bt.logging.info('Model Weights After Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
 
