@@ -37,7 +37,8 @@ import re
 from ipaddress import ip_address
 from template.utils.chain_storage import run_in_subprocess
 from datetime import datetime
-
+import os
+import shutil
 
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
@@ -188,6 +189,12 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
+def logging_filter(record):
+    if record.name != "hivemind.dht.protocol":
+        return True
+    else:
+        return False
+
 def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
@@ -206,11 +213,18 @@ def setup_logging(level=logging.INFO):
     root_logger.addHandler(bt_handler)
 
     # Create a file handler that logs debug and higher level messages
-    hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    # hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    
+    if os.path.exists("/root/logs_mylogfile.txt"):
+        shutil.copyfile("/root/logs_mylogfile.txt", "/root/logs_mylogfile_v1.txt")
+        os.remove("/root/logs_mylogfile.txt")
+
+    hivemind_log_file = f"/root/logs_mylogfile.txt"
     hivemind_logger = logging.getLogger('hivemind')
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
     file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
+    file_handler.addFilter(logging_filter)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     hivemind_logger.addHandler(file_handler)
