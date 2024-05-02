@@ -682,7 +682,7 @@ def load_state_from_peer(self, epoch = None):
         self.state_averager.load_final_state_from_peers(epoch)
     except:
         bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
         self.model.to(self.device)
 
     bt.logging.info('Model Weights After Loading State')

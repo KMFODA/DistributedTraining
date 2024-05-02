@@ -18,6 +18,8 @@
 
 import bittensor as bt
 
+from huggingface_hub import create_tag, list_repo_refs
+
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
 from template.utils.hivemind import load_state_from_peer
@@ -108,10 +110,13 @@ async def forward(self):
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
                 self.grad_averager.reset_accumulated_grads_()  # prepare for next step
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-
-            bt.logging.info('Pushing New Model Weights To HF Hub')
-            self.model.push_to_hub(self.config.neuron.model_name, tags = [str(self.tracker.local_progress.epoch)])
             
+            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+            if refs.tags and int(refs.tags[-1]) < self.tracker.local_progress.epoch:
+                bt.logging.info('Pushing New Model Weights To HF Hub')
+                self.model.push_to_hub(self.config.neuron.model_name)
+                create_tag("kmfoda/gpt2-1b", repo_type="model", tag=str(self.tracker.local_progress.epoch), tag_message="Bump release version.")
+
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
             load_state_from_peer(self)
