@@ -34,6 +34,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
                                           get_dht_time)
 from transformers import AutoModelForCausalLM
+from huggingface_hub import create_tag, list_repo_refs
 
 GatheredData = Any
 
@@ -691,3 +692,9 @@ def load_state_from_peer(self, epoch = None):
     with self.tracker.pause_updates():
         self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
         self.local_epoch = self.tracker.local_progress.epoch
+
+    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+    if refs.tags and int(refs.tags[-1].name) < self.tracker.local_progress.epoch:
+        bt.logging.info('Pushing New Model Weights To HF Hub')
+        self.model.push_to_hub(self.config.neuron.model_name)
+        create_tag("kmfoda/gpt2-1b", repo_type="model", tag=str(self.tracker.local_progress.epoch), tag_message="Bump release version.")

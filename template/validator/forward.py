@@ -88,16 +88,19 @@ async def forward(self):
     query_tasks.append(
         self.dendrite_pool.async_forward(
             self.miner_uids,
-            queries
+            queries,
+            timeout = self.all_reduce_timeout
         )
     )
     responses = await asyncio.gather(*query_tasks)
     if all_reduce and responses != []:
         responses = []
         sleep_counter = 1
-        while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+        
+        while (gradient_averaging_step.done() is False) and (sleep_counter <= self.all_reduce_timeout):
             time.sleep(1)
             sleep_counter += 1
+
         if gradient_averaging_step.done():
             # Log the results for monitoring purposes.
             bt.logging.info('Model Weights Before Optimizer Step')
@@ -112,10 +115,10 @@ async def forward(self):
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
             
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            if refs.tags and int(refs.tags[-1]) < self.tracker.local_progress.epoch:
+            if refs.tags and int(refs.tags[-1].name) < self.tracker.local_progress.epoch:
                 bt.logging.info('Pushing New Model Weights To HF Hub')
                 self.model.push_to_hub(self.config.neuron.model_name)
-                create_tag("kmfoda/gpt2-1b", repo_type="model", tag=str(self.tracker.local_progress.epoch), tag_message="Bump release version.")
+                create_tag(self.config.neuron.model_name, repo_type="model", tag=str(self.tracker.local_progress.epoch), tag_message="Bump release version.")
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
