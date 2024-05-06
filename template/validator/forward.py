@@ -57,7 +57,7 @@ async def forward(self):
     ):
 
         bt.logging.info("Scheduling all-reduce synapse call")
-        sample_size = self.config.neuron.sample_size
+        sample_size = self.config.neuron.sample_size_allreduce
         # next_step_control = self.grad_averager.schedule_step()
         # self.step_scheduled = True
         all_reduce = True
@@ -83,13 +83,13 @@ async def forward(self):
         group_id = DHTID.generate().to_bytes()
 
         ordered_peer_ids = [str(self.dht.peer_id)]
-        remote_peer = [str(value) for value in group_peerids.values()]
-        ordered_peer_ids += remote_peer
+        remote_peers = [str(value) for value in group_peerids.values()]
+        ordered_peer_ids += remote_peers
         
         print(self.miner_uids)
         print(ordered_peer_ids)
 
-        group_id = str(random.choice([i for i in range(0, 10000)]))
+        #group_id = str(random.choice([i for i in range(0, 10000)]))
 
         group = template.protocol.Group(
             peer_count=len(group_peerids),  # Including the local peer
@@ -104,10 +104,11 @@ async def forward(self):
             for _ in self.miner_uids
         ]
 
-        from hivemind.p2p import PeerID
+        #from hivemind.p2p import PeerID
         # Define a custom group for all-reduce
-        custom_group = GroupInfo(group_id.encode(), tuple([PeerID(i) for i in ordered_peer_ids]), gathered=None)
-        
+        #custom_group = GroupInfo(group_id.encode(), tuple([PeerID(i) for i in ordered_peer_ids]), gathered=None)
+        custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
+
         query_tasks.append(
             self.dendrite_pool.async_forward(
                 self.miner_uids,

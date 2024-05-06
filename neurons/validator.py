@@ -54,26 +54,26 @@ class Validator(BaseValidatorNeuron):
         self.load_state()
 
         init_dht(self)
-        # num_peers = 0
-        # while num_peers == 0:
+        num_peers = 0
+        while num_peers == 0:
             
-            # # Init DHT
-            # init_dht(self)
+            # Init DHT
+            init_dht(self)
 
-            # # Init Tracker
-            # self.tracker = ProgressTracker(
-            #     dht=self.dht, 
-            #     prefix=f"{self.config.neuron.run_id}", 
-            #     target_batch_size=self.config.neuron.global_batch_size_train,
-            #     start=True
-            # )
-            # time.sleep(3)
-            # num_peers = self.tracker.global_progress.num_peers
+            # Init Tracker
+            self.tracker = ProgressTracker(
+                dht=self.dht, 
+                prefix=f"{self.config.neuron.run_id}", 
+                target_batch_size=self.config.neuron.global_batch_size_train,
+                start=True
+            )
+            time.sleep(3)
+            num_peers = self.tracker.global_progress.num_peers
 
-            # bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
-            # if num_peers == 0:
-            #     bt.logging.info('Re-initialising the DHT')
-            # break
+            bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
+            if num_peers == 0:
+                bt.logging.info('Re-initialising the DHT')
+            break
         
 
         # Init Wandb

@@ -132,7 +132,9 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         
         bt.logging.info("Received All Reduce Call")
+        
         custom_group = GroupInfo(synapse.group.group_id, tuple(synapse.group.peer_ids), gathered=None)
+        
         try:
             # Perform AllReduce step with queried miners to get averaged gradients
             bt.logging.info("Performing Gradient Averaging")
