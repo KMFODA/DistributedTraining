@@ -302,6 +302,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             # TODO Check here: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/averaging/matchmaking.py#L380
             # compute equal part sizes for all peers instead of load balancing
             num_peers = len(group_info.peer_ids)
+
             # peer_fractions = [1.0 / num_peers] * num_peers
             peer_fractions = [0] + [1.0 / (num_peers - 1)] * (num_peers - 1)
             # async with enter_asynchronously(self.get_tensors()) as local_tensors:

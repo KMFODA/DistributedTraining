@@ -52,8 +52,8 @@ async def forward(self):
 
     if (((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated)
             <= 25)
-        and (not self.step_scheduled)
-        and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
+        #and (not self.step_scheduled)
+        #and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
     ):
 
         bt.logging.info("Scheduling all-reduce synapse call")
@@ -82,21 +82,14 @@ async def forward(self):
         group_peerids = await self.map_uid_to_peerid(self.miner_uids)
         group_id = DHTID.generate().to_bytes()
 
-        ordered_peer_ids = [str(self.dht.peer_id)]
-        remote_peers = [str(value) for value in group_peerids.values()]
-        ordered_peer_ids += remote_peers
-        
-        print(self.miner_uids)
-        print(ordered_peer_ids)
-
-        #group_id = str(random.choice([i for i in range(0, 10000)]))
+        ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values()) 
 
         group = template.protocol.Group(
-            peer_count=len(group_peerids),  # Including the local peer
-            peer_ids=ordered_peer_ids,
+            peer_count=len(group_peerids) + 1,  # Including the local peer
+            peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
             group_id=str(group_id),
         )
-
+        
         queries = [
             template.protocol.AllReduce(
                 group=group,
@@ -104,10 +97,8 @@ async def forward(self):
             for _ in self.miner_uids
         ]
 
-        #from hivemind.p2p import PeerID
         # Define a custom group for all-reduce
-        #custom_group = GroupInfo(group_id.encode(), tuple([PeerID(i) for i in ordered_peer_ids]), gathered=None)
-        custom_group = GroupInfo(group_id, tuple(group_peerids), gathered=None)
+        custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
         query_tasks.append(
             self.dendrite_pool.async_forward(
@@ -126,23 +117,21 @@ async def forward(self):
             )
             
             responses = await asyncio.gather(*query_tasks)
-            sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
-                time.sleep(1)
-                sleep_counter += 1
-            if gradient_averaging_step.done():
-                # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                with self.tracker.pause_updates():
-                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                        bt.logging.info("Performing Optimizer Step")
-                        self.opt.step()  # update model parameters using averaged grad
-                    bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
             
+            await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
+            
+            # Log the results for monitoring purposes.
+            bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            with self.tracker.pause_updates():
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info("Model Weights After Optimizer Step")
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
+        
             scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
         except Exception as e:

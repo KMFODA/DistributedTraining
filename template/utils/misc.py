@@ -216,7 +216,7 @@ def setup_logging(level=logging.INFO):
     hivemind_logger = logging.getLogger('hivemind')
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
-    file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
+    #file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     file_handler.addFilter(logging_filter)

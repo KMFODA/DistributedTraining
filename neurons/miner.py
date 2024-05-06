@@ -28,6 +28,7 @@ import torch.distributed as dist
 from bitarray import bitarray
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.optim.progress_tracker import ProgressTracker
+from hivemind.p2p import PeerID
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
@@ -132,8 +133,13 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         
         bt.logging.info("Received All Reduce Call")
-        
-        custom_group = GroupInfo(synapse.group.group_id, tuple(synapse.group.peer_ids), gathered=None)
+                
+        custom_group = GroupInfo(
+                                synapse.group.group_id.encode(), 
+                                tuple([PeerID.from_base58(i) 
+                                        for i in synapse.group.peer_ids]), 
+                                gathered=None
+                                )
         
         try:
             # Perform AllReduce step with queried miners to get averaged gradients
