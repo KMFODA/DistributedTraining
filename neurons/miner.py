@@ -20,6 +20,7 @@ import random
 import time
 import typing
 from ipaddress import ip_address
+import base64
 
 import bittensor as bt
 import hivemind
@@ -135,7 +136,7 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
                 
         custom_group = GroupInfo(
-                                synapse.group.group_id.encode(), 
+                                base64.b64decode(synapse.group.group_id), 
                                 tuple([PeerID.from_base58(i) 
                                         for i in synapse.group.peer_ids]), 
                                 gathered=None

@@ -19,6 +19,7 @@
 import asyncio
 import random
 import time
+import base64
 
 import bittensor as bt
 import torch
@@ -87,7 +88,7 @@ async def forward(self):
         group = template.protocol.Group(
             peer_count=len(group_peerids) + 1,  # Including the local peer
             peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
-            group_id=str(group_id),
+            group_id=base64.b64encode(group_id),
         )
         
         queries = [
@@ -98,7 +99,11 @@ async def forward(self):
         ]
 
         # Define a custom group for all-reduce
-        custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+        custom_group = GroupInfo(
+            group_id, 
+            tuple(ordered_peer_ids), 
+            gathered=None
+            )
 
         query_tasks.append(
             self.dendrite_pool.async_forward(
@@ -112,6 +117,7 @@ async def forward(self):
             bt.logging.info("Performing Gradient Averaging")
             
             # Perform AllReduce step with queried miners to get averaged gradients
+            print(custom_group)
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group
             )
