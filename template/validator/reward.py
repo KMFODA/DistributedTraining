@@ -164,13 +164,13 @@ async def get_rewards(
         if all_reduce:          
 
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, uids)
+            blacklist_scores = await score_blacklist(self, uids.tolist())
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update({f"rewards.blacklist.uid{uid}": blacklist_score for uid, blacklist_score in zip(uids, blacklist_scores)})
             scores *= blacklist_scores
 
             # Score miners bandwidth
-            bandwidth_scores = await score_bandwidth(self, uids)
+            bandwidth_scores = await score_bandwidth(self, uids.tolist())
             bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
             self.event.update({f"rewards.bandwidth_scores.uid{uid}": bandwidth_score for uid, bandwidth_score in zip(uids, bandwidth_scores)})
             scores *= bandwidth_scores

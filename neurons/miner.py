@@ -146,30 +146,25 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Performing Gradient Averaging")
             
             gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group)
-            sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
-                time.sleep(1)
-                sleep_counter += 1
+            
+            await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
 
-            if gradient_averaging_step.done():
-                # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+            # Log the results for monitoring purposes.
+            bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            with self.tracker.pause_updates():
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                bt.logging.info("Model Weights After Optimizer Step")
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                with self.tracker.pause_updates():
-                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                        bt.logging.info("Performing Optimizer Step")
-                        self.opt.step()  # update model parameters using averaged grad
-                    bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.local_epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-                    self.local_samples = 0  
-                    synapse.completion = "True"
-
-            else:
-                synapse.completion = "False"
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
+                self.local_samples = 0  
+                synapse.completion = "True"
 
             return synapse
+        
         except Exception as e:
             
             bt.logging.info(f"AllReduce Failed With Error: {e}")
