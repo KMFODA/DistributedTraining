@@ -630,25 +630,25 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
 
         loaded_state = self.load_state_from_peers_with_latest_state(global_epoch, **kwargs)
         if loaded_state is None:
-            return
+            return False
 
         metadata, flat_tensors = loaded_state
         if (not isinstance(metadata.get("epoch"), int)) or metadata["epoch"] < self.local_epoch:
             logger.warning("Cowardly refusing to load state from peer: peer's epoch is behind our local epoch")
-            return
+            return False
 
         loaded_parameters_and_extras = flat_tensors[:num_parameters_and_extras]
         loaded_opt_tensors = flat_tensors[num_parameters_and_extras:]
         if num_parameters_and_extras != len(loaded_parameters_and_extras):
             logger.error("Failed to load state from peer, received parameters, extras or metadata")
-            return
+            return False
 
         with torch.no_grad(), self.lock_averaged_tensors:
             try:
                 load_optimizer_state(self.optimizer, metadata["optimizer_metadata"], loaded_opt_tensors)
             except StopIteration:
                 logger.warning("Failed to load state from peer, received inconsistent number of optimizer statistics")
-                return
+                return False
 
             for local_param, loaded_param in zip(main_parameters_and_extras, loaded_parameters_and_extras):
                 local_param.copy_(loaded_param, non_blocking=True)
@@ -660,6 +660,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
 
         self.local_epoch = metadata["epoch"]
         self._update_scheduler()
+        return True
 
 def load_optimizer_state(optimizer: torch.optim.Optimizer, flat_metadata: Dict, flat_tensors: Sequence[torch.Tensor]):
     """Load a state obtained by dump_optimizer_state back into the optimizer"""
@@ -680,7 +681,11 @@ def load_state_from_peer(self, epoch = None):
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])\
     
     try:
-        self.state_averager.load_final_state_from_peers(epoch)
+        loaded_state = self.state_averager.load_final_state_from_peers(epoch)
+        if not loaded_state:
+            bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
+            self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
+            self.model.to(self.device)
     except:
         bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
