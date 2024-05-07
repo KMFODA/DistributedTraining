@@ -123,7 +123,7 @@ async def forward(self):
             )
             
             #await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
-            responses = await asyncio.gather(*query_tasks)
+            responses = await asyncio.gather(*query_tasks) # TODO Is this redundant?
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
                 time.sleep(1)
