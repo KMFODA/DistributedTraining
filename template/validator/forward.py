@@ -116,28 +116,33 @@ async def forward(self):
                 custom_group_info=custom_group
             )
             
+            #await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
             responses = await asyncio.gather(*query_tasks)
+            sleep_counter = 1
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+                time.sleep(1)
+                sleep_counter += 1
+
+            if gradient_averaging_step.done():            
             
-            await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
-            
-            # Log the results for monitoring purposes.
-            bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            with self.tracker.pause_updates():
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged grad
-                bt.logging.info("Model Weights After Optimizer Step")
+                # Log the results for monitoring purposes.
+                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-        
-            scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
+                with self.tracker.pause_updates():
+                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                        bt.logging.info("Performing Optimizer Step")
+                        self.opt.step()  # update model parameters using averaged grad
+                    bt.logging.info("Model Weights After Optimizer Step")
+                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                    self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
+            
+                scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
         except Exception as e:
             bt.logging.info(f"AllReduce Failed With Error: {e}")
             scores = torch.FloatTensor([0 for _ in self.miner_uids]).to(self.device)
-            self.update_scores(rewards, self.miner_uids)
+            #self.update_scores(rewards, self.miner_uids)
             load_state_from_peer(self)
         
         
