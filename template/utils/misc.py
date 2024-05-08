@@ -39,6 +39,9 @@ from template.utils.chain_storage import run_in_subprocess
 from datetime import datetime
 import os
 import shutil
+import random
+from template.data.dataset import SubsetFalconLoader
+from bitarray import bitarray
 
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
@@ -328,3 +331,72 @@ def init_dht(self):
 
     # Add DHT address to wandb config
     self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+
+def warmup(self):
+    """
+    Processes the incoming 'Train' synapse by performing a training run
+
+    Args:
+        synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
+
+    Returns:
+        template.protocol.Train: The synapse object with the 'loss' field set to models loss.
+    """
+    
+    self.local_epoch, self.local_samples = 0, 0
+    # Load dataset
+    self.dataset_loader = ()
+    dataset_length = 968000015
+    self.dataset_indices = bitarray(dataset_length)
+
+    search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
+    start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
+    group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
+    self.dataset_indices[group] = True
+
+    # Create Dataloader
+    dataloader = SubsetFalconLoader(
+        batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
+    )
+
+    total_loss = 0
+    # Train data for one epoch
+    for index, batch in enumerate(dataloader):
+        inputs = batch.to(self.device)
+
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=inputs)
+
+        # Normalize loss to account for batch accumulation
+        loss = outputs.loss
+        
+        # Accumulate Total Loss
+        total_loss += outputs.loss.detach().item() 
+
+        # Backward Pass
+        loss.backward()
+        
+        # Copy gradients
+        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+
+        # Accumulate Gradients
+        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+        
+        # Zero Gradients
+        self.opt.zero_grad()
+
+        # Update Tracker
+        self.local_samples += 1    
+        self.tracker.report_local_progress(self.local_epoch, self.local_samples)
+
+        # Log accumulation status
+        if index % 10 == 0:
+            bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
+            bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
+    
+    if index % 10 != 0:
+        bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
+        bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")

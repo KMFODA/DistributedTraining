@@ -45,6 +45,10 @@ async def forward(self):
     """
 
     bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+    
+    while self.tracker.global_progress.num_peers == 0:
+        self.warmup()
+
     if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
@@ -115,6 +119,8 @@ async def forward(self):
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
             
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+            bt.logging.info(f'Old Model Tag {refs.tags[-1].name}')
+            bt.logging.info(f'New Model Tag {self.tracker.local_progress.epoch}')
             if refs.tags and int(refs.tags[-1].name) < self.tracker.local_progress.epoch:
                 bt.logging.info('Pushing New Model Weights To HF Hub')
                 self.model.push_to_hub(self.config.neuron.model_name)

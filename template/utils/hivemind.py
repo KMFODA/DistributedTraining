@@ -678,7 +678,7 @@ def load_state_from_peer(self, epoch = None):
         epoch = self.tracker.global_progress.epoch
 
     bt.logging.info('Model Weights Before Loading State')
-    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])\
+    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
     
     try:
         loaded_state = self.state_averager.load_final_state_from_peers(epoch)

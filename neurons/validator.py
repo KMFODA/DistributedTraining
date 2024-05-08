@@ -41,7 +41,7 @@ from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
 from template.utils.hivemind import DTGradientAverager, DTStateAverager
-from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging
+from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging, warmup
 from template.validator import forward
 
 logger = get_logger(__name__)
@@ -70,8 +70,10 @@ class Validator(BaseValidatorNeuron):
 
             bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
             if num_peers == 0:
+                self.wamrup()
                 bt.logging.info('Re-initialising the DHT')
-            break
+            else:
+                break
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -149,7 +151,7 @@ class Validator(BaseValidatorNeuron):
         
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
-
+        
     def map_uids_to_peerids(self):
         # Track how recently we updated each uid
         uid_last_checked = dict()
@@ -293,6 +295,10 @@ class Validator(BaseValidatorNeuron):
     async def forward(self):
         return await forward(self)
 
+    def warmup(
+        self,
+    ):
+        warmup(self)
 
 # # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":

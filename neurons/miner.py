@@ -44,7 +44,7 @@ from template.utils.hivemind import (
     DTStateAverager,
     load_state_from_peer,
 )
-from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging
+from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging, warmup
 
 
 class Miner(BaseMinerNeuron):
@@ -115,6 +115,7 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest epoch
         if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
             load_state_from_peer(self)
+
 
     def get_miner_info(self):
         return {
@@ -253,6 +254,11 @@ class Miner(BaseMinerNeuron):
             self.wandb.log(event)
 
         return synapse
+
+    def warmup(
+        self,
+    ):
+        warmup(self)
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
