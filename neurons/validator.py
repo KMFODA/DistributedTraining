@@ -53,38 +53,29 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("load_state()")
         self.load_state()
 
-        num_peers = 0
-        while num_peers == 0:
-
-            # Init DHT
-            init_dht(self)
-
-            # Init Tracker
-            self.tracker = ProgressTracker(
-                dht=self.dht, 
-                prefix=f"{self.config.neuron.run_id}", 
-                target_batch_size=self.config.neuron.global_batch_size_train,
-                start=True
-            )
-            num_peers = self.tracker.global_progress.num_peers
-
-            bt.logging.info(f'Number of connected peers after initialising the DHT is {num_peers}')
-            if num_peers == 0:
-                self.wamrup()
-                bt.logging.info('Re-initialising the DHT')
-            else:
-                break
-
-        # Init Wandb
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self, self.config, self.wallet, "validator", str(self.dht.peer_id))
-
         # Init Dendrite Pool
         self.dendrite_pool = AsyncDendritePool(
             wallet=self.wallet, metagraph=self.metagraph
         )
 
-        # # Init Dataset
+        # Init DHT
+        init_dht(self)
+
+        # Init Tracker
+        self.tracker = ProgressTracker(
+            dht=self.dht, 
+            prefix=f"{self.config.neuron.run_id}", 
+            target_batch_size=self.config.neuron.global_batch_size_train,
+            start=True
+        )
+
+        bt.logging.info(f'Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }')
+
+        # Init Wandb
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb = load_wandb(self, self.config, self.wallet, "validator", str(self.dht.peer_id))
+
+        # Init Dataset
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
 
@@ -148,6 +139,11 @@ class Validator(BaseValidatorNeuron):
         # self.stop_event = threading.Event()
         # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
         # self.update_thread.start()
+
+        # Warmup DHT
+        if self.tracker.global_progress.num_peers == 0:
+            bt.logging.info(f'Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle.')
+            self.warmup()
         
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")

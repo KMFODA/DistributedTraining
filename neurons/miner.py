@@ -32,6 +32,7 @@ from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
+import psutil
 
 # Bittensor Miner Template:
 import template
@@ -224,7 +225,7 @@ class Miner(BaseMinerNeuron):
             if index % 10 == 0:
                 bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
                 bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
+                bt.logging.info(f"{psutil.virtual_memory()}")
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
         
@@ -258,7 +259,7 @@ class Miner(BaseMinerNeuron):
     def warmup(
         self,
     ):
-        warmup(self)
+            (self)
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
