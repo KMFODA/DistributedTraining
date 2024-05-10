@@ -78,11 +78,15 @@ async def forward(self):
     query_tasks = []
 
     if all_reduce:
+        
+        group_peerids = None
 
         # All-reduce synapse
-        group_peerids = await self.map_uid_to_peerid(self.miner_uids)
+        while group_peerids == None:
+            group_peerids = await self.map_uid_to_peerid(self.miner_uids)
         group_id = DHTID.generate().to_bytes()
-
+        print("DHT:", self.dht.peer_id)
+        print("Peers:", list(group_peerids.values()))
         ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values()) 
 
         group = template.protocol.Group(

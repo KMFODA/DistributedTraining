@@ -54,15 +54,16 @@ class MyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
                     param.grad = old_grad
 
 version = "4"
-address = os.environ["RUNPOD_PUBLIC_IP"]
-announce_maddrs = [f"/ip{version}/{address}/tcp/{os.environ['RUNPOD_TCP_PORT_70001']}"]
+address = "91.150.160.38"
+announce_maddrs = [f"/ip{version}/{address}/tcp/4336"]
 
 dht = hivemind.DHT(
     host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/{os.environ['RUNPOD_TCP_PORT_70001']}",
-                f"/ip4/0.0.0.0/udp/{os.environ['RUNPOD_TCP_PORT_70001']}/quic",
+                f"/ip4/0.0.0.0/tcp/4336",
+                f"/ip4/0.0.0.0/udp/4336/quic",
                 ],
     initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
+    
     announce_maddrs=announce_maddrs,
     start=True
 )
@@ -86,7 +87,7 @@ global_target_batch_size = 80  # set your target batch size
 grad_averager = DTGradientAverager(
     model.parameters(), 
     dht=dht, 
-    prefix=f"test",
+    prefix=f"peniz",
     start=True,
     #accumulate_grads_on=torch.device(self.device),
     compression=hivemind.Uniform8BitQuantization(),
@@ -95,7 +96,7 @@ grad_averager = DTGradientAverager(
 
 tracker = hivemind.optim.progress_tracker.ProgressTracker(
     dht=dht, 
-    prefix="test", 
+    prefix="peniz", 
     target_batch_size=global_target_batch_size,
     start=True
 )
@@ -115,6 +116,7 @@ ordered_peer_ids = [dht.peer_id] # TODO REMEMBER SAME ORDER FOR OTHER PEERS
 remote_peer = loop.run_until_complete(_p2p.list_peers())
 remote_peer = [peer.peer_id for peer in remote_peer]
 ordered_peer_ids += remote_peer
+ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
 custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
 

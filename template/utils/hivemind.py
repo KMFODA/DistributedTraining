@@ -94,37 +94,38 @@ class DTAllReduceRunner(AllReduceRunner):
                 #self.tensor_part_container.register_failed_reducer(peer_index) 
                 raise
     
-    # #! Test fault-tolerance here:
-    # async def rpc_aggregate_part(self, stream, context) -> AsyncIterator[averaging_pb2.AveragingData]:
-    #     """
-    #     Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
-    #     or failure in communication, it directly raises an exception.
-    #     """
-    #     try:
-    #         # 
-    #         # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])  
-    #         # test_fault = True
-    #         # if test_fault:
-    #         #     condition = "FAIL_SENDING"
+    #! Test fault-tolerance here:
+    async def rpc_aggregate_part(self, stream, context) -> AsyncIterator[averaging_pb2.AveragingData]:
+        """
+        Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
+        or failure in communication, it directly raises an exception.
+        """
+        try:
+            # 
+            # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])  
+            # test_fault = True
+            # if test_fault:
+            #     condition = "FAIL_SENDING"
                 
-    #         #     async for message in super().rpc_aggregate_part(stream, context):
-    #         #         self.count+=1
-    #         #         yield message
-    #         #         if self.count == 2:
-    #         #             if condition == "FAIL_SENDING":
-    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-    #         #                 break
-    #         #             elif condition == "SLOW_REDUCE":
-    #         #                 await asyncio.sleep(10)
-    #         #             elif condition == "CANCEL":  
-    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-    #         # else:
-    #         async for message in super().rpc_aggregate_part(stream, context):
-    #             yield message
+            #     async for message in super().rpc_aggregate_part(stream, context):
+            #         self.count+=1
+            #         yield message
+            #         if self.count == 2:
+            #             if condition == "FAIL_SENDING":
+            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
+            #                 break
+            #             elif condition == "SLOW_REDUCE":
+            #                 await asyncio.sleep(10)
+            #             elif condition == "CANCEL":  
+            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
+            # else:
+            async for message in super().rpc_aggregate_part(stream, context):
+                print("rpc_aggregate_part..")
+                yield message
 
-    #     except Exception as e:
-    #         logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
-    #         raise e
+        except Exception as e:
+            logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
+            raise e
     
     async def _generate_input_for_peer(self, peer_index: int) -> AsyncIterator[averaging_pb2.AveragingData]:
         try:
