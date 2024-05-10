@@ -62,7 +62,7 @@ dht = hivemind.DHT(
                 f"/ip4/0.0.0.0/tcp/4336",
                 f"/ip4/0.0.0.0/udp/4336/quic",
                 ],
-    initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
+    #initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
     
     announce_maddrs=announce_maddrs,
     start=True
@@ -74,7 +74,7 @@ with open('visible_maddrs.txt', 'w') as f:
     for maddr in dht.get_visible_maddrs():
         f.write(str(maddr) + "\n")
 
-time.sleep(15)
+time.sleep(20)
 
 model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
 # Move the model to the appropriate device
@@ -83,7 +83,7 @@ model = model.to("cuda")
 # Set up a decentralized optimizer that will average with peers in background
 opt = torch.optim.AdamW(model.parameters(), lr=0.001)
 
-global_target_batch_size = 80  # set your target batch size
+global_target_batch_size = 400  # set your target batch size
 grad_averager = DTGradientAverager(
     model.parameters(), 
     dht=dht, 
@@ -108,73 +108,55 @@ local_epoch, local_samples = 0, 0
 #* Make custom group:
 time.sleep(5)
 loop = asyncio.new_event_loop()
-_p2p = loop.run_until_complete(dht.replicate_p2p())
+# _p2p = loop.run_until_complete(dht.replicate_p2p())
+
+while True:
+    print("Starting training..")
+    # for i in range(0, 1):
+    print("Getting new data..")
+    dataloader = SubsetFalconLoader(
+        batch_size=1, sequence_length=1024, rows=random.choices(range(0,968000015), k = 200)
+    )
+
+    for i, batch in enumerate(dataloader):
         
-# group_id = DHTID.generate().to_bytes()
-group_id = b'"}\xf3\xca\x86\xfe\xbb&\xdd\xb3\xe2\xffCtZ~\x8e\x10\xf9\xb5'
-ordered_peer_ids = [dht.peer_id] # TODO REMEMBER SAME ORDER FOR OTHER PEERS
-remote_peer = loop.run_until_complete(_p2p.list_peers())
-remote_peer = [peer.peer_id for peer in remote_peer]
-ordered_peer_ids += remote_peer
-ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
-custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+        inputs = batch.to("cuda")
 
+        # Forward pass
+        outputs = model(input_ids=inputs, labels=inputs)
+        
+        loss = outputs.loss
+        scaled_loss = loss / global_target_batch_size # Minus batch size (in this case 1)
+        print(loss)
+        scaled_loss.backward()
+        
+        # Only use this if reuse_grad_buffers=False
+        grad_averager.accumulate_grads_(batch_size=1)
+        
+        local_samples += 1  # increment the total batch size
+        
+        tracker.report_local_progress(local_epoch, local_samples)
+        print("local samples:", tracker.local_progress.samples_accumulated, "global_samples:", tracker.global_progress.samples_accumulated)
+        print("local epoch:", tracker.local_progress.epoch, "global epoch", tracker.global_progress.epoch)
 
-print("Starting training..")
-# for i in range(0, 1):
-print("Getting new data..")
-dataloader = SubsetFalconLoader(
-    batch_size=1, sequence_length=1024, rows=random.choices(range(0,968000015), k = 200)
-)
+        # aggregate gradients and perform optimizer step when target batch size is reached
+        if tracker.global_progress.samples_accumulated >= global_target_batch_size:
+            _p2p = loop.run_until_complete(dht.replicate_p2p())
 
-for i, batch in enumerate(dataloader):
-    
-    inputs = batch.to("cuda")
-
-    # Forward pass
-    outputs = model(input_ids=inputs, labels=inputs)
-    
-    loss = outputs.loss
-    print(loss)
-    loss.backward()
-
-    # Only use this if reuse_grad_buffers=False
-    grad_averager.accumulate_grads_(batch_size=1)
-    
-    # # Store gradients
-    # gradients_2 = list(grad_averager._grad_accumulators())[-1]
-    # gradients_3 = list(grad_averager._grads_from_parameters())[-1]
-    # # Get the gradients directly from the model parameters
-    # gradients_model = [param.grad for param in model.parameters()][-1]
-
-    # # Write the gradients to a text file
-    # with open('gradients.txt', 'w') as f:
-    #     for gradients in [gradients_2, gradients_3, gradients_model]:
-    #         for gradient in gradients:
-    #             f.write(str(gradient) + "\n")
-    #         f.write("\n")
-
-    # # Compare the gradients programmatically
-    # print(torch.allclose(gradients_2, gradients_3)) #False
-    # print(torch.allclose(gradients_3, gradients_model)) #True
-    # print(torch.allclose(gradien0ts_2, gradients_model)) #False
-
-    local_samples += 1  # increment the total batch size
-    
-    tracker.report_local_progress(local_epoch, local_samples)
-    print("local samples:", tracker.local_progress.samples_accumulated, "global_samples:", tracker.global_progress.samples_accumulated)
-    print("local epoch:", tracker.local_progress.epoch, "global epoch", tracker.global_progress.epoch)
-
-    # aggregate gradients and perform optimizer step when target batch size is reached
-    if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-        breakpoint()
-        with tracker.pause_updates():
-            print("grad stepping..")
-            grad_averager.step(custom_group_info=custom_group)
-            with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                print("opt stepping..")
-                opt.step()  # update model parameters using averaged gradients
-            grad_averager.reset_accumulated_grads_()  # prepare for next step
-            local_epoch = tracker.update_epoch(local_epoch + 1)
-            local_samples = 0  
-            breakpoint()
+            group_id = b'"}\xf3\xca\x86\xfe\xbb&\xdd\xb3\xe2\xffCtZ~\x8e\x10\xf9\xb5'
+            ordered_peer_ids = [dht.peer_id] # TODO REMEMBER SAME ORDER FOR OTHER PEERS
+            remote_peer = loop.run_until_complete(_p2p.list_peers())
+            remote_peer = [peer.peer_id for peer in remote_peer]
+            ordered_peer_ids += remote_peer
+            ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
+            custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+            print(custom_group)
+            with tracker.pause_updates():
+                print("grad stepping..")
+                grad_averager.step(custom_group_info=custom_group)
+                with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    print("opt stepping..")
+                    opt.step()  # update model parameters using averaged gradients
+                grad_averager.reset_accumulated_grads_()  # prepare for next step
+                local_epoch = tracker.update_epoch(local_epoch + 1)
+                local_samples = 0  
