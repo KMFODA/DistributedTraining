@@ -60,7 +60,7 @@ class DTAllReduceRunner(AllReduceRunner):
             try:
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(self._generate_input_for_peer(peer_index), done_sending)
-                await asyncio.sleep(0.1) # Failing if not waiting here - TODO Figure out why
+                await asyncio.sleep(0.01) # Failing if not waiting here - TODO Figure out why
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(inputs_aiter)
 
                 if self.should_delay_results(self.peer_id):
@@ -304,8 +304,8 @@ class DTAverager(hivemind.DecentralizedAverager):
             # compute equal part sizes for all peers instead of load balancing
             num_peers = len(group_info.peer_ids)
 
-            # peer_fractions = [1.0 / num_peers] * num_peers
-            peer_fractions = [0] + [1.0 / (num_peers - 1)] * (num_peers - 1)
+            peer_fractions = [1.0 / num_peers] * num_peers
+            #peer_fractions = [0] + [1.0 / (num_peers - 1)] * (num_peers - 1)
             # async with enter_asynchronously(self.get_tensors()) as local_tensors:
             #     await self._run_allreduce_inplace_(
             #                                     local_tensors, 
@@ -314,7 +314,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             #                                     **kwargs)
             
             group_id = group_info.group_id
-            
+
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 
                 runner = DTAllReduceRunner(
