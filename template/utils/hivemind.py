@@ -312,6 +312,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             #                                     **kwargs)
             
             group_id = group_info.group_id
+            print("Group ID: ", group_id)
             
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 
