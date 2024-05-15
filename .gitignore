@@ -163,3 +163,4 @@ wandb/
 .vscode/
 scripts/*.png
 scripts/*.csv
+logs*.txt

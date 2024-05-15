@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import time
+import random
 from typing import List
 
 import hivemind
@@ -8,17 +10,23 @@ import torch
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
 from hivemind.utils import use_hivemind_log_handler
-from hivemindy2 import DTGradientAverager
-# from hivemindy import DTGradientAverager
+# from hivemindy2 import DTGradientAverager
+from hivemindy import DTGradientAverager
 from torch import nn
 
+# Logging
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG) 
 
 use_hivemind_log_handler("nowhere")
 
+# Delete the logfile if it exists
+logfile = 'logfile.log'
+if os.path.exists(logfile):
+    os.remove(logfile)
+
 # Create a file handler
-handler = logging.FileHandler('logfile.log')
+handler = logging.FileHandler(logfile)
 
 # Create a formatter and add it to the handler
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -65,7 +73,7 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             model.parameters(),
             dht=dht,
             prefix="diller",
-            auxiliary=True if i == 0 else False,
+            #auxiliary=True if i == 0 else False,
             start=True,
         )
         for i, (dht, model) in enumerate(zip(dht_instances, models))
@@ -101,8 +109,11 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
         
         futures = []
         for averager in averagers:
+            sleep_int = random.random()
+            print("sleeping for", sleep_int, "seconds..")
+            time.sleep(sleep_int)
             #control = averager.schedule_step(custom_group_info=custom_group)
-            future = averager.step(custom_group_info=custom_group)
+            future = averager.step(wait=False, allow_retries=False)#, custom_group_info=custom_group)
             futures.append(future)
         
         for future in futures:
