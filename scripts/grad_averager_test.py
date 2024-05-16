@@ -47,13 +47,14 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "134.180.176.136"
-announce_maddrs = [f"/ip{version}/{address}/tcp/41543"]
+address = "24.122.214.184"
+
+announce_maddrs = [f"/ip{version}/{address}/tcp/40315"]
 
 dht = hivemind.DHT(
     host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/41543",
-                f"/ip4/0.0.0.0/udp/41543/quic",
+                f"/ip4/0.0.0.0/tcp/40315",
+                f"/ip4/0.0.0.0/udp/40315/quic",
                 ],
     #initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
     
@@ -133,18 +134,18 @@ while True:
 
         # aggregate gradients and perform optimizer step when target batch size is reached
         if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-            #if not group_is_set:
-            _p2p = loop.run_until_complete(dht.replicate_p2p())
+            if not group_is_set:
+                _p2p = loop.run_until_complete(dht.replicate_p2p())
 
-            group_id = base64.b64decode(b'akGgUCKXywtpOCU76x9Ncxzi2qk=')
-            ordered_peer_ids = [dht.peer_id] 
-            remote_peer = loop.run_until_complete(_p2p.list_peers())
-            remote_peer = [peer.peer_id for peer in remote_peer]
-            ordered_peer_ids += remote_peer
-            ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
-            custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
-            print(custom_group)
-            group_is_set = True
+                group_id = base64.b64decode(b'akGgUCKXywtpOCU76x9Ncxzi2qk=')
+                ordered_peer_ids = [dht.peer_id] 
+                remote_peer = loop.run_until_complete(_p2p.list_peers())
+                remote_peer = [peer.peer_id for peer in remote_peer]
+                ordered_peer_ids += remote_peer
+                ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
+                custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+                print(custom_group)
+                group_is_set = True
                 
             with tracker.pause_updates():
                 print("grad stepping..")
