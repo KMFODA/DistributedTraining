@@ -60,7 +60,6 @@ class DTAllReduceRunner(AllReduceRunner):
             try:
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(self._generate_input_for_peer(peer_index), done_sending)
-                # await asyncio.sleep(0.1)
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(inputs_aiter)
 
                 if self.should_delay_results(self.peer_id):
@@ -295,7 +294,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         key = f"{self.prefix}.barrier"
         peer_id_strs = [peer_id.to_string()  for peer_id in peer_ids]
         dht_time = get_dht_time() + 10  #TODO Adjust based on expected wait time
-        expiration_time = dht_time + 60  #TODO Keep the barrier active for 60 seconds
+        expiration_time = dht_time + 60  #TODO Keep the barrier active for dht_time + 60 seconds
 
         # Register this peer
         store_result = self.dht.store(key, subkey=self.peer_id.to_string(), value=True, expiration_time=expiration_time)
