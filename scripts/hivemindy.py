@@ -238,11 +238,10 @@ class DTAverager(hivemind.DecentralizedAverager):
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
                     
-                    #await asyncio.sleep(1)  # Wait for all peers to join
-
-                    # Synchronization Barrier
-                    #barrier = asyncio.Barrier(parties=len(custom_group_info.peer_ids))
-                    #await barrier.wait()
+                    #? ----------------- Distributed barrier -----------------                    
+                    # Use DHT for distributed synchronization
+                    await self._distributed_barrier(custom_group_info.peer_ids)
+                    #? ----------------- Distributed barrier -----------------     
                                                     
                     with self._register_allreduce_group(custom_group_info):
                         
@@ -258,6 +257,8 @@ class DTAverager(hivemind.DecentralizedAverager):
                                 timeout=self._allreduce_timeout,
                                 )
                             )
+                            # averaging is finished, loop will now exit
+                    
                 except (
                     AllreduceException,
                     MatchmakingException,
@@ -289,39 +290,36 @@ class DTAverager(hivemind.DecentralizedAverager):
                         " Please report this to hivemind issues."
                     )
                 )
+                
+    async def _distributed_barrier(self, peer_ids):
+        """Ensure that all peers are ready before proceeding using DHT for synchronization."""
+        key = f"{self.prefix}.barrier"
+        peer_id_strs = [peer_id.to_string()  for peer_id in peer_ids]
+        dht_time = get_dht_time() + 10  # Adjust based on expected wait time
+        expiration_time = dht_time + 60  # Keep the barrier active for 60 seconds
+
+        # Register this peer
+        store_result = self.dht.store(key, subkey=self.peer_id.to_string(), value=True, expiration_time=expiration_time)
+        if not store_result:
+            raise Exception(f"Failed to store peer {self.peer_id} in DHT")
+
+        while True:
+            # Check if all peers have registered
+            gathered = self.dht.get(key, latest=True)
+            if gathered:
+                registered_peers = gathered.value.keys()
+                if all(peer_id in registered_peers for peer_id in peer_id_strs):
+                    break
+            await asyncio.sleep(0.1)  # Wait a bit before checking again
             
     async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, **kwargs) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata"""
         try:
-            # bandwidths, mode_ids, user_gathered_bytes = zip(*map(self.serializer.loads, group_info.gathered))
-            # user_gathered = dict(zip(group_info.peer_ids, map(self.serializer.loads, user_gathered_bytes)))
-            # modes = tuple(map(AveragingMode, mode_ids))
-
-            # # compute optimal part sizes from peer bandwidths; TODO: replace with proper load balancing
-            # download_bandwidths = [
-            #     thr if mode != AveragingMode.CLIENT else 0.0 for thr, mode in zip(bandwidths, modes)
-            # ]
-            # peer_fractions = await asyncio.get_event_loop().run_in_executor(
-            #     None, load_balance_peers, self.total_size, download_bandwidths, min_vector_size
-            # )
-            
-            # TODO DO we actually need the group_info.gathered data???
-            # TODO Check here: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/averaging/matchmaking.py#L380
-            # compute equal part sizes for all peers instead of load balancing
             num_peers = len(group_info.peer_ids)
-
             peer_fractions = [1.0 / num_peers] * num_peers
-            #peer_fractions = [0] + [1.0 / (num_peers - 1)] * (num_peers - 1)
-            # async with enter_asynchronously(self.get_tensors()) as local_tensors:
-            #     await self._run_allreduce_inplace_(
-            #                                     local_tensors, 
-            #                                     group_info, 
-            #                                     peer_fractions=peer_fractions, 
-            #                                     **kwargs)
-            
             group_id = group_info.group_id
+            
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
-                
                 runner = DTAllReduceRunner(
                     p2p=self._p2p,
                     servicer_type=type(self),
@@ -493,21 +491,6 @@ class DTGradientAverager(DTAverager):
         control.allow_allreduce()
 
         return control.result(timeout) if wait else control
-    
-    # def step(
-    #     self,
-    #     reset_accumulators: bool = True,
-    #     **kwargs,
-    # ):  
-    #     self.load_accumulators_into_averager_()
-    #     self._accumulators_used_in_step = True
-    #     self._new_averaged_grads = True
-
-    #     if reset_accumulators:
-    #         self.reset_accumulated_grads_()
-                
-    #     return super().step(wait=False, require_trigger=False, allow_retries=False, **kwargs)
-
 
     @torch.no_grad()
     def load_accumulators_into_averager_(self):

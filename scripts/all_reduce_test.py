@@ -109,11 +109,11 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
         
         futures = []
         for averager in averagers:
-            sleep_int = random.random()
+            sleep_int = random.randint(1,5)
             print("sleeping for", sleep_int, "seconds..")
             time.sleep(sleep_int)
             #control = averager.schedule_step(custom_group_info=custom_group)
-            future = averager.step(wait=False, allow_retries=False)#, custom_group_info=custom_group)
+            future = averager.step(wait=False, allow_retries=False, custom_group_info=custom_group)
             futures.append(future)
         
         for future in futures:
