@@ -49,7 +49,7 @@ async def forward(self):
     while self.tracker.global_progress.num_peers == 0:
         self.warmup()
 
-    if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+    if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (self.model_hf_tag < self.tracker.global_progress.epoch):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
 

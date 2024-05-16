@@ -46,7 +46,7 @@ from template.utils.hivemind import (
     load_state_from_peer,
 )
 from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging, warmup
-
+from huggingface_hub import list_repo_refs
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -59,6 +59,8 @@ class Miner(BaseMinerNeuron):
         self.device = self.config.neuron.device
 
         # Init Model
+        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        self.model_hf_tag = int(refs.tags[-1].name) if refs.tags else None
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
         # Move the model to the appropriate device
@@ -114,7 +116,7 @@ class Miner(BaseMinerNeuron):
             self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
     
         # Load state from peers if miner is not on latest epoch
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+        if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (self.model_hf_tag < self.tracker.global_progress.epoch):
             load_state_from_peer(self)
 
 
@@ -178,7 +180,7 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
+        if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (self.model_hf_tag < self.tracker.global_progress.epoch):
             load_state_from_peer(self)
         
         search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))

@@ -43,6 +43,7 @@ from template.base.validator import BaseValidatorNeuron
 from template.utils.hivemind import DTGradientAverager, DTStateAverager
 from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging, warmup
 from template.validator import forward
+from huggingface_hub import list_repo_refs
 
 logger = get_logger(__name__)
 
@@ -81,6 +82,8 @@ class Validator(BaseValidatorNeuron):
 
         # Init Device, Model & Tokenizer
         self.device = self.config.neuron.device
+        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        self.model_hf_tag = int(refs.tags[-1].name) if refs.tags else None
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         self.model.to(self.device)
 

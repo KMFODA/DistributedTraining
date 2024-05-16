@@ -676,20 +676,26 @@ def load_state_from_peer(self, epoch = None):
 
     if epoch == None:
         epoch = self.tracker.global_progress.epoch
-
+    
     bt.logging.info('Model Weights Before Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    
-    try:
-        loaded_state = self.state_averager.load_final_state_from_peers(epoch)
-        if not loaded_state:
-            bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
-            self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
-            self.model.to(self.device)
-    except:
-        bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
+    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+
+    if refs.tags and (int(refs.tags[-1].name) >= self.tracker.global_progress.epoch):
+
+        bt.logging.info("Latest model state found on HF Hub. Loading state using HF.")
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
         self.model.to(self.device)
+
+    else:
+        try:
+            loaded_state = self.state_averager.load_final_state_from_peers(epoch)
+            if not loaded_state:
+                bt.logging.info("Failed to load latest state using DHT. Reverting to the HF Hub.")
+                self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision=str(self.tracker.global_progress.epoch))
+                self.model.to(self.device)
+        except:
+            bt.logging.warning("Failed to load latest state using DHT. Local model is most likely out of sync with global model")
 
     bt.logging.info('Model Weights After Loading State')
     bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
