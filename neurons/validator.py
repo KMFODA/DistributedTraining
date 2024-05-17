@@ -40,7 +40,7 @@ from hivemind.utils.timed_storage import ValueWithExpiration
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import DTGradientAverager, DTStateAverager
+from template.utils.hivemind import DTGradientAverager, DTStateAverager, load_state_from_peer
 from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging, warmup
 from template.validator import forward
 from huggingface_hub import list_repo_refs
@@ -148,6 +148,10 @@ class Validator(BaseValidatorNeuron):
             bt.logging.info(f'Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle.')
             self.warmup()
         
+        # Load State From Peer If Out Of Sync
+        if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (self.model_hf_tag < self.tracker.global_progress.epoch):
+            load_state_from_peer(self, epoch = self.tracker.global_progress.epoch)
+
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
         
