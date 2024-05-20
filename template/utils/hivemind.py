@@ -197,6 +197,11 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         user_data_for_gather = self.serializer.dumps(gather)  # serialize here to avoid imports in the averager process
         data_for_gather = self.serializer.dumps([self.bandwidth, self.mode.value, user_data_for_gather])
+        if hasattr(self, 'step'):# and self._current_step.stage == AveragingStage.FINISHED:
+            print("Already have step..")
+            print(step.stage)
+            time.sleep(5)
+            
         step = StepControl(
             scheduled_time=scheduled_time,
             deadline=deadline,
@@ -204,6 +209,9 @@ class DTAverager(hivemind.DecentralizedAverager):
             weight=weight,
             data_for_gather=data_for_gather,
         )
+        print("step after..")
+        print(step.stage)
+        time.sleep(5)
 
         future_for_init = MPFuture()
         
