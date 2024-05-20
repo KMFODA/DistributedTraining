@@ -47,16 +47,16 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "24.122.214.184"
+address = "104.167.17.11"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/40315"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/46629"]
 
 dht = hivemind.DHT(
     host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/40315",
-                f"/ip4/0.0.0.0/udp/40315/quic",
+                f"/ip4/0.0.0.0/tcp/46629",
+                f"/ip4/0.0.0.0/udp/46629/quic",
                 ],
-    #initial_peers=["/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWSaqmfoX6NVLrnoKWhNwwFoyMtKGyAmoqASPKEzjVC6GN"], 
+    #initial_peers=[""], 
     
     announce_maddrs=announce_maddrs,
     start=True
