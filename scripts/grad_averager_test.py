@@ -151,10 +151,13 @@ while True:
                 print("grad stepping..")
                 #grad_averager.step(custom_group_info=custom_group)
                 grad_step = grad_averager.step(allow_retries=False, wait=False, custom_group_info=custom_group)
-                if gradient_averaging_step.done():
-                    with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                        print("opt stepping..")
-                        opt.step()  # update model parameters using averaged gradients
+                #if gradient_averaging_step.done():
+                #while not grad_step.done():
+                print("Sleeping for 10")
+                time.sleep(10)
+                with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    print("opt stepping..")
+                    opt.step()  # update model parameters using averaged gradients
                     grad_averager.reset_accumulated_grads_()  # prepare for next step
                     local_epoch = tracker.update_epoch(local_epoch + 1)
                     local_samples = 0  

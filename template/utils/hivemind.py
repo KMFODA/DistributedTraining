@@ -197,21 +197,13 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         user_data_for_gather = self.serializer.dumps(gather)  # serialize here to avoid imports in the averager process
         data_for_gather = self.serializer.dumps([self.bandwidth, self.mode.value, user_data_for_gather])
-        if hasattr(self, 'step_control'):# and self._current_step_control.stage == AveragingStage.FINISHED:
-            print("Already have step_control..")
-            print(step_control.stage)
-            time.sleep(5)
-            
-        step_control = StepControl(
+        step = StepControl(
             scheduled_time=scheduled_time,
             deadline=deadline,
             allow_retries=allow_retries,
             weight=weight,
             data_for_gather=data_for_gather,
         )
-        print("step_control after..")
-        print(step_control.stage)
-        time.sleep(5)
 
         future_for_init = MPFuture()
         
@@ -223,24 +215,24 @@ class DTAverager(hivemind.DecentralizedAverager):
         
         if custom_group_info is not None:
             self._outer_pipe.send(("_step_custom", [], dict(step=step, future_for_init=future_for_init, custom_group_info=custom_group_info)))
-            step_control.attach(*future_for_init.result())
+            step.attach(*future_for_init.result())
         else:
             # Default behavior: initiate matchmaking and proceed as originally designed
             self._outer_pipe.send(("_step", [], dict(step=step, future_for_init=future_for_init)))
-            step_control.attach(*future_for_init.result())
+            step.attach(*future_for_init.result())
 
         if not require_trigger:
-            step_control.allow_allreduce()
-        return step_control.result() if wait else step_control
+            step.allow_allreduce()
+        return step.result() if wait else step
     
-    async def _step_custom(self, *, step_control: StepControl, future_for_init: MPFuture, custom_group_info: GroupInfo):
+    async def _step_custom(self, *, step: StepControl, future_for_init: MPFuture, custom_group_info: GroupInfo):
                 
         try:
             trigger, cancel = MPFuture(), MPFuture()
-            step_control.attach(trigger, cancel)
+            step.attach(trigger, cancel)
             future_for_init.set_result((trigger, cancel))
             
-            while not step_control.done():
+            while not step.done():
                 try:
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
@@ -251,13 +243,13 @@ class DTAverager(hivemind.DecentralizedAverager):
                                                     
                     with self._register_allreduce_group(custom_group_info):
                         
-                        step_control.stage = AveragingStage.RUNNING_ALLREDUCE
-                        step_control.set_result(
+                        step.stage = AveragingStage.RUNNING_ALLREDUCE
+                        step.set_result(
                             await asyncio.wait_for(
                                 self._aggregate_with_group(
                                     custom_group_info,
                                     tensor_infos=self.tensor_infos,
-                                    weight=step_control.weight,
+                                    weight=step.weight,
                                     **self.allreduce_kwargs,
                                     ),
                                 timeout=self._allreduce_timeout,
@@ -275,22 +267,22 @@ class DTAverager(hivemind.DecentralizedAverager):
                     P2PHandlerError,
                     P2PDaemonError,
                 ) as e:
-                    if step_control.done() or not step_control.allow_retries or get_dht_time() >= step_control.deadline:
-                        if not step_control.cancelled():
+                    if step.done() or not step.allow_retries or get_dht_time() >= step.deadline:
+                        if not step.cancelled():
                             logger.exception(e)
-                        if not step_control.done():
-                            step_control.set_exception(e)
+                        if not step.done():
+                            step.set_exception(e)
                     else:
                         logger.warning(f"{self.__class__.__name__} caught {repr(e)}, retrying")
             
         except BaseException as e:
-            if not step_control.done():
-                step_control.set_exception(e)
+            if not step.done():
+                step.set_exception(e)
             raise
         finally:
-            step_control.stage = AveragingStage.FINISHED
-            if not step_control.done():
-                step_control.set_exception(
+            step.stage = AveragingStage.FINISHED
+            if not step.done():
+                step.set_exception(
                     RuntimeError(
                         "Internal sanity check failed: averager.step left future pending."
                         " Please report this to hivemind issues."
