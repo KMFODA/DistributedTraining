@@ -16,20 +16,18 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import bittensor as bt
-
-from huggingface_hub import create_tag, list_repo_refs
-
-from template.validator.reward import get_rewards
-from template.utils.uids import get_random_uids
-from template.utils.hivemind import load_state_from_peer
-
-import template
 import asyncio
 import random
-
-from template.utils.misc import get_bandwidth
 import time
+
+import bittensor as bt
+from huggingface_hub import create_tag, list_repo_refs
+
+import template
+from template.utils.hivemind import load_state_from_peer
+from template.utils.misc import get_bandwidth
+from template.utils.uids import get_random_uids
+from template.validator.reward import get_rewards
 
 
 async def forward(self):
@@ -44,14 +42,15 @@ async def forward(self):
     """
 
     bt.logging.info(
-        f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch} | Number of Peers: {self.global_progress.num_peers}"
     )
 
-    while self.tracker.global_progress.num_peers == 0:
+    while self.global_progress.num_peers == 0:
         self.warmup()
 
-    if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (
-        self.model_hf_tag < self.tracker.global_progress.epoch
+    self.update_global_tracker_states()
+    if (self.local_progress.epoch < self.global_progress.epoch) and (
+        self.model_hf_tag < self.global_progress.epoch
     ):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
@@ -60,12 +59,12 @@ async def forward(self):
         (
             (
                 self.config.neuron.global_batch_size_train
-                - self.tracker.global_progress.samples_accumulated
+                - self.global_progress.samples_accumulated
             )
             <= 25
         )
         and (not self.step_scheduled)
-        and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
+        and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # bt.logging.info("Scheduling all-reduce synapse call")
         sample_size = int(self.metagraph.n)
@@ -133,17 +132,14 @@ async def forward(self):
 
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
             bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-            bt.logging.info(f"New Model Tag {self.tracker.local_progress.epoch}")
-            if (
-                refs.tags
-                and int(refs.tags[-1].name) < self.tracker.local_progress.epoch
-            ):
+            bt.logging.info(f"New Model Tag {self.local_progress.epoch}")
+            if refs.tags and int(refs.tags[-1].name) < self.local_progress.epoch:
                 bt.logging.info("Pushing New Model Weights To HF Hub")
                 self.model.push_to_hub(self.config.neuron.model_name)
                 create_tag(
                     self.config.neuron.model_name,
                     repo_type="model",
-                    tag=str(self.tracker.local_progress.epoch),
+                    tag=str(self.local_progress.epoch),
                     tag_message="Bump release version.",
                 )
 
@@ -181,8 +177,18 @@ async def forward(self):
     # Normalise Rewards
     if rewards.sum() != 0:
         rewards = rewards / rewards.sum()
-
     bt.logging.info(f"Final Scores: {rewards}")
+
+    # Update the tracker based on the rewards
+    self.update_global_tracker_states(rewards, responses)
+    self.event.update(
+        {
+            "local_progress": self.local_progress.samples_accumulated,
+            "local_epoch": self.local_progress.epoch,
+            "global_progress": self.global_progress.samples_accumulated,
+            "global_epoch": self.global_progress.epoch,
+        }
+    )
 
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)

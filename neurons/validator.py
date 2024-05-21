@@ -27,6 +27,7 @@ from typing import Optional
 import bittensor as bt
 import hivemind
 import torch
+import wandb
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
@@ -37,6 +38,8 @@ from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
+from huggingface_hub import list_repo_refs
+from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
@@ -53,9 +56,27 @@ from template.utils.misc import (
     warmup,
 )
 from template.validator import forward
-from huggingface_hub import list_repo_refs
 
 logger = get_logger(__name__)
+
+
+class GlobalTrainingProgress:
+    epoch: int
+    samples_accumulated: int
+    target_batch_size: int
+    num_peers: int
+    num_clients: int
+    eta_next_epoch: float
+    next_fetch_time: float
+
+
+class LocalTrainingProgress(BaseModel):
+    peer_id: bytes
+    epoch: conint(ge=0, strict=True)
+    samples_accumulated: conint(ge=0, strict=True)
+    samples_per_second: confloat(ge=0.0, strict=True)
+    time: StrictFloat
+    client_mode: StrictBool
 
 
 class Validator(BaseValidatorNeuron):
@@ -139,7 +160,11 @@ class Validator(BaseValidatorNeuron):
         )
 
         self.step_scheduled = False
-        self.local_epoch, self.local_samples = 0, 0
+        self.local_progress = LocalTrainingProgress()
+        self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
+        self.global_progress = GlobalTrainingProgress()
+        self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
+        self.global_epoch, self.global_samples = 0, 0
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -183,6 +208,13 @@ class Validator(BaseValidatorNeuron):
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+    def update_tracker(self, rewards, responses):
+        for reward, response in zip(rewards, responses):
+            if reward != 0:
+                self.local_progress += len(response.dataset_indices)
+            else:
+                continue
 
     def map_uids_to_peerids(self):
         # Track how recently we updated each uid
@@ -242,6 +274,25 @@ class Validator(BaseValidatorNeuron):
                 )
 
         bt.logging.info("Exiting update models loop.")
+
+    def update_global_tracker_states(self):
+        runs = wandb.Api().runs(
+            f"{self.config.wandb.entity}/{self.config.neuron.wandb_project}"
+        )
+        global_progress = 0
+        global_epoch = 0
+        for run in runs:
+            if ("validator" in run.name) and (run.state == "running"):
+                history = run.history()
+                if ("local_progress" in history.columns) and (
+                    "global_progress" in history.columns
+                ):
+                    global_progress += history.loc[0, "local_progress"]
+                    global_epoch = max(global_epoch, history.loc[0, "local_epoch"])
+            else:
+                continue
+        self.global_progress.samples_accumulated = global_progress
+        self.global_progress.epoch = global_epoch
 
     def get_validator_info(self):
         return {
