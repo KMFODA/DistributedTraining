@@ -4,8 +4,8 @@ from template.validator.validator_core import DatasetState
 
 # Initialize the dummy data and the DatasetState instance
 dataset_length = 96015  # Reduced size for testing
-dataset_indices = bitarray('0' * dataset_length)  # Initialize all indices to 0 (unused)
-#dataset_dict = {}  # Dummy DHT, aka dht_state
+dataset_indices = bitarray("0" * dataset_length)  # Initialize all indices to 0 (unused)
+# dataset_dict = {}  # Dummy DHT, aka dht_state
 dht = hivemind.DHT(start=True)
 run_id = "dummy_run_id"
 

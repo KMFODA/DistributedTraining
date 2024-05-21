@@ -61,9 +61,7 @@ else:
 # Init list of available DHT addresses from wandb
 api = wandb.Api()
 initial_peers_list = config.neuron.initial_peers
-runs = api.runs(
-    f"{config.neuron.wandb_entity}/{config.neuron.wandb_project}"
-)
+runs = api.runs(f"{config.neuron.wandb_entity}/{config.neuron.wandb_project}")
 for ru in runs:
     if ru.state == "running":
         for peer in ru.config["neuron"]["initial_peers"]:
@@ -114,7 +112,8 @@ opt = hivemind.Optimizer(
     dht=dht,  # use a DHT that is connected with other peers
     run_id=config.neuron.run_id,  # unique identifier of this collaborative run
     scheduler=None,
-    batch_size_per_step=config.neuron.local_batch_size_train*config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
+    batch_size_per_step=config.neuron.local_batch_size_train
+    * config.neuron.local_gradient_accumilation_steps_train,  # each call to opt.step adds this many samples towards the next epoch
     target_batch_size=config.neuron.global_batch_size_train,  # after peers collectively process this many samples, average weights and begin the next epoch
     optimizer=opt,  # wrap the SGD optimizer defined above
     use_local_updates=False,  # perform optimizer steps with local gradients, average parameters in background
@@ -125,6 +124,7 @@ opt = hivemind.Optimizer(
     state_averaging_compression=hivemind.Uniform8BitQuantization(),
 )
 from hivemind.optim.grad_averager import GradientAverager
+
 # grad_averager = GradientAverager(model.parameters(), dht=dht, prefix=f"{config.neuron.run_id}_grad_averager",start=True)
 
 tokenizer = AutoTokenizer.from_pretrained(config.neuron.model_name)
@@ -135,7 +135,11 @@ tokenizer.pad_token = tokenizer.eos_token
 config.neuron.local_batch_size_train_total = 20
 
 dataloader = SubsetFalconLoader(
-    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.training_examples_per_miner)
+    batch_size=config.neuron.local_batch_size_train,
+    sequence_length=1024,
+    rows=random.choices(
+        range(0, 968000015), k=config.neuron.training_examples_per_miner
+    ),
 )
 
 for i, batch in enumerate(dataloader):
@@ -143,7 +147,7 @@ for i, batch in enumerate(dataloader):
 
     # Forward pass
     outputs = model(input_ids=inputs, labels=inputs)
-    
+
     # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
     loss = outputs.loss
     loss.backward()
@@ -154,34 +158,45 @@ for i, batch in enumerate(dataloader):
 model = model.to(device)
 model_2 = AutoModelForCausalLM.from_pretrained(config.neuron.model_name)
 model_2 = model_2.to(device)
-test_layer_indices = [i for i, layer in enumerate(model.parameters()) if len(layer.size()) == 1]
+test_layer_indices = [
+    i for i, layer in enumerate(model.parameters()) if len(layer.size()) == 1
+]
 opt_2 = torch.optim.AdamW(model_2.parameters(), lr=config.neuron.lr)
 
 for i in range(0, 100):
     dataloader = SubsetFalconLoader(
-        batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = config.neuron.training_examples_per_miner)
+        batch_size=config.neuron.local_batch_size_train,
+        sequence_length=1024,
+        rows=random.choices(
+            range(0, 968000015), k=config.neuron.training_examples_per_miner
+        ),
     )
     for i, batch in enumerate(dataloader):
         inputs = batch.to(device)
 
         # Forward pass
         outputs = model(input_ids=inputs, labels=inputs)
-        
+
         # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
         loss = outputs.loss
         loss.backward()
 
         # Forward pass
         outputs_2 = model_2(input_ids=inputs, labels=inputs)
-        
+
         # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
         loss_2 = outputs_2.loss
         loss_2.backward()
 
         index = random.choice(test_layer_indices)
-        print(sum([layer.grad for layer in model.parameters()][index]) - sum([layer.grad for layer in model_2.parameters()][index]))
+        print(
+            sum([layer.grad for layer in model.parameters()][index])
+            - sum([layer.grad for layer in model_2.parameters()][index])
+        )
         opt.zero_grad()
         opt_2.zero_grad()
 
 grad_averager.accumulate_grads_(batch_size=i)
-grad_averager.step(control=grad_averager.schedule_step(scheduled_time=hivemind.get_dht_time()))
+grad_averager.step(
+    control=grad_averager.schedule_step(scheduled_time=hivemind.get_dht_time())
+)

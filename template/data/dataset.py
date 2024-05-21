@@ -28,11 +28,14 @@ model_name = "distilgpt2"
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
 
+
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
     max_pages: int = 968000015
 
-    def __init__(self, batch_size, sequence_length, rows: typing.List[int], tokenizer = tokenizer):
+    def __init__(
+        self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
+    ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.tokenizer = tokenizer
@@ -49,10 +52,10 @@ class SubsetFalconLoader(IterableDataset):
         self.fetch_data_for_page(min(self.rows), len(self.rows))
 
     def fetch_data_for_page(self, offset, length):
-        iterations = math.ceil(length/100)
+        iterations = math.ceil(length / 100)
         for iteration in range(iterations):
-            self.params["offset"] = offset + (iteration*100)
-            self.params["length"] = min(100, length - (iteration*100))
+            self.params["offset"] = offset + (iteration * 100)
+            self.params["length"] = min(100, length - (iteration * 100))
             attempt = 0
             while attempt < self.retry_limit:
                 try:
@@ -61,7 +64,9 @@ class SubsetFalconLoader(IterableDataset):
 
                     for row in response.json()["rows"]:
                         content = row["row"]["content"]
-                        self.buffer += self.tokenizer(content, truncation=True)["input_ids"]
+                        self.buffer += self.tokenizer(content, truncation=True)[
+                            "input_ids"
+                        ]
                         self.buffer += [self.tokenizer.eos_token_id]
                     break  # If the request was successful, break out of the retry loop
                 except requests.exceptions.RequestException as e:

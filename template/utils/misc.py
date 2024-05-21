@@ -126,38 +126,38 @@ def ttl_get_block(self) -> int:
     """
     return self.subtensor.get_current_block()
 
+
 class AsyncDendritePool:
     def __init__(self, wallet, metagraph):
         self.metagraph = metagraph
         self.dendrite = bt.dendrite(wallet=wallet)
-    
+
     async def async_forward(
-            self,
-            uids: List[int],
-            queries: List[Train], 
-            timeout: float = 150.0
+        self, uids: List[int], queries: List[Train], timeout: float = 150.0
     ):
 
         def call_single_uid(uid, query):
             return self.dendrite(
-                self.metagraph.axons[uid],
-                synapse=query,
-                timeout=timeout
+                self.metagraph.axons[uid], synapse=query, timeout=timeout
             )
-        
+
         async def query_async():
-            corutines = [call_single_uid(uid, query) for uid, query in zip(uids, queries)]
+            corutines = [
+                call_single_uid(uid, query) for uid, query in zip(uids, queries)
+            ]
             return await asyncio.gather(*corutines)
-        
+
         return await query_async()
-    
+
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
 
-    #signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}" #+ signature 
+    # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
+    run_name = (
+        f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
+    )
     wandb_run = wandb.init(
-        id = run_name,
+        id=run_name,
         name=run_name,
         anonymous="allow",
         project=config.neuron.wandb_project,
@@ -171,10 +171,11 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
     wandb_run.config.update(config, allow_val_change=True)
     return wandb_run
 
+
 class BittensorLogHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
-        
+
         if record.levelno >= logging.CRITICAL:
             bt_logger.critical(log_entry)
         elif record.levelno >= logging.ERROR:
@@ -188,34 +189,42 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
+
 def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    bt_logger_ = logging.getLogger('bittensor')
+    bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
 
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
+    root_logger.setLevel(
+        level
+    )  # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
     bt_handler = BittensorLogHandler()
-    formatter = logging.Formatter('%(message)s')
+    formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
 
     # Create a file handler that logs debug and higher level messages
-    
-    fh = logging.FileHandler(f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt")
+
+    fh = logging.FileHandler(
+        f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    )
     fh.setLevel(logging.DEBUG)
 
     # Create a formatter and set the formatter for the handler.
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     fh.setFormatter(formatter)
 
     # Add the FileHandler to the root logger
     root_logger.addHandler(fh)
+
 
 def get_bandwidth():
     # Get speedtest results
@@ -225,7 +234,7 @@ def get_bandwidth():
     s.download()
     s.upload()
     results = s.results.dict()
-    
+
     # Copy key metrics to a formatted badnwidth_dict
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
@@ -233,6 +242,7 @@ def get_bandwidth():
         bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
 
     return bandwidth_dict
+
 
 def init_dht(self):
     # Init DHT and model
@@ -306,7 +316,7 @@ def init_dht(self):
         self.subtensor.commit,
         self.wallet,
         self.config.netuid,
-       self.dht.peer_id.to_base58(),
+        self.dht.peer_id.to_base58(),
     )
     # try:
     #     run_in_subprocess(partial, 60)
@@ -314,4 +324,7 @@ def init_dht(self):
     #     bt.logging.info(f"Error submitting Peer ID to chaing {Exception} retrying in 2 minutes")
 
     # Add DHT address to wandb config
-    self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+    self.config.neuron.dht_addresses = [
+        re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
+        for addr in self.dht.get_visible_maddrs()
+    ]
