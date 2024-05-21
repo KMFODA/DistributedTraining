@@ -42,10 +42,10 @@ async def forward(self):
     """
 
     bt.logging.info(
-        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch} | Number of Peers: {self.global_progress.num_peers}"
+        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
     )
 
-    while self.global_progress.num_peers == 0:
+    while self.tracker.global_progress.num_peers == 0:
         self.warmup()
 
     self.update_global_tracker_states()

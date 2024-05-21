@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 from typing import Optional
+from dataclasses import dataclass
 
 import bittensor as bt
 import hivemind
@@ -60,23 +61,15 @@ from template.validator import forward
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=False)
 class GlobalTrainingProgress:
     epoch: int
     samples_accumulated: int
-    target_batch_size: int
-    num_peers: int
-    num_clients: int
-    eta_next_epoch: float
-    next_fetch_time: float
 
 
 class LocalTrainingProgress(BaseModel):
-    peer_id: bytes
     epoch: conint(ge=0, strict=True)
     samples_accumulated: conint(ge=0, strict=True)
-    samples_per_second: confloat(ge=0.0, strict=True)
-    time: StrictFloat
-    client_mode: StrictBool
 
 
 class Validator(BaseValidatorNeuron):
@@ -160,9 +153,9 @@ class Validator(BaseValidatorNeuron):
         )
 
         self.step_scheduled = False
-        self.local_progress = LocalTrainingProgress()
+        self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
         self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
-        self.global_progress = GlobalTrainingProgress()
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
         self.global_epoch, self.global_samples = 0, 0
         self.loop = asyncio.new_event_loop()
