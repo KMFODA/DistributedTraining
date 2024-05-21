@@ -90,7 +90,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     logger.debug(f"Caught {repr(e)} when communicating to {peer_id}", exc_info=True)
                 self.finalize(exception=e)
                 #? Remove fault-tolerant method here
-                #self.tensor_part_container.register_failed_reducer(peer_index) 
+                self.tensor_part_container.register_failed_reducer(peer_index) 
                 raise
     
     #! Test fault-tolerance here:
@@ -149,11 +149,11 @@ class DTAllReduceRunner(AllReduceRunner):
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
                 #? Remove fault-tolerant method here:
-                #self.tensor_part_reducer.on_sender_failed(self.sender_peer_ids.index(peer_id))
+                self.tensor_part_reducer.on_sender_failed(self.sender_peer_ids.index(peer_id))
                 error_message = f"Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
-                self.finalize(exception=error_message)
-                raise Exception(error_message)
+                #self.finalize(exception=error_message)
+                #raise Exception(error_message)
             
 class DTAverager(hivemind.DecentralizedAverager):
     def __init__(self, *args, **kwargs):
