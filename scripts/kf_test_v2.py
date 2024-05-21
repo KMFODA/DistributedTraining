@@ -12,7 +12,7 @@ import random
 # python3 map-reduce-subnet/test/test.py --netuid 32 --validator.uid 0 --wallet.name default --wallet.hotkey default --subtensor.network test
 # tensor size for testing, set to 10 MB
 tensor_size = 68 * 1024 * 1024
-bandwidth = tensor_size * 4 # torch.float32 is 4 bytes
+bandwidth = tensor_size * 4  # torch.float32 is 4 bytes
 
 parser = ArgumentParser()
 parser.add_argument("--netuid", type=int, help="Network netuid", default=25)
@@ -48,14 +48,18 @@ tokenizer = AutoTokenizer.from_pretrained(config.neuron.model_name)
 tokenizer.pad_token = tokenizer.eos_token
 
 dataloader = SubsetFalconLoader(
-    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = 1)
+    batch_size=config.neuron.local_batch_size_train,
+    sequence_length=1024,
+    rows=random.choices(range(0, 968000015), k=1),
 )
 
 parser_2 = ArgumentParser()
-parser_2.add_argument ('--port.range', default = '22043:22049', help = "Opened Port range" )
-parser_2.add_argument('--validator.uid', type = int, default= 0, help='Validator UID')
-parser_2.add_argument('--netuid', type = int, default= 32, help='Subnet UID')
-parser_2.add_argument("--subtensor.network", type=str, help="Network netuid", default="test")
+parser_2.add_argument("--port.range", default="22043:22049", help="Opened Port range")
+parser_2.add_argument("--validator.uid", type=int, default=0, help="Validator UID")
+parser_2.add_argument("--netuid", type=int, default=32, help="Subnet UID")
+parser_2.add_argument(
+    "--subtensor.network", type=str, help="Network netuid", default="test"
+)
 
 bt.subtensor.add_args(parser_2)
 bt.logging.add_args(parser_2)
@@ -73,7 +77,7 @@ for i, batch in enumerate(dataloader):
 
     # Forward pass
     outputs = model(input_ids=inputs, labels=inputs)
-    
+
     # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
     loss = outputs.loss
     loss.backward()
@@ -100,7 +104,7 @@ def train(rank, peer_count, bandwidth):
     # else:
     #     # Other peers receive the weights
     #     weights = peer.broadcast(weights)
-    
+
     # # Should destroy process group after broadcasting
     # peer.destroy_process_group()
 
@@ -108,32 +112,32 @@ def train(rank, peer_count, bandwidth):
     epoch = 2
 
     # Your training loop here
-    bt.logging.info(f"Peer {rank} is training...")   
-    
-    for i in range(epoch):
+    bt.logging.info(f"Peer {rank} is training...")
 
+    for i in range(epoch):
         bt.logging.success(f"🟢 Epoch: {i}")
-        
+
         # Replace this with actual training code
-        
+
         # After calculating gradients
         gradients = torch.ones((tensor_size, 1), dtype=torch.float32)
-        gradients = [torch.tensor(layer.grad).to('cpu') for layer in model.parameters()]
-        
+        gradients = [torch.tensor(layer.grad).to("cpu") for layer in model.parameters()]
+
         if rank == 1:
-        #     # gradients = torch.ones((tensor_size, 1), dtype=torch.float32) * 3
+            #     # gradients = torch.ones((tensor_size, 1), dtype=torch.float32) * 3
             gradients = gradients * 3
 
         # Initialize process group
         peer.init_process_group()
-        
+
         # All-reducing the gradients (average of gradients)
         gradients = peer.all_reduce(gradients)
-        
+
         # Destroy process group
         peer.destroy_process_group()
-    
+
     bt.logging.success(f"Peer {rank} has finished training.")
+
 
 def main():
     peer_count = 3
@@ -148,6 +152,7 @@ def main():
     for p in processes:
         p.join()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # mp.set_start_method('spawn')  # This is often necessary in PyTorch multiprocessing
     main()

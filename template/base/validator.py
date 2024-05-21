@@ -132,7 +132,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 self.event = {}
 
                 # Run multiple forwards concurrently.
-                _ = self.loop.run_until_complete(self.concurrent_forward()) 
+                _ = self.loop.run_until_complete(self.concurrent_forward())
 
                 # Check if we should exit.
                 if self.should_exit:
@@ -140,7 +140,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
                 # Sync metagraph and potentially set weights.
                 self.sync()
-                
+
                 # Log to wandb
                 if not self.config.neuron.dont_wandb_log:
                     self.wandb.log(self.event)
@@ -249,9 +249,16 @@ class BaseValidatorNeuron(BaseNeuron):
             wait_for_finalization=False,
             version_key=self.spec_version,
         )
-        
+
         # Log weigths to wandb
-        self.event.update({f"weights.uid{processed_weight_uids}": processed_weights for processed_weight_uids, processed_weights in zip(processed_weight_uids, processed_weights)})
+        self.event.update(
+            {
+                f"weights.uid{processed_weight_uids}": processed_weights
+                for processed_weight_uids, processed_weights in zip(
+                    processed_weight_uids, processed_weights
+                )
+            }
+        )
         bt.logging.info(f"Set weights: {processed_weights}")
 
     def resync_metagraph(self):

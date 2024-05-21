@@ -43,6 +43,7 @@ import random
 from template.data.dataset import SubsetFalconLoader
 from bitarray import bitarray
 
+
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
     """
@@ -130,38 +131,36 @@ def ttl_get_block(self) -> int:
     """
     return self.subtensor.get_current_block()
 
+
 class AsyncDendritePool:
     def __init__(self, wallet, metagraph):
         self.metagraph = metagraph
         self.dendrite = bt.dendrite(wallet=wallet)
-    
-    async def async_forward(
-            self,
-            uids: List[int],
-            queries: List[Train], 
-            timeout: float = 150.0
-    ):
 
+    async def async_forward(
+        self, uids: List[int], queries: List[Train], timeout: float = 150.0
+    ):
         def call_single_uid(uid, query):
             return self.dendrite(
-                self.metagraph.axons[uid],
-                synapse=query,
-                timeout=timeout
+                self.metagraph.axons[uid], synapse=query, timeout=timeout
             )
-        
+
         async def query_async():
-            corutines = [call_single_uid(uid, query) for uid, query in zip(uids, queries)]
+            corutines = [
+                call_single_uid(uid, query) for uid, query in zip(uids, queries)
+            ]
             return await asyncio.gather(*corutines)
-        
+
         return await query_async()
-    
+
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-
-    #signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}" #+ signature 
+    # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
+    run_name = (
+        f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
+    )
     wandb_run = wandb.init(
-        id = run_name,
+        id=run_name,
         name=run_name,
         anonymous="allow",
         project=config.neuron.wandb_project,
@@ -175,10 +174,11 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
     wandb_run.config.update(config, allow_val_change=True)
     return wandb_run
 
+
 class BittensorLogHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
-        
+
         if record.levelno >= logging.CRITICAL:
             bt_logger.critical(log_entry)
         elif record.levelno >= logging.ERROR:
@@ -192,46 +192,57 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
+
 def logging_filter(record):
     if record.name != "hivemind.dht.protocol":
         return True
     else:
         return False
 
+
 def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    bt_logger_ = logging.getLogger('bittensor')
+    bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
 
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
+    root_logger.setLevel(
+        level
+    )  # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
     bt_handler = BittensorLogHandler()
-    formatter = logging.Formatter('%(message)s')
+    formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
 
     # Create a file handler that logs debug and higher level messages
     # hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
-    
+
     if os.path.exists("/root/logs_mylogfile.txt"):
         shutil.copyfile("/root/logs_mylogfile.txt", "/root/logs_mylogfile_v1.txt")
         os.remove("/root/logs_mylogfile.txt")
 
     hivemind_log_file = f"/root/logs_mylogfile.txt"
-    hivemind_logger = logging.getLogger('hivemind')
+    hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
-    file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
+    file_handler.setLevel(
+        logging.DEBUG
+    )  # Ensure file handler captures all levels for hivemind
     file_handler.addFilter(logging_filter)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     file_handler.setFormatter(formatter)
     hivemind_logger.addHandler(file_handler)
-    hivemind_logger.propagate = False  # Stop hivemind logs from propagating to the root logger
+    hivemind_logger.propagate = (
+        False  # Stop hivemind logs from propagating to the root logger
+    )
+
 
 def get_bandwidth():
     # Get speedtest results
@@ -241,7 +252,7 @@ def get_bandwidth():
     s.download()
     s.upload()
     results = s.results.dict()
-    
+
     # Copy key metrics to a formatted badnwidth_dict
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
@@ -249,6 +260,7 @@ def get_bandwidth():
         bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
 
     return bandwidth_dict
+
 
 def init_dht(self):
     # Init DHT and model
@@ -330,7 +342,11 @@ def init_dht(self):
     #     bt.logging.info(f"Error submitting Peer ID to chaing {Exception} retrying in 2 minutes")
 
     # Add DHT address to wandb config
-    self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+    self.config.neuron.dht_addresses = [
+        re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
+        for addr in self.dht.get_visible_maddrs()
+    ]
+
 
 def warmup(self):
     """
@@ -342,21 +358,33 @@ def warmup(self):
     Returns:
         template.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
-    
+
     self.local_epoch, self.local_samples = 0, 0
     # Load dataset
     self.dataset_loader = ()
     dataset_length = 968000015
     self.dataset_indices = bitarray(dataset_length)
 
-    search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
-    start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
-    group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
+    search_start = random.choice(
+        range(
+            len(self.dataset_indices)
+            - self.config.neuron.training_examples_per_miner
+            + 1
+        )
+    )
+    start = self.dataset_indices.index(
+        bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+    )
+    group = [
+        i for i in range(start, start + self.config.neuron.training_examples_per_miner)
+    ]
     self.dataset_indices[group] = True
 
     # Create Dataloader
     dataloader = SubsetFalconLoader(
-        batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
+        batch_size=self.config.neuron.local_batch_size_train,
+        sequence_length=1024,
+        rows=group,
     )
 
     total_loss = 0
@@ -369,34 +397,55 @@ def warmup(self):
 
         # Normalize loss to account for batch accumulation
         loss = outputs.loss
-        
+
         # Accumulate Total Loss
-        total_loss += outputs.loss.detach().item() 
+        total_loss += outputs.loss.detach().item()
 
         # Backward Pass
         loss.backward()
-        
+
         # Copy gradients
-        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
 
         # Accumulate Gradients
         self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-        
+
         # Zero Gradients
         self.opt.zero_grad()
 
         # Update Tracker
-        self.local_samples += 1    
+        self.local_samples += 1
         self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
         # Log accumulation status
         if index % 10 == 0:
-            bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-            bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+            bt.logging.info(
+                f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
+            )
+            bt.logging.info(
+                f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+            )
 
         if not self.config.neuron.dont_wandb_log:
-            self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
-    
+            self.wandb.log(
+                {
+                    "loss": outputs.loss.detach().item(),
+                    "local_epoch": self.local_epoch,
+                    "global_epoch": self.tracker.global_progress.epoch,
+                }
+            )
+
     if index % 10 != 0:
-        bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-        bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
+        bt.logging.info(
+            f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
+        )
+        bt.logging.info(
+            f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+        )

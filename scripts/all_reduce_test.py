@@ -22,11 +22,15 @@ def launch_dht_instances(n_peers: int, **kwargs) -> List[DHT]:
     dhts = [DHT(start=True, **kwargs)]
     initial_peers = dhts[0].get_visible_maddrs()
 
-    dhts.extend(DHT(initial_peers=initial_peers, start=True, await_ready=False, **kwargs) for _ in range(n_peers - 1))
+    dhts.extend(
+        DHT(initial_peers=initial_peers, start=True, await_ready=False, **kwargs)
+        for _ in range(n_peers - 1)
+    )
     for process in dhts[1:]:
         process.wait_until_ready()
 
     return dhts
+
 
 # Training Args
 import torch.multiprocessing as mp
@@ -74,7 +78,9 @@ tokenizer = AutoTokenizer.from_pretrained(config.neuron.model_name)
 tokenizer.pad_token = tokenizer.eos_token
 
 dataloader = SubsetFalconLoader(
-    batch_size=config.neuron.local_batch_size_train, sequence_length=1024, rows=random.choices(range(0,968000015), k = 1)
+    batch_size=config.neuron.local_batch_size_train,
+    sequence_length=1024,
+    rows=random.choices(range(0, 968000015), k=1),
 )
 
 for i, batch in enumerate(dataloader):
@@ -83,18 +89,21 @@ for i, batch in enumerate(dataloader):
 
     # Forward pass
     outputs = model(input_ids=inputs, labels=inputs)
-    
+
     # loss = outputs.loss / config.neuron.local_batch_size_train_total  # Scale loss
     loss = outputs.loss
     loss.backward()
 
 from typing import Callable, Iterable, Iterator, Optional, Sequence, TypeVar
+
+
 def _grads_from_parameters() -> Iterator[torch.Tensor]:
     """gradient buffers associated with parameters"""
     for param in model.parameters():
         if param.grad is None:
             param.grad = torch.zeros_like(param)
         yield param.grad
+
 
 averaged_grads = tuple(
     grad.detach().cpu().clone().share_memory_() for grad in _grads_from_parameters()
@@ -103,8 +112,16 @@ averaged_grads = tuple(
 size = [50257, 1024, 768]
 tensors1 = [torch.randn(size[0]), torch.zeros(size[1]), torch.zeros(size[2])]
 tensors2 = [torch.rand(size[0]), torch.ones(size[1]), torch.ones(size[2])]
-tensors3 = [-torch.rand(size[0]), torch.arange(size[1]).to(torch.float32), torch.arange(size[2]).to(torch.float32)]
-tensors4 = [torch.randn(size[0]) ** 3, torch.arange(size[1]).to(torch.float32) / 2, torch.arange(size[2]).to(torch.float32) / 2]
+tensors3 = [
+    -torch.rand(size[0]),
+    torch.arange(size[1]).to(torch.float32),
+    torch.arange(size[2]).to(torch.float32),
+]
+tensors4 = [
+    torch.randn(size[0]) ** 3,
+    torch.arange(size[1]).to(torch.float32) / 2,
+    torch.arange(size[2]).to(torch.float32) / 2,
+]
 peer_tensors = [tensors1, tensors2, tensors3, tensors4]
 list[tensors[list]]
 
@@ -116,11 +133,18 @@ list[tensors[list]]
 
 length = 1
 tensors1_2 = [layer.grad[0].to("cpu")[:300] for layer in model.parameters()][:1]
-tensors2_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][:length]
-tensors3_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][:length]
-tensors4_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][:length]
+tensors2_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][
+    :length
+]
+tensors3_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][
+    :length
+]
+tensors4_2 = [torch.clone(layer.grad[0]).detach() for layer in model.parameters()][
+    :length
+]
 
-for layer in model.parameters(): break
+for layer in model.parameters():
+    break
 tensors1_2 = [layer.grad.to("cpu")]
 tensors2_2 = [layer.grad.to("cpu")]
 tensors3_2 = [layer.grad.to("cpu")]
@@ -145,7 +169,11 @@ modes = (
 random.shuffle(modes)
 
 reference = [
-    sum(tensors[i] for tensors, mode in zip(peer_tensors, modes) if mode != AveragingMode.AUX)
+    sum(
+        tensors[i]
+        for tensors, mode in zip(peer_tensors, modes)
+        if mode != AveragingMode.AUX
+    )
     / max(1, n_peers - n_aux)
     for i in range(len(tensors1))
 ]
@@ -159,7 +187,7 @@ averagers = [
         # target_group_size=4,
         min_matchmaking_time=15,
         prefix="mygroup",
-        compression = hivemind.Uniform8BitQuantization(),
+        compression=hivemind.Uniform8BitQuantization(),
         client_mode=mode == AveragingMode.CLIENT,
         auxiliary=mode == AveragingMode.AUX,
         start=True,

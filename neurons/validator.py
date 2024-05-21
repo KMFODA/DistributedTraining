@@ -40,12 +40,23 @@ from hivemind.utils.timed_storage import ValueWithExpiration
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import DTGradientAverager, DTStateAverager, load_state_from_peer
-from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging, warmup
+from template.utils.hivemind import (
+    DTGradientAverager,
+    DTStateAverager,
+    load_state_from_peer,
+)
+from template.utils.misc import (
+    AsyncDendritePool,
+    init_dht,
+    load_wandb,
+    setup_logging,
+    warmup,
+)
 from template.validator import forward
 from huggingface_hub import list_repo_refs
 
 logger = get_logger(__name__)
+
 
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
@@ -64,17 +75,21 @@ class Validator(BaseValidatorNeuron):
 
         # Init Tracker
         self.tracker = ProgressTracker(
-            dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}", 
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}",
             target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True
+            start=True,
         )
 
-        bt.logging.info(f'Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }')
+        bt.logging.info(
+            f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }"
+        )
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self, self.config, self.wallet, "validator", str(self.dht.peer_id))
+            self.wandb = load_wandb(
+                self, self.config, self.wallet, "validator", str(self.dht.peer_id)
+            )
 
         # Init Dataset
         dataset_length = 968000015
@@ -88,7 +103,11 @@ class Validator(BaseValidatorNeuron):
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
-        self.test_layer_indices = [i for i, layer in enumerate(self.model.parameters()) if len(layer.size()) == 1]
+        self.test_layer_indices = [
+            i
+            for i, layer in enumerate(self.model.parameters())
+            if len(layer.size()) == 1
+        ]
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
@@ -104,19 +123,19 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device("cuda"),
-            start = True,
-            next_chunk_timeout = 30.0,
+            start=True,
+            next_chunk_timeout=30.0,
         )
-        
+
         # Init State Averager
         self.state_averager = DTStateAverager(
-            optimizer = self.opt,
-            initialize_optimizer = False,
+            optimizer=self.opt,
+            initialize_optimizer=False,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_state_averager",
             state_compression=hivemind.Uniform8BitQuantization(),
-            start = True,
-            next_chunk_timeout = 30.0,
+            start=True,
+            next_chunk_timeout=30.0,
         )
 
         self.step_scheduled = False
@@ -127,14 +146,20 @@ class Validator(BaseValidatorNeuron):
         self.peer_id = self.dht.peer_id
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
-        
-        # Create mapping between uids to peerids 
-        self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+
+        # Create mapping between uids to peerids
+        self.uids_to_peerids = self.loop.run_until_complete(
+            self.map_uid_to_peerid(range(0, self.metagraph.n))
+        )
         max_retries = 3
         retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (retries >= max_retries):
+        while all(value is None for value in self.uids_to_peerids.values()) and (
+            retries >= max_retries
+        ):
             for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(self.map_uid_to_peerid(range(0, self.metagraph.n)))
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    self.map_uid_to_peerid(range(0, self.metagraph.n))
+                )
                 time.sleep(1)
 
         self.all_reduce_timeout = 600
@@ -145,16 +170,20 @@ class Validator(BaseValidatorNeuron):
 
         # Warmup DHT
         if self.tracker.global_progress.num_peers == 0:
-            bt.logging.info(f'Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle.')
+            bt.logging.info(
+                f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle."
+            )
             self.warmup()
-        
+
         # Load State From Peer If Out Of Sync
-        if (self.tracker.local_progress.epoch < self.tracker.global_progress.epoch) and (self.model_hf_tag < self.tracker.global_progress.epoch):
-            load_state_from_peer(self, epoch = self.tracker.global_progress.epoch)
+        if (
+            self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
+        ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
+            load_state_from_peer(self, epoch=self.tracker.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
-        
+
     def map_uids_to_peerids(self):
         # Track how recently we updated each uid
         uid_last_checked = dict()
@@ -189,7 +218,9 @@ class Validator(BaseValidatorNeuron):
                 hotkey = self.metagraph.hotkeys[next_uid]
 
                 # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-                metadata = bt.extrinsics.serving.get_metadata(self.subtensor, self.config.netuid,  self.metagraph.hotkeys[next_uid])
+                metadata = bt.extrinsics.serving.get_metadata(
+                    self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
+                )
 
                 if not metadata:
                     updated = None
@@ -212,7 +243,6 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("Exiting update models loop.")
 
-
     def get_validator_info(self):
         return {
             "block": self.metagraph.block.item(),
@@ -230,17 +260,28 @@ class Validator(BaseValidatorNeuron):
 
             # Get all peers connected to our DHT and their ips
             peer_list_dht = await self._p2p.list_peers()
-            peer_list_dht_addrs = [str(peer.addrs[0]).split('/ip4/')[1].split('/')[0] for peer in peer_list_dht]
+            peer_list_dht_addrs = [
+                str(peer.addrs[0]).split("/ip4/")[1].split("/")[0]
+                for peer in peer_list_dht
+            ]
 
             # Get only peers connected to the current run id
-            prefix = self.grad_averager.matchmaking_kwargs['prefix']
-            metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
+            prefix = self.grad_averager.matchmaking_kwargs["prefix"]
+            metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
+                {},
+                None,
+            )
 
             if metadata is None:
                 # return None
                 uids_to_peerids[uid] = None
                 continue
-            peer_list_run = [str(PeerID(peer_id)) for peer_id, info in metadata.items() if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))]
+            peer_list_run = [
+                str(PeerID(peer_id))
+                for peer_id, info in metadata.items()
+                if isinstance(info, ValueWithExpiration)
+                and isinstance(info.value, (float, int))
+            ]
 
             # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
             if miner_ip not in peer_list_dht_addrs:
@@ -263,12 +304,20 @@ class Validator(BaseValidatorNeuron):
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         if timeout is not None:
-            timeout = self.next_chunk_timeout if self.next_chunk_timeout is not None else self.request_timeout
+            timeout = (
+                self.next_chunk_timeout
+                if self.next_chunk_timeout is not None
+                else self.request_timeout
+            )
 
         metadata = None
         logger.info(f"Downloading parameters from peer {peer}")
         try:
-            stub = self.get_stub(self._p2p, peer, namespace=self.grad_averager.matchmaking_kwargs['prefix'])
+            stub = self.get_stub(
+                self._p2p,
+                peer,
+                namespace=self.grad_averager.matchmaking_kwargs["prefix"],
+            )
             stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
             current_tensor_parts, tensors = [], []
 
@@ -278,11 +327,19 @@ class Validator(BaseValidatorNeuron):
                     metadata = self.serializer.loads(message.metadata)
                 if message.tensor_part.dtype and current_tensor_parts:
                     # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
-                    tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+                    tensors.append(
+                        deserialize_torch_tensor(
+                            combine_from_streaming(current_tensor_parts)
+                        )
+                    )
                     current_tensor_parts = []
                 current_tensor_parts.append(message.tensor_part)
             if current_tensor_parts:
-                tensors.append(deserialize_torch_tensor(combine_from_streaming(current_tensor_parts)))
+                tensors.append(
+                    deserialize_torch_tensor(
+                        combine_from_streaming(current_tensor_parts)
+                    )
+                )
 
             if not metadata:
                 logger.exception(f"Peer {peer} did not send its state")
@@ -302,6 +359,7 @@ class Validator(BaseValidatorNeuron):
         self,
     ):
         warmup(self)
+
 
 # # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
