@@ -47,14 +47,14 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "104.167.17.11"
+address = "134.180.176.136"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/46629"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/41261"]
 
 dht = hivemind.DHT(
     host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/46629",
-                f"/ip4/0.0.0.0/udp/46629/quic",
+                f"/ip4/0.0.0.0/tcp/41261",
+                f"/ip4/0.0.0.0/udp/41261/quic",
                 ],
     #initial_peers=[""], 
     
@@ -134,27 +134,27 @@ while True:
 
         # aggregate gradients and perform optimizer step when target batch size is reached
         if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-            if not group_is_set:
-                _p2p = loop.run_until_complete(dht.replicate_p2p())
+            #if not group_is_set:
+            _p2p = loop.run_until_complete(dht.replicate_p2p())
 
-                group_id = base64.b64decode(b'akGgUCKXywtpOCU76x9Ncxzi2qk=')
-                ordered_peer_ids = [dht.peer_id] 
-                remote_peer = loop.run_until_complete(_p2p.list_peers())
-                remote_peer = [peer.peer_id for peer in remote_peer]
-                ordered_peer_ids += remote_peer
-                ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
-                custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
-                print(custom_group)
-                group_is_set = True
+            group_id = base64.b64decode(b'akGgUCKXywtpOCU76x9Ncxzi2qk=')
+            ordered_peer_ids = [dht.peer_id] 
+            remote_peer = loop.run_until_complete(_p2p.list_peers())
+            remote_peer = [peer.peer_id for peer in remote_peer]
+            ordered_peer_ids += remote_peer
+            ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
+            custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+            print(custom_group)
+            group_is_set = True
                 
             with tracker.pause_updates():
                 print("grad stepping..")
                 #grad_averager.step(custom_group_info=custom_group)
-                grad_step = grad_averager.step(allow_retries=False, wait=False, custom_group_info=custom_group)
+                grad_step = grad_averager.step(wait=True, custom_group_info=custom_group)
                 #if gradient_averaging_step.done():
                 #while not grad_step.done():
-                print("Sleeping for 10")
-                time.sleep(10)
+                #print("Sleeping for 10")
+                #time.sleep(10)
                 with grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     print("opt stepping..")
                     opt.step()  # update model parameters using averaged gradients
