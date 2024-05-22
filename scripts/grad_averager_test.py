@@ -22,6 +22,7 @@ from template.utils.misc import init_dht, setup_logging
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Run a distributed training script with Hivemind.")
 parser.add_argument("--prefix", type=str, required=True, help="Prefix for DHT and gradient averager.")
+parser.add_argument("--initial_peers", type=str, nargs='*', help="Initial peers for DHT (optional).")
 args = parser.parse_args()
 
 # Logging
@@ -47,28 +48,36 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "134.180.176.136"
+address = "85.164.178.62"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/41261"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/40181"]
 
-dht = hivemind.DHT(
-    host_maddrs=[
-                f"/ip4/0.0.0.0/tcp/41261",
-                f"/ip4/0.0.0.0/udp/41261/quic",
-                ],
-    #initial_peers=[""], 
-    
-    announce_maddrs=announce_maddrs,
-    start=True
-)
+# Prepare DHT parameters
+dht_params = {
+    'host_maddrs': [
+        f"/ip4/0.0.0.0/tcp/40181",
+        f"/ip4/0.0.0.0/udp/40181/quic",
+    ],
+    'announce_maddrs': announce_maddrs,
+    'start': True
+}
+
+# Conditionally add initial_peers if provided
+if args.initial_peers:
+    dht_params['initial_peers'] = [str(peer) for peer in args.initial_peers]
+
+# Initialize the DHT
+dht = hivemind.DHT(**dht_params)
+
 print(dht.get_visible_maddrs())
 
-# Write the visible_maddrs to a text file
-with open('visible_maddrs.txt', 'w') as f:
-    for maddr in dht.get_visible_maddrs():
-        f.write(str(maddr) + "\n")
+if not args.initial_peers:
+    # Write the visible_maddrs to a text file
+    with open('visible_maddrs.txt', 'w') as f:
+        for maddr in dht.get_visible_maddrs():
+            f.write(str(maddr) + "\n")
 
-time.sleep(16)
+    time.sleep(16)
 
 model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
 # Move the model to the appropriate device
@@ -150,7 +159,7 @@ while True:
             with tracker.pause_updates():
                 print("grad stepping..")
                 #grad_averager.step(custom_group_info=custom_group)
-                grad_step = grad_averager.step(wait=True, custom_group_info=custom_group)
+                grad_step = grad_averager.step(custom_group_info=custom_group)
                 #if gradient_averaging_step.done():
                 #while not grad_step.done():
                 #print("Sleeping for 10")
