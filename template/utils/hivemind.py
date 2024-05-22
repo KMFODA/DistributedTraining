@@ -53,11 +53,25 @@ from hivemind.utils.timed_storage import (
 )
 from huggingface_hub import create_tag, list_repo_refs
 from transformers import AutoModelForCausalLM
+from dataclasses import dataclass
+from template.utils.misc import update_global_tracker_state
+from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 
 GatheredData = Any
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
+
+
+@dataclass(frozen=False)
+class GlobalTrainingProgress:
+    epoch: int
+    samples_accumulated: int
+
+
+class LocalTrainingProgress(BaseModel):
+    epoch: conint(ge=0, strict=True)
+    samples_accumulated: conint(ge=0, strict=True)
 
 
 class DTAllReduceRunner(AllReduceRunner):
@@ -874,6 +888,7 @@ def load_optimizer_state(
 
 def load_state_from_peer(self, epoch=None):
     if epoch == None:
+        update_global_tracker_state(self)
         epoch = self.global_progress.epoch
     loaded_state = False
 

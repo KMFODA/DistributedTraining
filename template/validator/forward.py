@@ -25,7 +25,7 @@ from huggingface_hub import create_tag, list_repo_refs
 
 import template
 from template.utils.hivemind import load_state_from_peer
-from template.utils.misc import get_bandwidth
+from template.utils.misc import get_bandwidth, update_global_tracker_state
 from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
 
@@ -42,13 +42,14 @@ async def forward(self):
     """
 
     bt.logging.info(
-        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
     )
+    bt.logging.info(f"Number of Peers: {self.tracker.global_progress.num_peers}")
 
     while self.tracker.global_progress.num_peers == 0:
         self.warmup()
 
-    self.update_global_tracker_states()
+    update_global_tracker_state(self)
     if (self.local_progress.epoch < self.global_progress.epoch) and (
         self.model_hf_tag < self.global_progress.epoch
     ):
@@ -180,7 +181,8 @@ async def forward(self):
     bt.logging.info(f"Final Scores: {rewards}")
 
     # Update the tracker based on the rewards
-    self.update_global_tracker_states(rewards, responses)
+    # self.update_global_tracker_state()
+    # self.update_local_tracker_state()
     self.event.update(
         {
             "local_progress": self.local_progress.samples_accumulated,

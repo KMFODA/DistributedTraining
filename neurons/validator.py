@@ -23,12 +23,11 @@ import threading
 import time
 import traceback
 from typing import Optional
-from dataclasses import dataclass
+
 
 import bittensor as bt
 import hivemind
 import torch
-import wandb
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
@@ -40,7 +39,6 @@ from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import list_repo_refs
-from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
@@ -48,6 +46,8 @@ from template.utils.hivemind import (
     DTGradientAverager,
     DTStateAverager,
     load_state_from_peer,
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
 )
 from template.utils.misc import (
     AsyncDendritePool,
@@ -55,21 +55,11 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
     warmup,
+    update_global_tracker_state,
 )
 from template.validator import forward
 
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=False)
-class GlobalTrainingProgress:
-    epoch: int
-    samples_accumulated: int
-
-
-class LocalTrainingProgress(BaseModel):
-    epoch: conint(ge=0, strict=True)
-    samples_accumulated: conint(ge=0, strict=True)
 
 
 class Validator(BaseValidatorNeuron):
@@ -158,6 +148,8 @@ class Validator(BaseValidatorNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
         self.global_epoch, self.global_samples = 0, 0
+        update_global_tracker_state(self)
+
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -267,25 +259,6 @@ class Validator(BaseValidatorNeuron):
                 )
 
         bt.logging.info("Exiting update models loop.")
-
-    def update_global_tracker_states(self):
-        runs = wandb.Api().runs(
-            f"{self.config.wandb.entity}/{self.config.neuron.wandb_project}"
-        )
-        global_progress = 0
-        global_epoch = 0
-        for run in runs:
-            if ("validator" in run.name) and (run.state == "running"):
-                history = run.history()
-                if ("local_progress" in history.columns) and (
-                    "global_progress" in history.columns
-                ):
-                    global_progress += history.loc[0, "local_progress"]
-                    global_epoch = max(global_epoch, history.loc[0, "local_epoch"])
-            else:
-                continue
-        self.global_progress.samples_accumulated = global_progress
-        self.global_progress.epoch = global_epoch
 
     def get_validator_info(self):
         return {

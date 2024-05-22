@@ -44,6 +44,8 @@ from template.utils.hivemind import (
     DTGradientAverager,
     DTStateAverager,
     load_state_from_peer,
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
 )
 from template.utils.misc import (
     get_bandwidth,
@@ -51,6 +53,7 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
     warmup,
+    update_global_tracker_state,
 )
 from huggingface_hub import list_repo_refs
 
@@ -107,6 +110,14 @@ class Miner(BaseMinerNeuron):
             next_chunk_timeout=30.0,
         )
 
+        # Init Tracker
+        self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
+        self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
+        self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
+        self.global_epoch, self.global_samples = 0, 0
+        update_global_tracker_state(self)
+
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
@@ -125,9 +136,9 @@ class Miner(BaseMinerNeuron):
             )
 
         # Load state from peers if miner is not on latest epoch
-        if (
-            self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
-        ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
+        if (self.local_progress.epoch < self.global_progress.epoch) and (
+            self.model_hf_tag < self.global_progress.epoch
+        ):
             load_state_from_peer(self)
 
     def get_miner_info(self):
@@ -164,13 +175,14 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info("Model Weights After Optimizer Step")
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
                 self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-                self.local_samples = 0
+                self.local_progess.epoch += 1
+                self.local_progess.samples_accumulated = 0
                 synapse.completion = "True"
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
-            load_state_from_peer(self)
+            update_global_tracker_state(self)
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
 
         return synapse
@@ -187,9 +199,10 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
-        if (
-            self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
-        ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
+        update_global_tracker_state()
+        if (self.tracker.local_progress.epoch < self.global_progress.epoch) and (
+            self.model_hf_tag < self.global_progress.epoch
+        ):
             load_state_from_peer(self)
 
         search_start = random.choice(
@@ -252,32 +265,40 @@ class Miner(BaseMinerNeuron):
 
             # Update Tracker
             self.local_samples += 1
+            self.local_progress.samples_accumulated += 1
             self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
             # Log accumulation status
             if index % 10 == 0:
                 bt.logging.info(
-                    f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
+                    f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
                 )
                 bt.logging.info(
-                    f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+                    f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
                 )
-                bt.logging.info(f"{psutil.virtual_memory()}")
+                bt.logging.info(
+                    f"Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
+                )
+            update_global_tracker_state(self)
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
                         "loss": outputs.loss.detach().item(),
                         "local_epoch": self.local_epoch,
-                        "global_epoch": self.tracker.global_progress.epoch,
+                        "global_epoch": self.global_progress.epoch,
                     }
                 )
 
+        # Log accumulation status
         if index % 10 != 0:
             bt.logging.info(
-                f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
+                f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
             )
             bt.logging.info(
-                f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+                f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
+            )
+            bt.logging.info(
+                f"Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
             )
 
         # Store summed random gradients in the synapse
