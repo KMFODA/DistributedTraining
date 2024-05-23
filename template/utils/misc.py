@@ -427,16 +427,9 @@ def warmup(self):
         self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
         # Log accumulation status
-        if index % 10 == 0:
-            bt.logging.info(
-                f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
-            )
-            bt.logging.info(
-                f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch}"
-            )
-            bt.logging.info(
-                f"Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
-            )
+        bt.logging.info(
+            f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
+        )
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(
@@ -447,14 +440,6 @@ def warmup(self):
                 }
             )
 
-    if index % 10 != 0:
-        bt.logging.info(
-            f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
-        )
-        bt.logging.info(
-            f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
-        )
-
 
 def update_global_tracker_state(self):
     runs = wandb.Api().runs(
@@ -462,15 +447,47 @@ def update_global_tracker_state(self):
     )
     global_progress = 0
     global_epoch = 0
+
     for run in runs:
-        if ("validator" in run.name) and (run.state == "running"):
+        if (
+            ("validator" in run.name)
+            and (run.state == "running")
+            and (f"UID{self.uid}" not in run.name.split("_"))
+        ):
             history = run.history()
-            if ("local_progress" in history.columns) and (
-                "global_progress" in history.columns
+            if (
+                ("local_samples_accumulated" in history.columns)
+                and ("global_samples_accumulated" in history.columns)
+                and (
+                    not history.loc[
+                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                    ].empty
+                )
             ):
-                global_progress += history.loc[0, "local_progress"]
+                max_epoch = max(
+                    history.loc[
+                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                    ]
+                )
+                filtered_history = history.loc[
+                    history.loc[:, "local_epoch"] == max_epoch, :
+                ]
+                global_progress += max(
+                    filtered_history.loc[:, "local_samples_accumulated"]
+                )
                 global_epoch = max(global_epoch, history.loc[0, "local_epoch"])
         else:
             continue
+
+    # Add local samples
+    global_progress += self.local_progress.samples_accumulated
+    global_epoch = max(global_epoch, self.local_progress.epoch)
+
     self.global_progress.samples_accumulated = global_progress
     self.global_progress.epoch = global_epoch
+    bt.logging.info(
+        f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
+    )
+    bt.logging.info(
+        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
+    )

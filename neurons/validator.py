@@ -147,7 +147,6 @@ class Validator(BaseValidatorNeuron):
         self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
-        self.global_epoch, self.global_samples = 0, 0
         update_global_tracker_state(self)
 
         self.loop = asyncio.new_event_loop()
@@ -194,10 +193,12 @@ class Validator(BaseValidatorNeuron):
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
 
-    def update_tracker(self, rewards, responses):
+    def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses):
             if reward != 0:
-                self.local_progress += len(response.dataset_indices)
+                self.local_progress.samples_accumulated += len(
+                    response[0].dataset_indices
+                )
             else:
                 continue
 

@@ -65,9 +65,6 @@ def score_gradients(self, response, uid):
     # Zero Gradients
     self.opt.zero_grad()
 
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log({"loss": outputs.loss.detach().item()})
-
     # Store summed random gradients in the synapse
     gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
 

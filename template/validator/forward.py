@@ -40,14 +40,8 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-
-    bt.logging.info(
-        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
-    )
-    bt.logging.info(f"Number of Peers: {self.tracker.global_progress.num_peers}")
-
-    while self.tracker.global_progress.num_peers == 0:
-        self.warmup()
+    # while self.tracker.global_progress.num_peers == 0:
+    #     self.warmup()
 
     update_global_tracker_state(self)
     if (self.local_progress.epoch < self.global_progress.epoch) and (
@@ -181,13 +175,12 @@ async def forward(self):
     bt.logging.info(f"Final Scores: {rewards}")
 
     # Update the tracker based on the rewards
-    # self.update_global_tracker_state()
-    # self.update_local_tracker_state()
+    self.update_local_tracker_state(rewards, responses)
     self.event.update(
         {
-            "local_progress": self.local_progress.samples_accumulated,
+            "local_samples_accumulated": self.local_progress.samples_accumulated,
             "local_epoch": self.local_progress.epoch,
-            "global_progress": self.global_progress.samples_accumulated,
+            "global_samples_accumulated": self.global_progress.samples_accumulated,
             "global_epoch": self.global_progress.epoch,
         }
     )
