@@ -48,15 +48,15 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "85.164.178.62"
+address = "104.167.17.2"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/40181"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/31796"]
 
 # Prepare DHT parameters
 dht_params = {
     'host_maddrs': [
-        f"/ip4/0.0.0.0/tcp/40181",
-        f"/ip4/0.0.0.0/udp/40181/quic",
+        f"/ip4/0.0.0.0/tcp/31796",
+        f"/ip4/0.0.0.0/udp/31796/quic",
     ],
     'announce_maddrs': announce_maddrs,
     'start': True
@@ -159,7 +159,7 @@ while True:
             with tracker.pause_updates():
                 print("grad stepping..")
                 #grad_averager.step(custom_group_info=custom_group)
-                grad_step = grad_averager.step(custom_group_info=custom_group)
+                grad_step = grad_averager.step(custom_group_info=custom_group, timeout=180)
                 #if gradient_averaging_step.done():
                 #while not grad_step.done():
                 #print("Sleeping for 10")
