@@ -472,10 +472,16 @@ def update_global_tracker_state(self):
                 filtered_history = history.loc[
                     history.loc[:, "local_epoch"] == max_epoch, :
                 ]
+                if max_epoch > global_epoch:
+                    global_epoch = max(global_epoch, max_epoch)
+                    global_progress = 0
+                elif max_epoch < global_epoch:
+                    continue
+
                 global_progress += max(
                     filtered_history.loc[:, "local_samples_accumulated"]
                 )
-                global_epoch = max(global_epoch, history.loc[0, "local_epoch"])
+
         else:
             continue
 

@@ -124,6 +124,8 @@ async def forward(self):
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(
                     self.tracker.local_progress.epoch + 1
                 )
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
 
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
             bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
