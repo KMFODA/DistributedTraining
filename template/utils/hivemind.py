@@ -253,20 +253,10 @@ class DTAverager(hivemind.DecentralizedAverager):
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
                     
-                    #await self._distributed_barrier(custom_group_info.peer_ids, timeout=step.deadline - get_dht_time())
-                    
-                    # async def find_peers_or_notify_cancel():
-                    #     await self._distributed_barrier(custom_group_info.peer_ids, timeout=step.deadline - get_dht_time())
-                    #     if not step.triggered:
-                    #         step.stage = AveragingStage.AWAITING_TRIGGER
-                    #         await step.wait_for_trigger()
-                    #     return
-                    
                     async def distributed_barrier():
-                        timeout = step.deadline - get_dht_time() #TODO MAYBE THIS IS THE REASON THAT IT CANNOT STORE NEW DHT
                         key = f"{self.prefix}.barrier"
                         peer_id_strs = [peer_id.to_string() for peer_id in custom_group_info.peer_ids]
-                        expiration_time = get_dht_time() + (timeout if timeout is not None else self._allreduce_timeout)
+                        expiration_time = get_dht_time() + (self.timeout if self.timeout is not None else 600)
                         
                         # Register this peer
                         store_result = self.dht.store(
@@ -280,13 +270,12 @@ class DTAverager(hivemind.DecentralizedAverager):
                             gathered = self.dht.get(key, latest=True)
                             if gathered:
                                 registered_peers = gathered.value.keys()
-                                print(registered_peers)
                                 if all(peer_id in registered_peers for peer_id in peer_id_strs):
                                     if not step.triggered:
                                         step.stage = AveragingStage.AWAITING_TRIGGER
                                         await step.wait_for_trigger()
                                     return  # All peers are ready
-                            await asyncio.sleep(0.1)  # Wait a bit before checking again
+                            await asyncio.sleep(0.5)
 
                         raise TimeoutError("Distributed barrier timed out waiting for peers")
 
