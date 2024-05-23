@@ -470,14 +470,17 @@ def update_global_tracker_state(self):
                     ]
                 )
                 filtered_history = history.loc[
-                    history.loc[:, "local_epoch"] == max_epoch, :
+                    (history.loc[:, "local_epoch"] == max_epoch), :
+                ]
+                filtered_history = filtered_history.loc[
+                    (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
                 ]
                 if max_epoch > global_epoch:
                     global_epoch = max(global_epoch, max_epoch)
                     global_progress = 0
                 elif max_epoch < global_epoch:
                     continue
-
+                
                 global_progress += max(
                     filtered_history.loc[:, "local_samples_accumulated"]
                 )
