@@ -77,7 +77,8 @@ async def forward(self):
     self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
     import torch
 
-    self.miner_uids = torch.tensor([1])
+    self.miner_uids = torch.tensor([3])
+
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -116,32 +117,55 @@ async def forward(self):
         if gradient_averaging_step.done():
             # Log the results for monitoring purposes.
             bt.logging.info("Model Weights Before Optimizer Step")
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            current_model_weights_sample = [layer for layer in self.model.parameters()][
+                -1
+            ][-10:]
+            bt.logging.info(current_model_weights_sample)
             with self.tracker.pause_updates():
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad
                 bt.logging.info("Model Weights After Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                    self.tracker.local_progress.epoch + 1
-                )
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
+                new_model_weights_sample = [layer for layer in self.model.parameters()][
+                    -1
+                ][-10:]
+                bt.logging.info(new_model_weights_sample)
 
-            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-            bt.logging.info(f"New Model Tag {self.local_progress.epoch}")
-            if refs.tags and int(refs.tags[-1].name) < self.local_progress.epoch:
-                bt.logging.info("Pushing New Model Weights To HF Hub")
-                self.model.push_to_hub(self.config.neuron.model_name)
-                create_tag(
-                    self.config.neuron.model_name,
-                    repo_type="model",
-                    tag=str(self.local_progress.epoch),
-                    tag_message="Bump release version.",
-                )
+                if new_model_weights_sample == current_model_weights_sample:
+                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                    load_state_from_peer(self)
+                    break
+                elif sum(torch.isnan(new_model_weights_sample)) > 0:
+                    bt.logging.info(
+                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                    )
+                    load_state_from_peer(self)
+                    break
+                else:
+                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                        self.tracker.local_progress.epoch + 1
+                    )
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
+
+                    refs = list_repo_refs(
+                        self.config.neuron.model_name, repo_type="model"
+                    )
+                    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
+                    bt.logging.info(f"New Model Tag {self.local_progress.epoch}")
+                    if (
+                        refs.tags
+                        and int(refs.tags[-1].name) < self.local_progress.epoch
+                    ):
+                        bt.logging.info("Pushing New Model Weights To HF Hub")
+                        self.model.push_to_hub(self.config.neuron.model_name)
+                        create_tag(
+                            self.config.neuron.model_name,
+                            repo_type="model",
+                            tag=str(self.local_progress.epoch),
+                            tag_message="Bump release version.",
+                        )
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")

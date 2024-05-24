@@ -167,8 +167,6 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Performing Gradient Averaging")
             with self.tracker.pause_updates():
                 self.grad_averager.step(timeout=(synapse.timeout - 20))
-                bt.logging.info("Model Weights Before Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged gradients
@@ -178,6 +176,55 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
                 synapse.completion = "True"
+
+            bt.logging.info("Performing Gradient Averaging")
+            bt.logging.info("Model Weights Before Optimizer Step")
+            current_model_weights_sample = [layer for layer in self.model.parameters()][
+                -1
+            ][-10:]
+            bt.logging.info(current_model_weights_sample)
+
+            with self.tracker.pause_updates():
+                self.grad_averager.step(timeout=(synapse.timeout - 20))
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()
+
+                bt.logging.info("Model Weights After Optimizer Step")
+                new_model_weights_sample = [layer for layer in self.model.parameters()][
+                    -1
+                ][-10:]
+                bt.logging.info(new_model_weights_sample)
+
+                if new_model_weights_sample == current_model_weights_sample:
+                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                    load_state_from_peer(self)
+                    synapse.completion = "False"
+                    return synapse
+
+                elif sum(torch.isnan(new_model_weights_sample)) > 0:
+                    bt.logging.info(
+                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                    )
+                    load_state_from_peer(self)
+                    synapse.completion = "True"
+                    return synapse
+
+                else:
+                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                        self.tracker.local_progress.epoch + 1
+                    )
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
+
+                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                        self.tracker.local_progress.epoch + 1
+                    )
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
+                    synapse.completion = "True"
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
