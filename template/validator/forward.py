@@ -134,13 +134,11 @@ async def forward(self):
                 if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
-                    break
                 elif sum(torch.isnan(new_model_weights_sample)) > 0:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
                     load_state_from_peer(self)
-                    break
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
                     self.tracker.local_progress.epoch = self.tracker.update_epoch(
