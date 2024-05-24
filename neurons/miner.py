@@ -146,13 +146,13 @@ class Miner(BaseMinerNeuron):
             # Perform AllReduce step with queried miners to get averaged gradients
             bt.logging.info("Performing Gradient Averaging")
             
-            with self.tracker.pause_updates():
-                self.grad_averager.step(custom_group_info=custom_group, timeout=180)
+            self.grad_averager.step(custom_group_info=custom_group, timeout=180)
+        
+            # Log the results for monitoring purposes.
+            bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
             
-                # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                
+            with self.tracker.pause_updates():
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad

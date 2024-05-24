@@ -82,8 +82,9 @@ async def forward(self):
         group_peerids = None
 
         # All-reduce synapse
-        while group_peerids == None:
+        while group_peerids is None or any(peer_id is None for peer_id in group_peerids.values()):
             group_peerids = await self.map_uid_to_peerid(self.miner_uids)
+            
         group_id = DHTID.generate().to_bytes()
         print("DHT:", self.dht.peer_id)
         print("Peers:", list(group_peerids.values()))
@@ -121,16 +122,16 @@ async def forward(self):
             
             # Perform AllReduce step with queried miners to get averaged gradients
             print(custom_group)
+            self.grad_averager.step(custom_group_info=custom_group, timeout=180)
+            
+            #await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
+            responses = await asyncio.gather(*query_tasks) # TODO Is this redundant?
+                    
+            # Log the results for monitoring purposes.
+            bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+            
             with self.tracker.pause_updates():
-                self.grad_averager.step(custom_group_info=custom_group, timeout=180)
-                
-                #await asyncio.wait_for(gradient_averaging_step, timeout=150)  # waits up to 150 seconds
-                responses = await asyncio.gather(*query_tasks) # TODO Is this redundant?
-                        
-                # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad
