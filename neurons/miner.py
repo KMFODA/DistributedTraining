@@ -147,7 +147,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Performing Gradient Averaging")
             
             gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, timeout=180)
-        
+            sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
                 time.sleep(1)
                 sleep_counter += 1
