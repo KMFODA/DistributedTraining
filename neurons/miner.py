@@ -146,29 +146,23 @@ class Miner(BaseMinerNeuron):
             # Perform AllReduce step with queried miners to get averaged gradients
             bt.logging.info("Performing Gradient Averaging")
             
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group)
-            sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
-                time.sleep(1)
-                sleep_counter += 1
-
-            if gradient_averaging_step.done():
+            with self.tracker.pause_updates():
+                self.grad_averager.step(custom_group_info=custom_group, timeout=180)
+            
                 # Log the results for monitoring purposes.
                 bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                with self.tracker.pause_updates():
-                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                        bt.logging.info("Performing Optimizer Step")
-                        self.opt.step()  # update model parameters using averaged grad
-                    bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.local_epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-                    self.local_samples = 0  
-                    synapse.completion = "True"
-
-            else:
-                synapse.completion = "False"
+                
+                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+                
+                bt.logging.info("Model Weights After Optimizer Step")
+                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
+                self.local_samples = 0  
+                synapse.completion = "True"
 
             return synapse
         except Exception as e:
@@ -218,12 +212,13 @@ class Miner(BaseMinerNeuron):
 
             # Normalize loss to account for batch accumulation
             loss = outputs.loss
+            scaled_loss = loss / self.config.neuron.global_batch_size_train / len(inputs)
             
             # Accumulate Total Loss
             total_loss += outputs.loss.detach().item() 
 
             # Backward Pass
-            loss.backward()
+            scaled_loss.backward()
             
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
