@@ -146,7 +146,7 @@ class Miner(BaseMinerNeuron):
             # Perform AllReduce step with queried miners to get averaged gradients
             bt.logging.info("Performing Gradient Averaging")
             
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, timeout=180)
+            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False)
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
                 time.sleep(1)
