@@ -139,6 +139,7 @@ class AsyncDendritePool:
     ):
 
         def call_single_uid(uid, query):
+            print("call_single")
             return self.dendrite(
                 self.metagraph.axons[uid],
                 synapse=query,
@@ -146,7 +147,9 @@ class AsyncDendritePool:
             )
         
         async def query_async():
+            print("query_async")
             corutines = [call_single_uid(uid, query) for uid, query in zip(uids, queries)]
+            print("returning await")
             return await asyncio.gather(*corutines)
         
         return await query_async()
