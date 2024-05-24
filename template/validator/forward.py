@@ -75,6 +75,9 @@ async def forward(self):
 
     # Get as many active miners as possible
     self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
+    import torch
+
+    self.miner_uids = torch.tensor([1])
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 

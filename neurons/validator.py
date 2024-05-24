@@ -144,7 +144,10 @@ class Validator(BaseValidatorNeuron):
 
         self.step_scheduled = False
         self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
+        self.local_progress.epoch, self.local_progress.samples_accumulated = (
+            self.model_hf_tag,
+            0,
+        )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
         update_global_tracker_state(self)

@@ -480,7 +480,7 @@ def update_global_tracker_state(self):
                     global_progress = 0
                 elif max_epoch < global_epoch:
                     continue
-                
+
                 global_progress += max(
                     filtered_history.loc[:, "local_samples_accumulated"]
                 )
