@@ -257,7 +257,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         key = f"{self.prefix}.barrier"
                         peer_id_strs = [peer_id.to_string() for peer_id in custom_group_info.peer_ids]
                         print("HERE YO..")
-                        expiration_time = step.deadline if step.deadline is not None else get_dht_time() + 600
+                        expiration_time = step.deadline if step.deadline is not None else get_dht_time() + 600 #TODO herein lies the error, step.deadline is inf
                         print("NOT HERE YO..")
                         # Register this peer
                         store_result = self.dht.store(
