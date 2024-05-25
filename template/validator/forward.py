@@ -28,6 +28,7 @@ from template.utils.hivemind import load_state_from_peer
 from template.utils.misc import get_bandwidth, update_global_tracker_state
 from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
+import copy
 
 
 async def forward(self):
@@ -75,9 +76,9 @@ async def forward(self):
 
     # Get as many active miners as possible
     self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
-    import torch
+    # import torch
 
-    self.miner_uids = torch.tensor([3])
+    # self.miner_uids = torch.tensor([3])
 
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -117,28 +118,32 @@ async def forward(self):
         if gradient_averaging_step.done():
             # Log the results for monitoring purposes.
             bt.logging.info("Model Weights Before Optimizer Step")
-            current_model_weights_sample = [layer for layer in self.model.parameters()][
-                -1
-            ][-10:]
+            current_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-1][-10:]
+            )
             bt.logging.info(current_model_weights_sample)
             with self.tracker.pause_updates():
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad
                 bt.logging.info("Model Weights After Optimizer Step")
-                new_model_weights_sample = [layer for layer in self.model.parameters()][
-                    -1
-                ][-10:]
+                new_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:]
+                )
                 bt.logging.info(new_model_weights_sample)
 
-                if new_model_weights_sample == current_model_weights_sample:
+                if sum(
+                    torch.eq(new_model_weights_sample, current_model_weights_sample)
+                ) == len(new_model_weights_sample):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
+
                 elif sum(torch.isnan(new_model_weights_sample)) > 0:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
                     load_state_from_peer(self)
+
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
                     self.tracker.local_progress.epoch = self.tracker.update_epoch(
