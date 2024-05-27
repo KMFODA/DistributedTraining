@@ -181,7 +181,7 @@ class Miner(BaseMinerNeuron):
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if not torch.all(
+                if torch.all(
                     torch.eq(new_model_weights_sample, current_model_weights_sample)
                 ):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
@@ -202,7 +202,6 @@ class Miner(BaseMinerNeuron):
                     self.local_progress.samples_accumulated = 0
                     synapse.completion = "True"
 
-
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
             update_global_tracker_state(self)
@@ -210,7 +209,7 @@ class Miner(BaseMinerNeuron):
             synapse.completion = "False"
 
         return synapse
-    
+
     async def forward(
         self, synapse: template.protocol.Train
     ) -> template.protocol.Train:

@@ -205,7 +205,8 @@ async def forward(self):
     bt.logging.info(f"Final Scores: {rewards}")
 
     # Update the tracker based on the rewards
-    self.update_local_tracker_state(rewards, responses)
+    if not all_reduce:
+        self.update_local_tracker_state(rewards, responses)
     self.event.update(
         {
             "local_samples_accumulated": self.local_progress.samples_accumulated,
