@@ -214,14 +214,8 @@ class Miner(BaseMinerNeuron):
                     )
                     self.local_progress.epoch += 1
                     self.local_progress.samples_accumulated = 0
-
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                        self.tracker.local_progress.epoch + 1
-                    )
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
                     synapse.completion = "True"
+
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
