@@ -897,7 +897,9 @@ def load_state_from_peer(self, epoch=None):
 
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
     if refs.tags and (int(refs.tags[-1].name) >= self.global_progress.epoch):
-        bt.logging.info("Latest model state found on HF Hub. Loading state using HF.")
+        bt.logging.info(
+            f"Latest model state found on HF Hub with tag epoch = {int(refs.tags[-1].name)}. Loading state using HF."
+        )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
