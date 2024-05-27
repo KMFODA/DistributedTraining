@@ -130,7 +130,7 @@ async def forward(self):
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if torch.all(
+                if not torch.all(
                     torch.eq(new_model_weights_sample, current_model_weights_sample)
                 ):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")

@@ -164,8 +164,6 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         bt.logging.info("Received All Reduce Call")
         try:
-            # Aggregate gradients and perform optimizer step when target batch size is reached
-            bt.logging.info("Performing Gradient Averaging")
             with self.tracker.pause_updates():
                 self.grad_averager.step(timeout=(synapse.timeout - 20))
                 bt.logging.info("Model Weights Before Optimizer Step")
@@ -173,18 +171,6 @@ class Miner(BaseMinerNeuron):
                     [layer for layer in self.model.parameters()][-1][-10:]
                 )
                 bt.logging.info(current_model_weights_sample)
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged gradients
-                bt.logging.info("Model Weights After Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
-                synapse.completion = "True"
-
-            with self.tracker.pause_updates():
-                self.grad_averager.step(timeout=(synapse.timeout - 20))
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()
@@ -195,7 +181,7 @@ class Miner(BaseMinerNeuron):
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if torch.all(
+                if not torch.all(
                     torch.eq(new_model_weights_sample, current_model_weights_sample)
                 ):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
@@ -224,7 +210,7 @@ class Miner(BaseMinerNeuron):
             synapse.completion = "False"
 
         return synapse
-
+    
     async def forward(
         self, synapse: template.protocol.Train
     ) -> template.protocol.Train:

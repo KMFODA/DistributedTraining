@@ -197,10 +197,10 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Starting validator loop.")
 
     def update_local_tracker_state(self, rewards, responses):
-        for reward, response in zip(rewards, responses):
+        for reward, response in zip(rewards, responses[0]):
             if reward != 0:
                 self.local_progress.samples_accumulated += len(
-                    response[0].dataset_indices
+                    response.dataset_indices
                 )
             else:
                 continue
