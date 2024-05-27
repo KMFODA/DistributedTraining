@@ -19,6 +19,7 @@
 import asyncio
 import random
 import time
+import torch
 
 import bittensor as bt
 from huggingface_hub import create_tag, list_repo_refs
@@ -76,9 +77,6 @@ async def forward(self):
 
     # Get as many active miners as possible
     self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
-    # import torch
-
-    # self.miner_uids = torch.tensor([3])
 
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -132,13 +130,13 @@ async def forward(self):
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if sum(
+                if torch.all(
                     torch.eq(new_model_weights_sample, current_model_weights_sample)
-                ) == len(new_model_weights_sample):
+                ):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
 
-                elif sum(torch.isnan(new_model_weights_sample)) > 0:
+                elif torch.any(torch.isnan(new_model_weights_sample)):
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )

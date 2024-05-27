@@ -195,21 +195,17 @@ class Miner(BaseMinerNeuron):
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if sum(
+                if torch.all(
                     torch.eq(new_model_weights_sample, current_model_weights_sample)
-                ) == len(new_model_weights_sample):
+                ):
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
-                    synapse.completion = "False"
-                    return synapse
 
-                elif sum(torch.isnan(new_model_weights_sample)) > 0:
+                elif torch.any(torch.isnan(new_model_weights_sample)):
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
                     load_state_from_peer(self)
-                    synapse.completion = "True"
-                    return synapse
 
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
