@@ -255,9 +255,10 @@ class DTAverager(hivemind.DecentralizedAverager):
                     
                     async def distributed_barrier():
                         key = f"{self.prefix}.barrier"
+                        
                         peer_id_strs = [peer_id.to_string() for peer_id in custom_group_info.peer_ids]
                         print("HERE YO..")
-                        expiration_time = get_dht_time() + 100 #TODO propogate timeout to here??
+                        expiration_time = get_dht_time() + 30 #TODO propogate timeout to here??
                         print("NOT HERE YO..")
                         print(expiration_time)
                         # Register this peer
