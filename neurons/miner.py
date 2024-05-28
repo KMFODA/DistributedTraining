@@ -34,6 +34,7 @@ from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
 import psutil
 import copy
+import numpy as np
 
 # Bittensor Miner Template:
 import template
@@ -113,10 +114,12 @@ class Miner(BaseMinerNeuron):
 
         # Init Tracker
         self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.local_progress.epoch, self.local_progress.samples_accumulated = 0, 0
+        self.local_progress.epoch, self.local_progress.samples_accumulated = (
+            self.model_hf_tag,
+            0,
+        )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
-        self.global_epoch, self.global_samples = 0, 0
         update_global_tracker_state(self)
 
         # Init UID
@@ -168,7 +171,7 @@ class Miner(BaseMinerNeuron):
                 self.grad_averager.step(timeout=(synapse.timeout - 20))
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:]
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
@@ -177,17 +180,15 @@ class Miner(BaseMinerNeuron):
 
                 bt.logging.info("Model Weights After Optimizer Step")
                 new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:]
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if torch.all(
-                    torch.eq(new_model_weights_sample, current_model_weights_sample)
-                ):
+                if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
 
-                elif torch.any(torch.isnan(new_model_weights_sample)):
+                elif np.nan in new_model_weights_sample:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )

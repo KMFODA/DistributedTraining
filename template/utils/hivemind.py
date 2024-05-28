@@ -56,6 +56,7 @@ from transformers import AutoModelForCausalLM
 from dataclasses import dataclass
 from template.utils.misc import update_global_tracker_state
 from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
+import copy
 
 GatheredData = Any
 
@@ -893,7 +894,10 @@ def load_state_from_peer(self, epoch=None):
     loaded_state = False
 
     bt.logging.info("Model Weights Before Loading State")
-    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+    current_model_weights_sample = copy.copy(
+        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+    )
+    bt.logging.info(current_model_weights_sample)
 
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
     if refs.tags and (int(refs.tags[-1].name) >= self.global_progress.epoch):
@@ -916,7 +920,10 @@ def load_state_from_peer(self, epoch=None):
 
     if loaded_state:
         bt.logging.info("Model Weights After Loading State")
-        bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+        new_model_weights_sample = copy.copy(
+            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        )
+        bt.logging.info(new_model_weights_sample)
 
         with self.tracker.pause_updates():
             self.tracker.local_progress.epoch = self.global_progress.epoch

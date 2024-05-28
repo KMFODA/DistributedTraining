@@ -30,6 +30,7 @@ from template.utils.misc import get_bandwidth, update_global_tracker_state
 from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
 import copy
+import numpy as np
 
 
 async def forward(self):
@@ -102,7 +103,9 @@ async def forward(self):
             self.miner_uids, queries, timeout=self.all_reduce_timeout
         )
     )
+    bt.logging.info("Responses Sent Out")
     responses = await asyncio.gather(*query_tasks)
+    bt.logging.info("Responses Received")
     if all_reduce and responses != []:
         responses = []
         sleep_counter = 1
@@ -117,7 +120,7 @@ async def forward(self):
             # Log the results for monitoring purposes.
             bt.logging.info("Model Weights Before Optimizer Step")
             current_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:]
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
             )
             bt.logging.info(current_model_weights_sample)
             with self.tracker.pause_updates():
@@ -126,17 +129,15 @@ async def forward(self):
                     self.opt.step()  # update model parameters using averaged grad
                 bt.logging.info("Model Weights After Optimizer Step")
                 new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:]
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if not torch.all(
-                    torch.eq(new_model_weights_sample, current_model_weights_sample)
-                ):
+                if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self)
 
-                elif torch.any(torch.isnan(new_model_weights_sample)):
+                elif np.nan in new_model_weights_sample:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
@@ -154,7 +155,6 @@ async def forward(self):
                         self.config.neuron.model_name, repo_type="model"
                     )
                     bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-                    bt.logging.info(f"New Model Tag {self.local_progress.epoch}")
                     if (
                         refs.tags
                         and int(refs.tags[-1].name) < self.local_progress.epoch
@@ -167,6 +167,12 @@ async def forward(self):
                             tag=str(self.local_progress.epoch),
                             tag_message="Bump release version.",
                         )
+                        refs = list_repo_refs(
+                            self.config.neuron.model_name, repo_type="model"
+                        )
+                        bt.logging.info(f"New Model Tag {refs.tags[-1].name}")
+                        if int(refs.tags[-1].name) != self.local_progress.epoch:
+                            breakpoint()
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
