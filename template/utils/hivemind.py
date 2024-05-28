@@ -259,6 +259,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         print("HERE YO..")
                         expiration_time = get_dht_time() + 100 #TODO propogate timeout to here??
                         print("NOT HERE YO..")
+                        print(expiration_time)
                         # Register this peer
                         store_result = self.dht.store(
                             key, subkey=self.peer_id.to_string(), value=True, expiration_time=expiration_time
@@ -266,6 +267,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         if not store_result:
                             raise Exception(f"Failed to store peer {self.peer_id} in DHT")
 
+                        print("later:", get_dht_time, expiration_time)
                         while get_dht_time() < expiration_time:
                             # Check if all peers have registered
                             gathered = self.dht.get(key, latest=True)
