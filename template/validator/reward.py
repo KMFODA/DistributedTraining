@@ -67,7 +67,7 @@ def score_gradients(self, response, uid):
     inputs = batch.to(self.device)
 
     # Zero Gradients
-    self.opt.zero_grad()
+    self.opt.zero_grad(set_to_none=True)
     
     # Forward pass
     outputs = self.model(input_ids=inputs, labels=inputs)
