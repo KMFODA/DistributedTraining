@@ -122,7 +122,7 @@ async def forward(self):
             
             # Perform AllReduce step with queried miners to get averaged gradients
             print(custom_group)
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False)
+            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=150)
             
             responses = await asyncio.gather(*query_tasks) 
             
@@ -148,7 +148,7 @@ async def forward(self):
             
                 scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
             else:
-                raise Exception # TODO
+                raise TimeoutError("Gradient averaging step timed out.")
             
         except Exception as e:
             bt.logging.info(f"AllReduce Failed With Error: {e}") # TODO Propogate timeout error to here + additional bad peers
