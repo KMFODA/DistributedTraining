@@ -154,10 +154,11 @@ async def forward(self):
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
                     )
-                    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
+                    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                    bt.logging.info(f"Old Model Tag {tag_name}")
                     if (
-                        refs.tags
-                        and int(refs.tags[-1].name) < self.local_progress.epoch
+                        tag_name
+                        and tag_name < self.local_progress.epoch
                     ):
                         bt.logging.info("Pushing New Model Weights To HF Hub")
                         self.model.push_to_hub(self.config.neuron.model_name)
@@ -170,9 +171,8 @@ async def forward(self):
                         refs = list_repo_refs(
                             self.config.neuron.model_name, repo_type="model"
                         )
-                        bt.logging.info(f"New Model Tag {refs.tags[-1].name}")
-                        if int(refs.tags[-1].name) != self.local_progress.epoch:
-                            breakpoint()
+                        tag_name = max([int(tag.name) for tag in refs.tags])
+                        bt.logging.info(f"New Model Tag {tag_name}")
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")

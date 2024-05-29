@@ -900,9 +900,11 @@ def load_state_from_peer(self, epoch=None):
     bt.logging.info(current_model_weights_sample)
 
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-    if refs.tags and (int(refs.tags[-1].name) >= self.global_progress.epoch):
+    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
+    if tag_name and (tag_name >= self.global_progress.epoch):
         bt.logging.info(
-            f"Latest model state found on HF Hub with tag epoch = {int(refs.tags[-1].name)}. Loading state using HF."
+            f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
@@ -924,16 +926,12 @@ def load_state_from_peer(self, epoch=None):
             [layer for layer in self.model.parameters()][-1][-10:].tolist()
         )
         bt.logging.info(new_model_weights_sample)
-
-        with self.tracker.pause_updates():
-            self.tracker.local_progress.epoch = self.global_progress.epoch
-            self.local_epoch = self.local_progress.epoch
-            self.local_progress.epoch = self.global_progress.epoch
-
+        self.local_epoch = self.local_progress.epoch
+        self.local_progress.epoch = self.global_progress.epoch
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-        bt.logging.info(f"New Model Tag {self.local_progress.epoch}")
-        if refs.tags and int(refs.tags[-1].name) < self.local_progress.epoch:
+        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        bt.logging.info(f"New Model Tag {tag_name}")
+        if tag_name and (tag_name < self.local_progress.epoch):
             bt.logging.info("Pushing New Model Weights To HF Hub")
             self.model.push_to_hub(self.config.neuron.model_name)
             create_tag(
@@ -942,3 +940,7 @@ def load_state_from_peer(self, epoch=None):
                 tag=str(self.local_progress.epoch),
                 tag_message="Bump release version.",
             )
+            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+            tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else self.model_hf_tag
+            self.model_hf_tag = tag_name
+            bt.logging.info(f"New Model Tag {tag_name}")

@@ -72,7 +72,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = int(refs.tags[-1].name) if refs.tags else None
+        self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
         # Move the model to the appropriate device
