@@ -186,13 +186,13 @@ class Miner(BaseMinerNeuron):
 
                 if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self)
+                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
 
                 elif np.nan in new_model_weights_sample:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
-                    load_state_from_peer(self)
+                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
 
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step

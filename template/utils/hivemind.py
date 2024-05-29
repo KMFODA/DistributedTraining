@@ -902,7 +902,7 @@ def load_state_from_peer(self, epoch=None):
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
     tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
     bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-    if tag_name and (tag_name >= self.global_progress.epoch):
+    if tag_name and (tag_name >= epoch):
         bt.logging.info(
             f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
         )
@@ -931,7 +931,7 @@ def load_state_from_peer(self, epoch=None):
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         bt.logging.info(f"New Model Tag {tag_name}")
-        if tag_name and (tag_name < self.local_progress.epoch):
+        if tag_name and (tag_name < self.global_progress.epoch):
             bt.logging.info("Pushing New Model Weights To HF Hub")
             self.model.push_to_hub(self.config.neuron.model_name)
             create_tag(
