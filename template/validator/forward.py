@@ -122,12 +122,12 @@ async def forward(self):
             bt.logging.info("Performing Gradient Averaging")
             
             # Perform AllReduce step with queried miners to get averaged gradients
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=250)
+            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=300)
             
             responses = await asyncio.gather(*query_tasks) 
             
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 250):
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
                 time.sleep(1)
                 sleep_counter += 1
 

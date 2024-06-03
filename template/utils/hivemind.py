@@ -3,6 +3,7 @@ import contextlib
 import logging
 import random
 import re
+import base64
 from contextlib import contextmanager
 from itertools import chain
 from typing import (Any, AsyncIterator, Dict, Iterable, Optional, Sequence,
@@ -254,13 +255,14 @@ class DTAverager(hivemind.DecentralizedAverager):
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
                     
                     async def distributed_barrier():
-                        key = f"{self.prefix}.barrier"
-                        
+                        key = f"{base64.b64encode(custom_group_info.group_id).decode('utf-8')}.barrier"
+                        print(key)
                         peer_id_strs = [peer_id.to_string() for peer_id in custom_group_info.peer_ids]
                         print("HERE YO..")
-                        expiration_time = get_dht_time() + 30 #TODO propogate timeout to here??
+                        expiration_time = get_dht_time() + 300 #TODO propogate timeout to here??
                         print("NOT HERE YO..")
                         print(expiration_time)
+
                         # Register this peer
                         store_result = self.dht.store(
                             key, subkey=self.peer_id.to_string(), value=True, expiration_time=expiration_time
@@ -278,6 +280,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                     if not step.triggered:
                                         step.stage = AveragingStage.AWAITING_TRIGGER
                                         await step.wait_for_trigger()
+                                    print(registered_peers)
                                     return  # All peers are ready
                             await asyncio.sleep(0.5)
 
@@ -292,9 +295,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                     print("Here2")
 
                     if step.cancelled():
+                        print("CANCELLING APPARENTLY..")
                         matchmaking_task.cancel()
                         raise asyncio.CancelledError()
                     else:
+                        print("checking CANCELLING APPARENTLY..")
                         check_cancel_task.cancel()
                     
                     await matchmaking_task
