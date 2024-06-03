@@ -76,6 +76,7 @@ async def forward(self):
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
     query_tasks = []
+    rewards = None
 
     if all_reduce:
         
@@ -121,17 +122,17 @@ async def forward(self):
             bt.logging.info("Performing Gradient Averaging")
             
             # Perform AllReduce step with queried miners to get averaged gradients
-            print(custom_group)
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=150)
+            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=250)
             
             responses = await asyncio.gather(*query_tasks) 
             
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= 250):
                 time.sleep(1)
                 sleep_counter += 1
 
-            if gradient_averaging_step.done():   
+            if gradient_averaging_step.done():
+                print(sleep_counter)   
                 # Log the results for monitoring purposes.
                 bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
@@ -163,7 +164,7 @@ async def forward(self):
 
 
     else:
-
+        
         # Regular training synapse
         queries = [
             template.protocol.Train(
@@ -202,7 +203,12 @@ async def forward(self):
         )
 
         rewards = await get_rewards(self, uids=self.miner_uids, responses=responses)
-
+        
+        #else:
+            #responses = []
+            
+    if rewards is None:
+        return responses
 
     # Normalise Rewards
     if rewards.sum() != 0:
