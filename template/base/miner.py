@@ -1,6 +1,5 @@
 # The MIT License (MIT)
 # Copyright © 2023 Yuma Rao
-# Copyright © 2023 KMFODA
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -16,390 +15,224 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import random
 import time
-import typing
-from ipaddress import ip_address
-import base64
+import torch
+import asyncio
+import threading
+import traceback
 
 import bittensor as bt
-import hivemind
-import torch
-import torch.distributed as dist
-from bitarray import bitarray
-from hivemind.averaging.group_info import GroupInfo
-from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.p2p import PeerID
-from transformers import AutoModelForCausalLM
-
-# Bittensor Miner Template:
-import template
-# import base miner class which takes care of most of the boilerplate
-from template.base.miner import BaseMinerNeuron
-from template.data.dataset import SubsetFalconLoader
-from template.utils.hivemind import (DTGradientAverager, DTStateAverager,
-                                     load_state_from_peer)
-from template.utils.misc import (get_bandwidth, init_dht, load_wandb,
-                                 setup_logging)
+from template.base.neuron import BaseNeuron
 
 
-class Miner(BaseMinerNeuron):
+class BaseMinerNeuron(BaseNeuron):
+    """
+    Base class for Bittensor miners.
+    """
+
     def __init__(self, config=None):
-        super(Miner, self).__init__(config=config)
+        super().__init__(config=config)
 
-        # Init DHT
-        init_dht(self)
-        
-        # Init device
-        self.device = self.config.neuron.device
+        # Warn if allowing incoming requests from anyone.
+        if not self.config.blacklist.force_validator_permit:
+            bt.logging.warning(
+                "You are allowing non-validators to send requests to your miner. This is a security risk."
+            )
+        if self.config.blacklist.allow_non_registered:
+            bt.logging.warning(
+                "You are allowing non-registered entities to send requests to your miner. This is a security risk."
+            )
 
-        # Init Model
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        # The axon handles request processing, allowing validators to send this miner requests.
+        self.axon = bt.axon(wallet=self.wallet, config=self.config)
 
-        # Move the model to the appropriate device
-        self.model = self.model.to(self.device)
-
-        # Set up a decentralized optimizer that will average with peers in background
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
-
-        # Init Gradient Averager
-        self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            compression=hivemind.Uniform8BitQuantization(),
-            # reuse_grad_buffers=True,
-            accumulate_grads_on=torch.device(self.device),
-            start = True,
-            next_chunk_timeout = 30.0,
+        # Attach determiners which functions are called when servicing a request.
+        bt.logging.info(f"Attaching forward function to miner axon.")
+        self.axon.attach(
+            forward_fn=self.is_alive,
+            blacklist_fn=self.blacklist_is_alive,
+            # priority_fn=self.priority,
+        ).attach(
+            forward_fn=self.forward,
+            blacklist_fn=self.blacklist_train,
+            # priority_fn=self.priority,
+        ).attach(
+            forward_fn=self.all_reduce,
+            blacklist_fn=self.blacklist_all_reduce,
+            # priority_fn=self.priority,
         )
+        bt.logging.info(f"Axon created: {self.axon}")
 
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht, 
-            prefix=f"{self.config.neuron.run_id}", 
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True
+        # Instantiate runners
+        self.should_exit: bool = False
+        self.is_running: bool = False
+        self.thread: threading.Thread = None
+        self.lock = asyncio.Lock()
+        
+        self.config.neuron.disable_set_weights = True
+        
+    def run(self):
+        """
+        Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
+
+        This function performs the following primary tasks:
+        1. Check for registration on the Bittensor network.
+        2. Starts the miner's axon, making it active on the network.
+        3. Periodically resynchronizes with the chain; updating the metagraph with the latest network state and setting weights.
+
+        The miner continues its operations until `should_exit` is set to True or an external interruption occurs.
+        During each epoch of its operation, the miner waits for new blocks on the Bittensor network, updates its
+        knowledge of the network (metagraph), and sets its weights. This process ensures the miner remains active
+        and up-to-date with the network's latest state.
+
+        Note:
+            - The function leverages the global configurations set during the initialization of the miner.
+            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
+
+        Raises:
+            KeyboardInterrupt: If the miner is stopped by a manual interruption.
+            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+        """
+
+        # Check that miner is registered on the network.
+        self.sync()
+
+        # Serve passes the axon information to the network + netuid we are hosting on.
+        # This will auto-update if the axon port of external ip have changed.
+        bt.logging.info(
+            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
         )
+        self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer = self.opt,
-            initialize_optimizer = False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start = True,
-            next_chunk_timeout = 30.0,
-        )
+        # Start  starts the miner's axon, making it active on the network.
+        self.axon.start()
+        bt.logging.info(f"Miner starting at block: {self.block}")
         
-        # Init UID
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        
-        self.step_scheduled = False
-        self.local_epoch, self.local_samples = 0, 0
-
-        # Load dataset
-        self.dataset_loader = ()
-        dataset_length = 968000015
-        self.dataset_indices = bitarray(dataset_length)
-
-        # Init Wandb
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
-    
-        # Load state from peers if miner is not on latest epoch
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            load_state_from_peer(self)
-
-    def get_miner_info(self):
-        return {
-            "block": self.metagraph.block.item(),
-            "stake": self.metagraph.stake[self.uid],
-            "trust": self.metagraph.trust[self.uid],
-            "consensus": self.metagraph.consensus[self.uid],
-            "incentive": self.metagraph.incentive[self.uid],
-            "emissions": self.metagraph.emission[self.uid],
-        }
-
-    async def is_alive(
-        self, synapse: template.protocol.IsAlive
-    ) -> template.protocol.IsAlive:
-        bt.logging.info("Responded to be Active")
-        synapse.completion = "True"
-        return synapse
-
-    async def all_reduce(
-        self, synapse: template.protocol.AllReduce
-    ) -> template.protocol.AllReduce:
-        
-        bt.logging.info("Received All Reduce Call")
-                
-        custom_group = GroupInfo(
-                                base64.b64decode(synapse.group.group_id), 
-                                tuple([PeerID.from_base58(i) 
-                                        for i in synapse.group.peer_ids]), 
-                                gathered=None
-                                )
-        
+        # This loop maintains the miner's operations until intentionally stopped.
         try:
-            # Perform AllReduce step with queried miners to get averaged gradients
-            bt.logging.info("Performing Gradient Averaging")
-            
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=300)
-            sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
-                time.sleep(1)
-                sleep_counter += 1
-
-            if gradient_averaging_step.done(): 
-                # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                
-                with self.tracker.pause_updates():
-                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                        bt.logging.info("Performing Optimizer Step")
-                        self.opt.step()  # update model parameters using averaged grad
+            while not self.should_exit:
+                while (
+                    self.block - self.metagraph.last_update[self.uid]
+                    < self.config.neuron.epoch_length
+                ):
                     
-                    bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.local_epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-                    self.local_samples = 0  
-                    synapse.completion = "True"
-            else:
-                raise TimeoutError("Gradient averaging step timed out.")
-            
-            return synapse
+                    # Wait before checking again.
+                    time.sleep(1)
+
+                    # Check if we should exit.
+                    if self.should_exit:
+                        break
+
+                # Sync metagraph and potentially set weights.
+                self.step += 1
+                
+            # Await the training task to ensure it completes before exiting
+        
+        # If someone intentionally stops the miner, it'll safely terminate operations.
+        except KeyboardInterrupt:
+            self.should_exit = True
+            self.opt.shutdown()
+            self.dht.shutdown()
+            self.axon.stop()
+            bt.logging.success("Miner killed by keyboard interrupt.")
+            exit()
+
+        # In case of unforeseen errors, the miner will log the error and continue operations.
         except Exception as e:
-            
-            bt.logging.info(f"AllReduce Failed With Error: {e}")
-            bt.logging.info("Loading State From Peer..")
-            load_state_from_peer(self)
+            bt.logging.error(traceback.format_exc())
 
-            synapse.completion = "False"
-            return synapse
-
-    async def forward(
-        self, synapse: template.protocol.Train
-    ) -> template.protocol.Train:
+    def run_in_background_thread(self):
         """
-        Processes the incoming 'Train' synapse by performing a training run
-
-        Args:
-            synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
-
-        Returns:
-            template.protocol.Train: The synapse object with the 'loss' field set to models loss.
+        Starts the miner's operations in a separate background thread.
+        This is useful for non-blocking operations.
         """
-        if (self.tracker.global_progress.epoch != self.tracker.local_progress.epoch):
-            load_state_from_peer(self)
-        
-        search_start = random.choice(range(len(self.dataset_indices) -  self.config.neuron.training_examples_per_miner + 1))
-        start = self.dataset_indices.index(bitarray('0'* self.config.neuron.training_examples_per_miner), search_start)
-        group = [i for i in range(start,start +  self.config.neuron.training_examples_per_miner)]
-        self.dataset_indices[group] = True
+        if not self.is_running:
+            bt.logging.debug("Starting miner in background thread.")
+            self.should_exit = False
+            self.thread = threading.Thread(target=self.run, daemon=True)
+            self.thread.start()
+            self.is_running = True
+            bt.logging.debug("Started")
 
-        # Create Dataloader
-        dataloader = SubsetFalconLoader(
-            batch_size=self.config.neuron.local_batch_size_train, sequence_length=1024, rows=group
-        )
-
-        total_loss = 0
-        # Train data for one epoch
-        for index, batch in enumerate(dataloader):
-            inputs = batch.to(self.device)
-            
-            # Zero Gradients
-            self.opt.zero_grad(set_to_none=True) # Potential memory save?
-
-            # Forward pass
-            outputs = self.model(input_ids=inputs, labels=inputs)
-
-            # Normalize loss to account for batch accumulation
-            loss = outputs.loss
-            scaled_loss = loss / self.config.neuron.global_batch_size_train / len(inputs)
-            
-            # Accumulate Total Loss
-            total_loss += outputs.loss.detach().item() 
-
-            # Backward Pass
-            scaled_loss.backward()
-            
-            # Accumulate Gradients
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-            # Update Tracker
-            self.local_samples += 1    
-            self.tracker.report_local_progress(self.local_epoch, self.local_samples)
-
-            # Log accumulation status
-            if index % 10 == 0:
-                bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-                bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log({"loss": outputs.loss.detach().item(), "local_epoch": self.local_epoch, "global_epoch": self.tracker.global_progress.epoch})
-        
-        if index % 10 != 0:
-            bt.logging.info(f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}")
-            bt.logging.info(f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}")
-
-        # Store summed random gradients in the synapse
-        gradients = tuple(param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param) for param in self.model.parameters())
-        synapse.gradients =  float(torch.sum(torch.abs(gradients[synapse.gradient_test_index])))
-
-        average_loss = total_loss / index
-        synapse.loss = average_loss
-        synapse.dataset_indices = group
-
-        event = {}
-        event.update(self.get_miner_info())
-        try:
-            event.update(get_bandwidth())
-        except:
-            bt.logging.info("Error getting bandwidth metrics")
-        event.update({'steps':index})
-        
-        # bt.logging.debug(f"Events: {str(event)}")
-        # bt.logging.info("EVENTS", "events", **event)
-
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(event)
-
-        return synapse
-
-    async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
+    def stop_run_thread(self):
         """
-        Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
-        define the logic for blacklisting requests based on your needs and desired security parameters.
-
-        Blacklist runs before the synapse data has been deserialized (i.e. before synapse.data is available).
-        The synapse is instead contructed via the headers of the request. It is important to blacklist
-        requests before they are deserialized to avoid wasting resources on requests that will be ignored.
-
-        Args:
-            synapse (template.protocol.Train): A synapse object constructed from the headers of the incoming request.
-
-        Returns:
-            Tuple[bool, str]: A tuple containing a boolean indicating whether the synapse's hotkey is blacklisted,
-                            and a string providing the reason for the decision.
-
-        This function is a security measure to prevent resource wastage on undesired requests. It should be enhanced
-        to include checks against the metagraph for entity registration, validator status, and sufficient stake
-        before deserialization of synapse data to minimize processing overhead.
-
-        Example blacklist logic:
-        - Reject if the hotkey is not a registered entity within the metagraph.
-        - Consider blacklisting entities that are not validators or have insufficient stake.
-
-        In practice it would be wise to blacklist requests from entities that are not validators, or do not have
-        enough stake. This can be checked via metagraph.S and metagraph.validator_permit. You can always attain
-        the uid of the sender via a metagraph.hotkeys.index( synapse.dendrite.hotkey ) call.
-
-        Otherwise, allow the request to be processed further.
+        Stops the miner's operations that are running in the background thread.
         """
-        hotkey = synapse.dendrite.hotkey
-        synapse_type = type(synapse).__name__
+        if self.is_running:
+            bt.logging.debug("Stopping miner in background thread.")
+            self.should_exit = True
+            self.thread.join(5)
+            self.is_running = False
+            bt.logging.debug("Stopped")
 
-        uid = None
-        axon = None
-        for _uid, _axon in enumerate(self.metagraph.axons):
-            if _axon.hotkey == hotkey:
-                uid = _uid
-                axon = _axon
-                break
-
-        if uid is None:
-            bt.logging.trace(
-                f"Blacklisting unrecognized hotkey: {synapse.dendrite.hotkey}"
-            )
-            return (
-                True,
-                f"Blacklisted a non registered hotkey's {synapse_type} request from {hotkey}",
-            )
-
-        if self.config.blacklist.force_validator_permit and (
-            not self.config.blacklist.allow_non_registered
-        ):
-            # Check stake if uid is recognize
-            tao = self.metagraph.neurons[uid].stake.tao
-            if tao < self.config.neuron.vpermit_tao_limit:
-                return (
-                    True,
-                    f"Blacklisted a low stake {synapse_type} request: {tao} < {self.config.neuron.vpermit_tao_limit} from {hotkey}",
-                )
-
-        if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
-            # Ignore requests from unrecognized entities.
-            bt.logging.trace(
-                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}"
-            )
-            return True, "Unrecognized hotkey"
-
-        bt.logging.trace(
-            f"Not Blacklisting recognized hotkey {synapse.dendrite.hotkey}"
-        )
-        return False, "Hotkey recognized!"
-
-    async def blacklist_is_alive(
-        self, synapse: template.protocol.IsAlive
-    ) -> typing.Tuple[bool, str]:
-        blacklist = await self.blacklist_base(synapse)
-        bt.logging.debug(blacklist[1])
-        return blacklist
+    def __enter__(self):
+        """
+        Starts the miner's operations in a background thread upon entering the context.
+        This method facilitates the use of the miner in a 'with' statement.
+        """
+        #self.run_in_background_thread()
+        self.run()
+        return self
     
-    async def blacklist_all_reduce(
-        self, synapse: template.protocol.AllReduce
-    ) -> typing.Tuple[bool, str]:
-        blacklist = await self.blacklist_base(synapse)
-        bt.logging.debug(blacklist[1])
-        return blacklist
 
-    async def blacklist_train(
-        self, synapse: template.protocol.Train
-    ) -> typing.Tuple[bool, str]:
-        blacklist = await self.blacklist_base(synapse)
-        bt.logging.info(blacklist[1])
-        return blacklist
-
-    async def priority_base(self, synapse: template.protocol.Train) -> float:
+    def __exit__(self, exc_type, exc_value, traceback):
         """
-        The priority function determines the order in which requests are handled. More valuable or higher-priority
-        requests are processed before others. You should design your own priority mechanism with care.
-
-        This implementation assigns priority to incoming requests based on the calling entity's stake in the metagraph.
+        Stops the miner's background operations upon exiting the context.
+        This method facilitates the use of the miner in a 'with' statement.
 
         Args:
-            synapse (template.protocol.Train): The synapse object that contains metadata about the incoming request.
-
-        Returns:
-            float: A priority score derived from the stake of the calling entity.
-
-        Miners may recieve messages from multiple entities at once. This function determines which request should be
-        processed first. Higher values indicate that the request should be processed first. Lower values indicate
-        that the request should be processed later.
-
-        Example priority logic:
-        - A higher stake results in a higher priority value.
+            exc_type: The type of the exception that caused the context to be exited.
+                      None if the context was exited without an exception.
+            exc_value: The instance of the exception that caused the context to be exited.
+                       None if the context was exited without an exception.
+            traceback: A traceback object encoding the stack trace.
+                       None if the context was exited without an exception.
         """
-        caller_uid = self.metagraph.hotkeys.index(
-            synapse.dendrite.hotkey
-        )  # Get the caller index.
-        prirority = float(
-            self.metagraph.S[caller_uid]
-        )  # Return the stake as the priority.
-        bt.logging.trace(
-            f"Prioritizing {synapse.dendrite.hotkey} with value: ", prirority
-        )
-        return prirority
+        self.stop_run_thread()
 
+    def set_weights(self):
+        """
+        Self-assigns a weight of 1 to the current miner (identified by its UID) and
+        a weight of 0 to all other peers in the network. The weights determine the trust level the miner assigns to other nodes on the network.
 
-# This is the main function, which runs the miner.
-if __name__ == "__main__":
-    setup_logging()
-    with Miner() as miner:
-        while True:
-            bt.logging.info("Miner running...", time.time())
-            time.sleep(5)
+        Raises:
+            Exception: If there's an error while setting weights, the exception is logged for diagnosis.
+        """
+        try:
+            # --- query the chain for the most current number of peers on the network
+            chain_weights = torch.zeros(
+                self.subtensor.subnetwork_n(netuid=self.metagraph.netuid)
+            )
+            chain_weights[self.uid] = 1
+
+            # --- Set weights.
+            self.subtensor.set_weights(
+                wallet=self.wallet,
+                netuid=self.metagraph.netuid,
+                uids=torch.arange(0, len(chain_weights)),
+                weights=chain_weights.to("cpu"),
+                wait_for_inclusion=False,
+                version_key=self.spec_version,
+            )
+
+        except Exception as e:
+            bt.logging.error(
+                f"Failed to set weights on chain with exception: { e }"
+            )
+
+        bt.logging.info(f"Set weights: {chain_weights}")
+
+    def resync_metagraph(self):
+        """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
+        bt.logging.info("resync_metagraph()")
+
+        # Sync the metagraph.
+        self.metagraph.sync(subtensor=self.subtensor)
+    
+    def save_state(self):
+        """Saves the state of the validator to a file."""
+        ...
+
+    def load_state(self):
+        """Loads the state of the validator from a file."""
+        ...
