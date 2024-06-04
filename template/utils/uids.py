@@ -1,14 +1,19 @@
-import torch
-import random
-import bittensor as bt
-from typing import List
-import traceback
 import asyncio
+import random
+import traceback
+from typing import List
+
+import bittensor as bt
+import torch
+
 import template
+
 
 async def check_uid(dendrite, axon, uid):
     try:
-        response = await dendrite(axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3)
+        response = await dendrite(
+            axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3
+        )
         if response.is_success:
             bt.logging.trace(f"UID {uid} is active.")
             # loop.close()
@@ -43,7 +48,7 @@ async def check_uid_availability(
             return False
     # Filter for miners that are processing other responses
     if not await check_uid(dendrite, metagraph.axons[uid], uid):
-       return False
+        return False
     # Available otherwise.
     return True
 
@@ -82,12 +87,11 @@ async def get_random_uids(
             if uid_is_not_excluded:
                 candidate_uids.append(uid)
 
-
     # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
     available_uids = candidate_uids
     if len(candidate_uids) < k:
         uids = torch.tensor(available_uids)
     else:
         uids = torch.tensor(random.sample(available_uids, k))
-        
+
     return uids

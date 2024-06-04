@@ -17,9 +17,9 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import base64
 import random
 import time
-import base64
 
 import bittensor as bt
 import torch
@@ -51,12 +51,15 @@ async def forward(self):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
 
-    if (((self.config.neuron.global_batch_size_train - self.tracker.global_progress.samples_accumulated)
-            <= 25)
-        #and (not self.step_scheduled)
-        #and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
+    if (
+        (
+            self.config.neuron.global_batch_size_train
+            - self.tracker.global_progress.samples_accumulated
+        )
+        <= 25
+        # and (not self.step_scheduled)
+        # and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
     ):
-
         bt.logging.info("Scheduling all-reduce synapse call")
         sample_size = self.config.neuron.sample_size_allreduce
         # next_step_control = self.grad_averager.schedule_step()
@@ -65,7 +68,6 @@ async def forward(self):
         self.event.update({"synapse_type": "all_reduce"})
 
     else:
-
         sample_size = self.config.neuron.sample_size
         all_reduce = False
         self.event.update({"synapse_type": "train"})
@@ -79,24 +81,25 @@ async def forward(self):
     rewards = None
 
     if all_reduce:
-        
         group_peerids = None
 
         # All-reduce synapse
-        while group_peerids is None or any(peer_id is None for peer_id in group_peerids.values()):
+        while group_peerids is None or any(
+            peer_id is None for peer_id in group_peerids.values()
+        ):
             group_peerids = await self.map_uid_to_peerid(self.miner_uids)
-            
+
         group_id = DHTID.generate().to_bytes()
         print("DHT:", self.dht.peer_id)
         print("Peers:", list(group_peerids.values()))
-        ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values()) 
+        ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values())
 
         group = template.protocol.Group(
             peer_count=len(group_peerids) + 1,  # Including the local peer
             peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
             group_id=base64.b64encode(group_id),
         )
-        
+
         queries = [
             template.protocol.AllReduce(
                 group=group,
@@ -105,66 +108,69 @@ async def forward(self):
         ]
 
         # Define a custom group for all-reduce
-        custom_group = GroupInfo(
-            group_id, 
-            tuple(ordered_peer_ids), 
-            gathered=None
-            )
+        custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
-        query_tasks.append(
-            self.dendrite_pool.async_forward(
-                self.miner_uids,
-                queries
-            )
-        )
-        
+        query_tasks.append(self.dendrite_pool.async_forward(self.miner_uids, queries))
+
         try:
             bt.logging.info("Performing Gradient Averaging")
-            
+
             # Perform AllReduce step with queried miners to get averaged gradients
-            gradient_averaging_step = self.grad_averager.step(custom_group_info=custom_group, wait=False, timeout=300)
-            
-            responses = await asyncio.gather(*query_tasks) 
-            
+            gradient_averaging_step = self.grad_averager.step(
+                custom_group_info=custom_group, wait=False, timeout=300
+            )
+
+            responses = await asyncio.gather(*query_tasks)
+
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
                 time.sleep(1)
                 sleep_counter += 1
 
             if gradient_averaging_step.done():
-                print(sleep_counter)   
+                print(sleep_counter)
                 # Log the results for monitoring purposes.
-                bt.logging.info("Model Weights Before Optimizer Step") # TODO - do we need this here?
+                bt.logging.info(
+                    "Model Weights Before Optimizer Step"
+                )  # TODO - do we need this here?
                 bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                
+
                 with self.tracker.pause_updates():
                     with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                         bt.logging.info("Performing Optimizer Step")
                         self.opt.step()  # update model parameters using averaged grad
-                        
+
                     bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                    bt.logging.info(
+                        [layer for layer in self.model.parameters()][-1][-10:]
+                    )
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(self.tracker.local_progress.epoch + 1)
-            
+                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                        self.tracker.local_progress.epoch + 1
+                    )
+
                 scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
-            
+
         except Exception as e:
-            bt.logging.info(f"AllReduce Failed With Error: {e}") # TODO Propogate timeout error to here + additional bad peers
+            bt.logging.info(
+                f"AllReduce Failed With Error: {e}"
+            )  # TODO Propogate timeout error to here + additional bad peers
             scores = torch.FloatTensor([0 for _ in self.miner_uids]).to(self.device)
             responses = [[]]
-            #self.update_scores(rewards, self.miner_uids)
+            # self.update_scores(rewards, self.miner_uids)
             load_state_from_peer(self)
-        
-        
-        rewards = await get_rewards(self, uids=self.miner_uids, responses=responses, 
-                                    all_reduce=all_reduce, scores=scores)
 
+        rewards = await get_rewards(
+            self,
+            uids=self.miner_uids,
+            responses=responses,
+            all_reduce=all_reduce,
+            scores=scores,
+        )
 
     else:
-        
         # Regular training synapse
         queries = [
             template.protocol.Train(
@@ -173,13 +179,8 @@ async def forward(self):
             for _ in self.miner_uids
         ]
 
-        query_tasks.append(
-            self.dendrite_pool.async_forward(
-                self.miner_uids,
-                queries
-            )
-        )
-        
+        query_tasks.append(self.dendrite_pool.async_forward(self.miner_uids, queries))
+
         responses = await asyncio.gather(*query_tasks)
 
         bt.logging.info(
@@ -203,10 +204,10 @@ async def forward(self):
         )
 
         rewards = await get_rewards(self, uids=self.miner_uids, responses=responses)
-        
-        #else:
-            #responses = []
-            
+
+        # else:
+        # responses = []
+
     if rewards is None:
         return responses
 

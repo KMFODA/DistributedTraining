@@ -22,7 +22,8 @@ import os
 import bittensor as bt
 import torch
 from loguru import logger
-from template import __version__, __run__
+
+from template import __run__, __version__
 
 
 def check_config(cls, config: "bt.Config"):
@@ -131,7 +132,7 @@ def add_args(cls, parser):
         type=float,
         help="The learning rate",
         # default=0.001
-        default=5/((2)*(10**3))
+        default=5 / ((2) * (10**3)),
     )
 
     parser.add_argument(

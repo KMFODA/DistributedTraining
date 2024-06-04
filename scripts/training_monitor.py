@@ -20,9 +20,16 @@ config.netuid = 80
 config.dht.announce_ip = "194.68.245.20"
 config.dht.port = 22030
 config.axon.port = 22031
-  
-dht = hivemind.DHT(initial_peers=config.neuron.initial_peers, start=True, client_mode = True)
-progress_tracker = hivemind.optim.progress_tracker.ProgressTracker(dht=dht, prefix=config.neuron.run_id, target_batch_size=config.neuron.global_batch_size_train, start = True)
+
+dht = hivemind.DHT(
+    initial_peers=config.neuron.initial_peers, start=True, client_mode=True
+)
+progress_tracker = hivemind.optim.progress_tracker.ProgressTracker(
+    dht=dht,
+    prefix=config.neuron.run_id,
+    target_batch_size=config.neuron.global_batch_size_train,
+    start=True,
+)
 while True:
     print(progress_tracker.global_progress)
     sleep(10)

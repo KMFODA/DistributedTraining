@@ -10,29 +10,33 @@
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
+import math
+import time
+import typing
+
+import bittensor as bt
+import requests
 # THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 import torch
-import typing
-import requests
-import bittensor as bt
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
-import time
-import math
 
 model_name = "distilgpt2"
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 tokenizer.pad_token = tokenizer.eos_token
 
+
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
     max_pages: int = 968000015
 
-    def __init__(self, batch_size, sequence_length, rows: typing.List[int], tokenizer = tokenizer):
+    def __init__(
+        self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
+    ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
         self.tokenizer = tokenizer
@@ -49,10 +53,10 @@ class SubsetFalconLoader(IterableDataset):
         self.fetch_data_for_page(min(self.rows), len(self.rows))
 
     def fetch_data_for_page(self, offset, length):
-        iterations = math.ceil(length/100)
+        iterations = math.ceil(length / 100)
         for iteration in range(iterations):
-            self.params["offset"] = offset + (iteration*100)
-            self.params["length"] = min(100, length - (iteration*100))
+            self.params["offset"] = offset + (iteration * 100)
+            self.params["length"] = min(100, length - (iteration * 100))
             attempt = 0
             while attempt < self.retry_limit:
                 try:
@@ -61,7 +65,9 @@ class SubsetFalconLoader(IterableDataset):
 
                     for row in response.json()["rows"]:
                         content = row["row"]["content"]
-                        self.buffer += self.tokenizer(content, truncation=True)["input_ids"]
+                        self.buffer += self.tokenizer(content, truncation=True)[
+                            "input_ids"
+                        ]
                         self.buffer += [self.tokenizer.eos_token_id]
                     break  # If the request was successful, break out of the retry loop
                 except requests.exceptions.RequestException as e:

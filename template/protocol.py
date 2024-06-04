@@ -23,16 +23,18 @@ import bittensor as bt
 import numpy as np
 import pydantic
 
-class IsAlive( bt.Synapse ):
+
+class IsAlive(bt.Synapse):
     answer: Optional[str] = None
     completion: str = pydantic.Field(
         "",
         title="Completion",
         description="Completion status of the current StreamPrompting object. "
-                    "This attribute is mutable and can be updated.",
+        "This attribute is mutable and can be updated.",
     )
 
-class Train( bt.Synapse ):
+
+class Train(bt.Synapse):
     """
     A simple Train protocol representation which uses bt.Synapse as its base.
     This protocol helps in handling request and response communication between
@@ -70,15 +72,15 @@ class Train( bt.Synapse ):
     # gradients: list = None
 
     gradient_test_index: int = None
-    
+
     # Optional model name
     model_name: str = "kmfoda/tiny-random-gpt2"
 
     # # Optional learning rate
     lr: float = 1e-5
-    
+
     # # Optional dataset name
-    dataset_name: str = 'wikitext'
+    dataset_name: str = "wikitext"
 
     # # Required optimizer
     # optimizer_name: str = "adam"
@@ -91,29 +93,29 @@ class Train( bt.Synapse ):
 
     # # Optional score
     loss: float = 0.0
-    
+
     # Epoch
     epoch: int | None
 
-class Group(pydantic.BaseModel):
 
+class Group(pydantic.BaseModel):
     peer_count: Optional[int] = None
     peer_ids: Optional[List[str]] = None
     bandwidth: Optional[int] = None
     group_id: Optional[str] = None
-    #started_at: Optional[int] = None
-    #session_time: Optional[int] = 300
-    #status: Optional[str] = None
-    #reason: Optional[str] = None
+    # started_at: Optional[int] = None
+    # session_time: Optional[int] = 300
+    # status: Optional[str] = None
+    # reason: Optional[str] = None
 
-class AllReduce( bt.Synapse ):
-    
+
+class AllReduce(bt.Synapse):
     group: Optional[Group] = None
-    
+
     answer: Optional[str] = None
     completion: str = pydantic.Field(
         "",
         title="Completion",
         description="Completion status of the current StreamPrompting object. "
-                    "This attribute is mutable and can be updated.",
+        "This attribute is mutable and can be updated.",
     )

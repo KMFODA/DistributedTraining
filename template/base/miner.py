@@ -15,13 +15,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-import torch
 import asyncio
 import threading
+import time
 import traceback
 
 import bittensor as bt
+import torch
+
 from template.base.neuron import BaseNeuron
 
 
@@ -68,9 +69,9 @@ class BaseMinerNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
-        
+
         self.config.neuron.disable_set_weights = True
-        
+
     def run(self):
         """
         Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
@@ -107,7 +108,7 @@ class BaseMinerNeuron(BaseNeuron):
         # Start  starts the miner's axon, making it active on the network.
         self.axon.start()
         bt.logging.info(f"Miner starting at block: {self.block}")
-        
+
         # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:
@@ -115,7 +116,6 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
-                    
                     # Wait before checking again.
                     time.sleep(1)
 
@@ -125,9 +125,9 @@ class BaseMinerNeuron(BaseNeuron):
 
                 # Sync metagraph and potentially set weights.
                 self.step += 1
-                
+
             # Await the training task to ensure it completes before exiting
-        
+
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
             self.should_exit = True
@@ -170,10 +170,9 @@ class BaseMinerNeuron(BaseNeuron):
         Starts the miner's operations in a background thread upon entering the context.
         This method facilitates the use of the miner in a 'with' statement.
         """
-        #self.run_in_background_thread()
+        # self.run_in_background_thread()
         self.run()
         return self
-    
 
     def __exit__(self, exc_type, exc_value, traceback):
         """
@@ -216,9 +215,7 @@ class BaseMinerNeuron(BaseNeuron):
             )
 
         except Exception as e:
-            bt.logging.error(
-                f"Failed to set weights on chain with exception: { e }"
-            )
+            bt.logging.error(f"Failed to set weights on chain with exception: { e }")
 
         bt.logging.info(f"Set weights: {chain_weights}")
 
@@ -228,7 +225,7 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
-    
+
     def save_state(self):
         """Saves the state of the validator to a file."""
         ...

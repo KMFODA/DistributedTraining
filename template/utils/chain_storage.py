@@ -1,12 +1,13 @@
-import functools
-import multiprocessing
-from typing import Any, Optional
-import bittensor as bt
-import random
 import bisect
 import copy
-from typing import List
+import functools
+import multiprocessing
+import random
 import threading
+from typing import Any, List, Optional
+
+import bittensor as bt
+
 
 class MinerIterator:
     """A thread safe infinite iterator to cyclically enumerate the current set of miner UIDs.
@@ -62,6 +63,7 @@ class MinerIterator:
             self.index = new_index
             self.miner_uids = sorted_uids
 
+
 def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
     try:
         result = func()
@@ -69,6 +71,7 @@ def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
     except (Exception, BaseException) as e:
         # Catch exceptions here to add them to the queue.
         queue.put(e)
+
 
 def run_in_subprocess(func: functools.partial, ttl: int, mode="fork") -> Any:
     """Runs the provided function on a subprocess with 'ttl' seconds to complete.

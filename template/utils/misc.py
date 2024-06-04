@@ -16,28 +16,30 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-from math import floor
-from typing import Callable, Any
-import functools
-from functools import lru_cache, update_wrapper
-import bittensor as bt
-from typing import Any, List
-from template.protocol import Train
 import asyncio
-import wandb
+import functools
 import logging
-from loguru import logger as bt_logger
-from hivemind.utils.logging import use_hivemind_log_handler
-import speedtest
+import re
+import time
+from datetime import datetime
+from functools import lru_cache, update_wrapper
+from ipaddress import ip_address
+from math import floor
+from typing import Any, Callable, List
+
+import bittensor as bt
 import hivemind
 import requests
-from hivemind import utils
-import re
-from ipaddress import ip_address
-from template.utils.chain_storage import run_in_subprocess
-from datetime import datetime
+import speedtest
 import torch
+import wandb
+from hivemind import utils
+from hivemind.utils.logging import use_hivemind_log_handler
+from loguru import logger as bt_logger
+
+from template.protocol import Train
+from template.utils.chain_storage import run_in_subprocess
+
 
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
@@ -126,38 +128,36 @@ def ttl_get_block(self) -> int:
     """
     return self.subtensor.get_current_block()
 
+
 class AsyncDendritePool:
     def __init__(self, wallet, metagraph):
         self.metagraph = metagraph
         self.dendrite = bt.dendrite(wallet=wallet)
-    
-    async def async_forward(
-            self,
-            uids: List[int],
-            queries: List[Train], 
-            timeout: float = 150.0
-    ):
 
+    async def async_forward(
+        self, uids: List[int], queries: List[Train], timeout: float = 150.0
+    ):
         def call_single_uid(uid, query):
             return self.dendrite(
-                self.metagraph.axons[uid],
-                synapse=query,
-                timeout=timeout
+                self.metagraph.axons[uid], synapse=query, timeout=timeout
             )
-        
+
         async def query_async():
-            corutines = [call_single_uid(uid, query) for uid, query in zip(uids, queries)]
+            corutines = [
+                call_single_uid(uid, query) for uid, query in zip(uids, queries)
+            ]
             return await asyncio.gather(*corutines)
-        
+
         return await query_async()
-    
+
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-
-    #signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}" #+ signature 
+    # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
+    run_name = (
+        f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
+    )
     wandb_run = wandb.init(
-        id = run_name,
+        id=run_name,
         name=run_name,
         anonymous="allow",
         project=config.neuron.wandb_project,
@@ -171,10 +171,11 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
     wandb_run.config.update(config, allow_val_change=True)
     return wandb_run
 
+
 class BittensorLogHandler(logging.Handler):
     def emit(self, record):
         log_entry = self.format(record)
-        
+
         if record.levelno >= logging.CRITICAL:
             bt_logger.critical(log_entry)
         elif record.levelno >= logging.ERROR:
@@ -188,40 +189,51 @@ class BittensorLogHandler(logging.Handler):
         else:
             bt_logger.trace(log_entry)
 
+
 def logging_filter(record):
     if record.name != "hivemind.dht.protocol":
         return True
     else:
         return False
 
+
 def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    bt_logger_ = logging.getLogger('bittensor')
+    bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
 
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(level) # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
+    root_logger.setLevel(
+        level
+    )  # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
 
     bt_handler = BittensorLogHandler()
-    formatter = logging.Formatter('%(message)s')
+    formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
 
     # Create a file handler that logs debug and higher level messages
-    hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
-    hivemind_logger = logging.getLogger('hivemind')
+    hivemind_log_file = (
+        f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+    )
+    hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
-    #file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # file_handler.setLevel(logging.DEBUG)  # Ensure file handler captures all levels for hivemind
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     file_handler.setFormatter(formatter)
     file_handler.addFilter(logging_filter)
     hivemind_logger.addHandler(file_handler)
-    hivemind_logger.propagate = False  # Stop hivemind logs from propagating to the root logger
+    hivemind_logger.propagate = (
+        False  # Stop hivemind logs from propagating to the root logger
+    )
+
 
 def get_bandwidth():
     # Get speedtest results
@@ -231,7 +243,7 @@ def get_bandwidth():
     s.download()
     s.upload()
     results = s.results.dict()
-    
+
     # Copy key metrics to a formatted badnwidth_dict
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
@@ -239,6 +251,7 @@ def get_bandwidth():
         bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
 
     return bandwidth_dict
+
 
 def init_dht(self):
     # Init DHT and model
@@ -320,10 +333,16 @@ def init_dht(self):
     #     bt.logging.info(f"Error submitting Peer ID to chaing {Exception} retrying in 2 minutes")
 
     # Add DHT address to wandb config
-    self.config.neuron.dht_addresses = [re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL) for addr in self.dht.get_visible_maddrs()]
+    self.config.neuron.dht_addresses = [
+        re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
+        for addr in self.dht.get_visible_maddrs()
+    ]
+
 
 # From: https://github.com/unconst/gradient/blob/main/neurons/validator.py#L53
-def compute_losses(model: torch.nn.Module, batches: List[torch.Tensor], device: str = 'cpu') -> float:
+def compute_losses(
+    model: torch.nn.Module, batches: List[torch.Tensor], device: str = "cpu"
+) -> float:
     """
     Computes and returns the average loss of a model evaluated over a given set of batches.
 
@@ -375,8 +394,12 @@ def compute_losses(model: torch.nn.Module, batches: List[torch.Tensor], device: 
         # TODO Should we add same loss/ppl calculation as in sn9? https://github.com/RaoFoundation/pretraining/blob/d2faaec9737c8858cd22373140bd5db0ace02c4c/scripts/run_benchmarks.py#L37
         perplexity: float = torch.exp(torch.tensor(average_loss)).item()
     except ZeroDivisionError as e:
-        bt.logging.error("Division by zero encountered while computing average loss. This should not happen.")
-        raise ZeroDivisionError("Division by zero encountered while computing average loss.")
+        bt.logging.error(
+            "Division by zero encountered while computing average loss. This should not happen."
+        )
+        raise ZeroDivisionError(
+            "Division by zero encountered while computing average loss."
+        )
 
     # Log the computed average loss
     bt.logging.debug(f"Average loss computed successfully: {average_loss}")

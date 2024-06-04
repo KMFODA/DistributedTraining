@@ -11,14 +11,17 @@ from datasets import load_dataset
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          default_data_collator)
+
 
 # Define encoding function
 def encode(examples):
     return tokenizer(
         examples["text"], truncation=True, max_length=512, padding="max_length"
     )
-    
+
+
 # Create dataset and model, same as in the basic tutorial
 model = AutoModelForCausalLM.from_pretrained("gpt2", torch_dtype=torch.float16)
 device = "cuda"
