@@ -46,6 +46,8 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
+        print("WE ARE HERE NOW!")
+        print("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
@@ -252,7 +254,8 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
-
+        print("DTAverager.. self.next_chunk_timeout", self.next_chunk_timeout)
+        print("DTAverager.. timeout", timeout)
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
 
@@ -312,8 +315,8 @@ class DTAverager(hivemind.DecentralizedAverager):
                         ]
                         print("HERE YO..")
                         expiration_time = (
-                            get_dht_time() + 300
-                        )  # TODO propogate timeout to here??
+                            get_dht_time() + 300 # TODO propogate timeout to here??
+                        )  
                         print("NOT HERE YO..")
                         print(expiration_time)
 
@@ -437,7 +440,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             group_id = group_info.group_id
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
-                runner = AllReduceRunner(
+                runner = DTAllReduceRunner(
                     p2p=self._p2p,
                     servicer_type=type(self),
                     prefix=self.prefix,

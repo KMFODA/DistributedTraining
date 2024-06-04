@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import logging
 import random
@@ -45,9 +46,12 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
+        print("WE ARE HERE NOW!")
+        print("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
+            print("self.peer_id..")
             sender_index = self.sender_peer_ids.index(peer_id)
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
@@ -59,14 +63,15 @@ class DTAllReduceRunner(AllReduceRunner):
 
         else:
             try:
+                print("DTAllReduceRunner..")
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
                     self._generate_input_for_peer(peer_index), done_sending
                 )
-                # await asyncio.sleep(0.1)
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
+                print("_get_peer_stub done..")
 
                 if self.should_delay_results(self.peer_id):
                     await done_sending.wait()
@@ -74,6 +79,8 @@ class DTAllReduceRunner(AllReduceRunner):
                 part_index = 0
 
                 def _try_deserialize(msg):
+                    print("try_deserialize..")
+
                     if msg.code != averaging_pb2.AVERAGED_PART:
                         raise AllreduceException(
                             f"{peer_id} sent {averaging_pb2.MessageCode.Name(msg.code)}"
@@ -89,6 +96,7 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
+                    print("amap_in_executor..")
 
                 if (
                     part_index
@@ -104,9 +112,9 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
-                self.finalize(exception=e)
+                # self.finalize(exception=e)
                 # ? Remove fault-tolerant method here
-                # self.tensor_part_container.register_failed_reducer(peer_index)
+                self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
 
     #! Test fault-tolerance here:
@@ -147,35 +155,38 @@ class DTAllReduceRunner(AllReduceRunner):
     async def _generate_input_for_peer(
         self, peer_index: int
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        try:
-            parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
-            first_part = await anext(parts_aiter)
-            yield averaging_pb2.AveragingData(
-                code=averaging_pb2.PART_FOR_AVERAGING,
-                group_id=self.group_id,
-                tensor_part=first_part,
-                weight=self.weight,
-            )
-            async for part in parts_aiter:
-                yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
+        # try:
+        parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
+        first_part = await anext(parts_aiter)
+        yield averaging_pb2.AveragingData(
+            code=averaging_pb2.PART_FOR_AVERAGING,
+            group_id=self.group_id,
+            tensor_part=first_part,
+            weight=self.weight,
+        )
+        print("_generate_input_for_peer..")
+        async for part in parts_aiter:
+            print("_generate_input_for_peer for loop")
+            yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
-        except Exception as e:
-            logger.error(
-                f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}"
-            )
-            self.finalize(exception=e)
-            raise e
+        # except Exception as e:
+        #     logger.error(f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}")
+        #     self.finalize(exception=e)
+        #     raise e
 
     async def _ban_sender(self, peer_id: PeerID):
+        print("ban sender..")
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
                 # ? Remove fault-tolerant method here:
-                # self.tensor_part_reducer.on_sender_failed(self.sender_peer_ids.index(peer_id))
+                self.tensor_part_reducer.on_sender_failed(
+                    self.sender_peer_ids.index(peer_id)
+                )
                 error_message = f"Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
-                self.finalize(exception=error_message)
-                raise Exception(error_message)
+                # self.finalize(exception=error_message)
+                # raise Exception(error_message)
 
 
 class DTAverager(hivemind.DecentralizedAverager):
@@ -243,7 +254,8 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
-
+        print("DTAverager.. self.next_chunk_timeout", self.next_chunk_timeout)
+        print("DTAverager.. timeout", timeout)
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
 
@@ -269,6 +281,12 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         if not require_trigger:
             step.allow_allreduce()
+        if wait:
+            print("wait step")
+            print(step.result())
+        else:
+            print("non wait step")
+            print(step)
         return step.result() if wait else step
 
     async def _step_custom(
@@ -288,12 +306,77 @@ class DTAverager(hivemind.DecentralizedAverager):
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
 
-                    # ? ----------------- Distributed barrier -----------------
-                    # Use DHT for distributed synchronization
-                    await self._distributed_barrier(custom_group_info.peer_ids)
-                    # ? ----------------- Distributed barrier -----------------
+                    async def distributed_barrier():
+                        key = f"{base64.b64encode(custom_group_info.group_id).decode('utf-8')}.barrier"
+                        print(key)
+                        peer_id_strs = [
+                            peer_id.to_string()
+                            for peer_id in custom_group_info.peer_ids
+                        ]
+                        print("HERE YO..")
+                        expiration_time = (
+                            get_dht_time() + 300 # TODO propogate timeout to here??
+                        )  
+                        print("NOT HERE YO..")
+                        print(expiration_time)
+
+                        # Register this peer
+                        store_result = self.dht.store(
+                            key,
+                            subkey=self.peer_id.to_string(),
+                            value=True,
+                            expiration_time=expiration_time,
+                        )
+                        if not store_result:
+                            raise Exception(
+                                f"Failed to store peer {self.peer_id} in DHT"
+                            )
+
+                        print("later:", get_dht_time, expiration_time)
+                        while get_dht_time() < expiration_time:
+                            # Check if all peers have registered
+                            gathered = self.dht.get(key, latest=True)
+                            if gathered:
+                                registered_peers = gathered.value.keys()
+                                if all(
+                                    peer_id in registered_peers
+                                    for peer_id in peer_id_strs
+                                ):
+                                    if not step.triggered:
+                                        step.stage = AveragingStage.AWAITING_TRIGGER
+                                        await step.wait_for_trigger()
+                                    print(registered_peers)
+                                    return  # All peers are ready
+                            await asyncio.sleep(0.5)
+
+                        raise TimeoutError(
+                            "Distributed barrier timed out waiting for peers"
+                        )
+
+                    # Concurrently handle matchmaking and cancellation
+                    matchmaking_task = asyncio.create_task(distributed_barrier())
+                    check_cancel_task = asyncio.create_task(step.wait_for_cancel())
+
+                    print("Here1")
+                    await asyncio.wait(
+                        {matchmaking_task, check_cancel_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    print("Here2")
+
+                    if step.cancelled():
+                        print("CANCELLING APPARENTLY..")
+                        matchmaking_task.cancel()
+                        raise asyncio.CancelledError()
+                    else:
+                        print("checking CANCELLING APPARENTLY..")
+                        check_cancel_task.cancel()
+
+                    await matchmaking_task
+                    print("Finished waiting for group to assemble")
 
                     with self._register_allreduce_group(custom_group_info):
+                        print("Running AllReduce..")
                         step.stage = AveragingStage.RUNNING_ALLREDUCE
                         step.set_result(
                             await asyncio.wait_for(
@@ -337,6 +420,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                 step.set_exception(e)
             raise
         finally:
+            print("Finally..")
             step.stage = AveragingStage.FINISHED
             if not step.done():
                 step.set_exception(
@@ -345,32 +429,6 @@ class DTAverager(hivemind.DecentralizedAverager):
                         " Please report this to hivemind issues."
                     )
                 )
-
-    async def _distributed_barrier(self, peer_ids):
-        """Ensure that all peers are ready before proceeding using DHT for synchronization."""
-        key = f"{self.prefix}.barrier"
-        peer_id_strs = [peer_id.to_string() for peer_id in peer_ids]
-        dht_time = get_dht_time() + 10  # Adjust based on expected wait time
-        expiration_time = dht_time + 60  # Keep the barrier active for 60 seconds
-
-        # Register this peer
-        store_result = self.dht.store(
-            key,
-            subkey=self.peer_id.to_string(),
-            value=True,
-            expiration_time=expiration_time,
-        )
-        if not store_result:
-            raise Exception(f"Failed to store peer {self.peer_id} in DHT")
-
-        while True:
-            # Check if all peers have registered
-            gathered = self.dht.get(key, latest=True)
-            if gathered:
-                registered_peers = gathered.value.keys()
-                if all(peer_id in registered_peers for peer_id in peer_id_strs):
-                    break
-            await asyncio.sleep(0.1)  # Wait a bit before checking again
 
     async def _aggregate_with_group(
         self, group_info: GroupInfo, min_vector_size: int, **kwargs
@@ -396,6 +454,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                     group_id in self._running_groups
                 ), f"Group id {group_id} was not registered in _register_allreduce_group"
                 self._running_groups[group_info.group_id].set_result(runner)
+
                 if (
                     runner.modes[group_info.peer_ids.index(self.peer_id)]
                     != AveragingMode.AUX
@@ -579,6 +638,7 @@ class DTGradientAverager(DTAverager):
         if reset_accumulators:
             self.reset_accumulated_grads_()
         control.allow_allreduce()
+        print(control.stage)
 
         return control.result(timeout) if wait else control
 

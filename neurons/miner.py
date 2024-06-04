@@ -16,6 +16,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 import base64
 import random
 import time
@@ -147,8 +148,9 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Performing Gradient Averaging")
 
             gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, wait=False, timeout=300
+                custom_group_info=custom_group, wait=False
             )
+            
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
                 time.sleep(1)
@@ -176,6 +178,10 @@ class Miner(BaseMinerNeuron):
                     )
                     self.local_samples = 0
                     synapse.completion = "True"
+                    
+            elif gradient_averaging_step.cancelled():
+                raise asyncio.CancelledError("Gradient averaging step was cancelled.")
+                
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
 

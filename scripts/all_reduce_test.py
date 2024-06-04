@@ -74,7 +74,7 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             # 0_make_tensors(),
             model.parameters(),
             dht=dht,
-            prefix="diller",
+            prefix="allreduce_test",
             # auxiliary=True if i == 0 else False,
             start=True,
         )

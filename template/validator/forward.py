@@ -117,10 +117,11 @@ async def forward(self):
 
             # Perform AllReduce step with queried miners to get averaged gradients
             gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, wait=False, timeout=300
+                custom_group_info=custom_group, wait=False
             )
-
-            responses = await asyncio.gather(*query_tasks)
+            
+            # Start synapse queries - don't await so we can enter below timeout counter
+            queries = asyncio.gather(*query_tasks)
 
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
@@ -129,6 +130,10 @@ async def forward(self):
 
             if gradient_averaging_step.done():
                 print(sleep_counter)
+                
+                # Await queries here instead
+                responses = self.loop.run_until_complete(queries)
+                
                 # Log the results for monitoring purposes.
                 bt.logging.info(
                     "Model Weights Before Optimizer Step"
@@ -150,6 +155,10 @@ async def forward(self):
                     )
 
                 scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
+                
+            elif gradient_averaging_step.cancelled():
+                raise asyncio.CancelledError("Gradient averaging step was cancelled.")
+                
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
 
