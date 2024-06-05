@@ -17,20 +17,24 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import base64
 import random
 import time
-
-import bittensor as bt
 import torch
+import base64
+
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHTID
 
+import bittensor as bt
+from huggingface_hub import create_tag, list_repo_refs
+
 import template
 from template.utils.hivemind import load_state_from_peer
-from template.utils.misc import get_bandwidth
+from template.utils.misc import get_bandwidth, update_global_tracker_state
 from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
+import copy
+import numpy as np
 
 
 async def forward(self):
@@ -43,25 +47,29 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
+    # while self.tracker.global_progress.num_peers == 0:
+    #     self.warmup()
 
-    bt.logging.info(
-        f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
-    )
-    if self.tracker.global_progress.epoch != self.tracker.local_progress.epoch:
+    update_global_tracker_state(self)
+    if (self.local_progress.epoch < self.global_progress.epoch) and (
+        self.model_hf_tag < self.global_progress.epoch
+    ):
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
 
     if (
         (
-            self.config.neuron.global_batch_size_train
-            - self.tracker.global_progress.samples_accumulated
+            (
+                self.config.neuron.global_batch_size_train
+                - self.global_progress.samples_accumulated
+            )
+            <= 25
         )
-        <= 25
-        # and (not self.step_scheduled)
-        # and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
+        and (not self.step_scheduled)
+        and (self.global_progress.epoch == self.local_progress.epoch)
     ):
-        bt.logging.info("Scheduling all-reduce synapse call")
-        sample_size = self.config.neuron.sample_size_allreduce
+        # bt.logging.info("Scheduling all-reduce synapse call")
+        sample_size = int(self.metagraph.n)
         # next_step_control = self.grad_averager.schedule_step()
         # self.step_scheduled = True
         all_reduce = True
@@ -74,6 +82,7 @@ async def forward(self):
 
     # Get random available miners based on the respective sample size
     self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
+
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -106,15 +115,22 @@ async def forward(self):
             )
             for _ in self.miner_uids
         ]
-
+        
         # Define a custom group for all-reduce
         custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
-        query_tasks.append(self.dendrite_pool.async_forward(self.miner_uids, queries))
+        # The dendrite client queries the network.
+        query_tasks.append(
+            self.dendrite_pool.async_forward(
+                self.miner_uids, queries, timeout=self.all_reduce_timeout
+            )
+        )
 
+        
         try:
+            
             bt.logging.info("Performing Gradient Averaging")
-
+            
             # Perform AllReduce step with queried miners to get averaged gradients
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group, wait=False
@@ -129,39 +145,74 @@ async def forward(self):
                 sleep_counter += 1
 
             if gradient_averaging_step.done():
-                print(sleep_counter)
-                
-                # Await queries here instead
-                responses = self.loop.run_until_complete(queries)
-                
                 # Log the results for monitoring purposes.
-                bt.logging.info(
-                    "Model Weights Before Optimizer Step"
-                )  # TODO - do we need this here?
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-
+                bt.logging.info("Model Weights Before Optimizer Step")
+                current_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(current_model_weights_sample)
                 with self.tracker.pause_updates():
-                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    with self.grad_averager.use_averaged_gradients():
                         bt.logging.info("Performing Optimizer Step")
                         self.opt.step()  # update model parameters using averaged grad
-
                     bt.logging.info("Model Weights After Optimizer Step")
-                    bt.logging.info(
-                        [layer for layer in self.model.parameters()][-1][-10:]
+                    new_model_weights_sample = copy.copy(
+                        [layer for layer in self.model.parameters()][-1][-10:].tolist()
                     )
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                        self.tracker.local_progress.epoch + 1
-                    )
+                    bt.logging.info(new_model_weights_sample)
 
-                scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
-                
+                    if new_model_weights_sample == current_model_weights_sample:
+                        # TODO This seems like it could be optimized furhter. Sometimes some weights might not change, no?
+                        bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+
+                    elif np.nan in new_model_weights_sample:
+                        bt.logging.info(
+                            "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                        )
+                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+
+                    else:
+                        self.grad_averager.reset_accumulated_grads_() 
+                        self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                            self.tracker.local_progress.epoch + 1
+                        )
+                        self.local_progress.epoch += 1
+                        self.local_progress.samples_accumulated = 0
+
+                        refs = list_repo_refs(
+                            self.config.neuron.model_name, repo_type="model"
+                        )
+                        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                        bt.logging.info(f"Old Model Tag {tag_name}")
+                        if (
+                            tag_name
+                            and tag_name < self.local_progress.epoch
+                        ):
+                            # TODO Is this awaited, if so, might need it as a background task
+                            bt.logging.info("Pushing New Model Weights To HF Hub")
+                            self.model.push_to_hub(self.config.neuron.model_name)
+                            create_tag(
+                                self.config.neuron.model_name,
+                                repo_type="model",
+                                tag=str(self.local_progress.epoch),
+                                tag_message="Bump release version.",
+                            )
+                            refs = list_repo_refs(
+                                self.config.neuron.model_name, repo_type="model"
+                            )
+                            tag_name = max([int(tag.name) for tag in refs.tags])
+                            bt.logging.info(f"New Model Tag {tag_name}")
+                    
+                    scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
+
+            
             elif gradient_averaging_step.cancelled():
                 raise asyncio.CancelledError("Gradient averaging step was cancelled.")
                 
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
-
+        
         except Exception as e:
             bt.logging.info(
                 f"AllReduce Failed With Error: {e}"
@@ -223,8 +274,20 @@ async def forward(self):
     # Normalise Rewards
     if rewards.sum() != 0:
         rewards = rewards / rewards.sum()
-
+        
     bt.logging.info(f"Final Scores: {rewards}")
+
+    # Update the tracker based on the rewards
+    if not all_reduce:
+        self.update_local_tracker_state(rewards, responses)
+    self.event.update(
+        {
+            "local_samples_accumulated": self.local_progress.samples_accumulated,
+            "local_epoch": self.local_progress.epoch,
+            "global_samples_accumulated": self.global_progress.samples_accumulated,
+            "global_epoch": self.global_progress.epoch,
+        }
+    )
 
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)

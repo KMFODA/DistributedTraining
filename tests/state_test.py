@@ -1,4 +1,13 @@
+<<<<<<< HEAD
 import copy
+=======
+from template.validator.validator_core import (
+    DatasetStateSingelton,
+    ModelSingleton,
+    upload_checkpoint,
+)
+from transformers import AutoTokenizer, AutoModelForCausalLM
+>>>>>>> origin/DTAllReduce
 from functools import partial
 
 import hivemind

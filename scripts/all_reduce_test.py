@@ -53,7 +53,6 @@ def launch_dht_instances(n_peers: int, **kwargs) -> List[DHT]:
         DHT(initial_peers=initial_peers, start=True, await_ready=False, **kwargs)
         for _ in range(n_peers - 1)
     )
-
     for process in dhts[1:]:
         process.wait_until_ready()
 

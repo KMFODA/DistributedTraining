@@ -1,24 +1,29 @@
 import asyncio
 import base64
-import contextlib
+import copy
 import logging
 import random
 import re
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import chain
 from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
                     Sequence, Tuple, Union)
 
+import torch
 import bittensor as bt
+
+from huggingface_hub import create_tag, list_repo_refs
+from pydantic import BaseModel, conint
+from transformers import AutoModelForCausalLM
+
 import hivemind
 import hivemind.averaging
 import hivemind.averaging.averager
-import torch
 from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
                                           AveragingMode)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
-from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import (deserialize_torch_tensor,
                                   serialize_torch_tensor)
@@ -35,10 +40,24 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
                                           get_dht_time)
 
+
+from template.utils.misc import update_global_tracker_state
+
 GatheredData = Any
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
+
+
+@dataclass(frozen=False)
+class GlobalTrainingProgress:
+    epoch: int
+    samples_accumulated: int
+
+
+class LocalTrainingProgress(BaseModel):
+    epoch: conint(ge=0, strict=True)
+    samples_accumulated: conint(ge=0, strict=True)
 
 
 class DTAllReduceRunner(AllReduceRunner):
@@ -563,7 +582,11 @@ class DTGradientAverager(DTAverager):
     def _grad_accumulators(self) -> Iterator[torch.Tensor]:
         """averager-based gradient accumulators"""
         assert (self._local_accumulators is None) == self.reuse_grad_buffers
-        yield from self._grads_from_parameters() if self.reuse_grad_buffers else self._local_accumulators
+        yield from (
+            self._grads_from_parameters()
+            if self.reuse_grad_buffers
+            else self._local_accumulators
+        )
 
     @torch.no_grad()
     def accumulate_grads_(self, batch_size: int):
@@ -818,7 +841,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
             global_epoch, **kwargs
         )
         if loaded_state is None:
-            return
+            return False
 
         metadata, flat_tensors = loaded_state
         if (not isinstance(metadata.get("epoch"), int)) or metadata[
@@ -827,7 +850,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
             logger.warning(
                 "Cowardly refusing to load state from peer: peer's epoch is behind our local epoch"
             )
-            return
+            return False
 
         loaded_parameters_and_extras = flat_tensors[:num_parameters_and_extras]
         loaded_opt_tensors = flat_tensors[num_parameters_and_extras:]
@@ -835,7 +858,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
             logger.error(
                 "Failed to load state from peer, received parameters, extras or metadata"
             )
-            return
+            return False
 
         with torch.no_grad(), self.lock_averaged_tensors:
             try:
@@ -846,7 +869,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
                 logger.warning(
                     "Failed to load state from peer, received inconsistent number of optimizer statistics"
                 )
-                return
+                return False
 
             for local_param, loaded_param in zip(
                 main_parameters_and_extras, loaded_parameters_and_extras
@@ -860,6 +883,7 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
 
         self.local_epoch = metadata["epoch"]
         self._update_scheduler()
+        return True
 
 
 def load_optimizer_state(
@@ -881,14 +905,58 @@ def load_optimizer_state(
 
 def load_state_from_peer(self, epoch=None):
     if epoch == None:
-        epoch = self.tracker.global_progress.epoch
+        update_global_tracker_state(self)
+        epoch = self.global_progress.epoch
+    loaded_state = False
 
     bt.logging.info("Model Weights Before Loading State")
-    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-    self.state_averager.load_final_state_from_peers(epoch)
-    bt.logging.info("Model Weights After Loading State")
-    bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+    current_model_weights_sample = copy.copy(
+        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+    )
+    bt.logging.info(current_model_weights_sample)
 
-    with self.tracker.pause_updates():
-        self.tracker.local_progress.epoch = self.tracker.global_progress.epoch
-        self.local_epoch = self.tracker.local_progress.epoch
+    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
+    if tag_name and (tag_name >= epoch):
+        bt.logging.info(
+            f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.config.neuron.model_name,
+            revision=str(self.global_progress.epoch),
+        )
+        self.model.to(self.device)
+        loaded_state = True
+    else:
+        try:
+            loaded_state = self.state_averager.load_final_state_from_peers(epoch)
+        except:
+            bt.logging.warning(
+                "Failed to load latest state using DHT. Local model is most likely out of sync with global model"
+            )
+
+    if loaded_state:
+        bt.logging.info("Model Weights After Loading State")
+        new_model_weights_sample = copy.copy(
+            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        )
+        bt.logging.info(new_model_weights_sample)
+        self.local_epoch = self.local_progress.epoch
+        self.local_progress.epoch = self.global_progress.epoch
+        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        bt.logging.info(f"New Model Tag {tag_name}")
+        if tag_name and (tag_name < self.global_progress.epoch):
+            bt.logging.info("Pushing New Model Weights To HF Hub")
+            self.model.push_to_hub(self.config.neuron.model_name)
+            create_tag(
+                self.config.neuron.model_name,
+                repo_type="model",
+                tag=str(self.local_progress.epoch),
+                tag_message="Bump release version.",
+            )
+            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+            tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else self.model_hf_tag
+            self.model_hf_tag = tag_name
+            bt.logging.info(f"New Model Tag {tag_name}")

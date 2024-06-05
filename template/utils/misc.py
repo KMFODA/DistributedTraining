@@ -17,8 +17,8 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import functools
 import logging
+import random
 import re
 import time
 from datetime import datetime
@@ -29,17 +29,17 @@ from typing import Any, Callable, List
 
 import bittensor as bt
 import hivemind
+import pandas as pd
 import requests
 import speedtest
 import torch
 import wandb
+from bitarray import bitarray
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from loguru import logger as bt_logger
 
 from template.protocol import Train
-from template.utils.chain_storage import run_in_subprocess
-
 
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
@@ -339,69 +339,153 @@ def init_dht(self):
     ]
 
 
-# From: https://github.com/unconst/gradient/blob/main/neurons/validator.py#L53
-def compute_losses(
-    model: torch.nn.Module, batches: List[torch.Tensor], device: str = "cpu"
-) -> float:
+def warmup(self):
     """
-    Computes and returns the average loss of a model evaluated over a given set of batches.
-
-    This function iterates through each batch, feeds it to the model, and accumulates the loss to compute
-    the average loss across all batches. This is useful for evaluating the model's performance on a dataset.
+    Processes the incoming 'Train' synapse by performing a training run
 
     Args:
-        model (torch.nn.Module): The model to be evaluated.
-        batches (List[torch.Tensor]): A list of batches to evaluate the model on. Each batch is a torch.Tensor.
-        device (str, optional): The device (e.g., 'cpu' or 'cuda') on which to perform the computations. Defaults to 'cpu'.
+        synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
 
     Returns:
-        float: The average loss computed over all the batches.
-
-    Note:
-        This function does not compute gradients and is typically used for model evaluation.
-
-    Raises:
-        ValueError: If `batches` is empty, raising a ValueError to indicate that no batches were provided for evaluation.
+        template.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
-    # Ensure there are batches to compute the loss on
-    if not batches:
-        bt.logging.error("No batches provided for loss computation.")
-        raise ValueError("No batches provided for loss computation.")
 
-    # Initialize total_loss to accumulate losses over batches
-    total_loss: float = 0.0
+    self.local_epoch, self.local_samples = 0, 0
+    # Load dataset
+    self.dataset_loader = ()
+    dataset_length = 968000015
+    self.dataset_indices = bitarray(dataset_length)
 
-    # Calculate the number of batches for averaging the loss later
-    num_batches: int = len(batches)
-
-    # Disable gradient computations for efficiency and to prevent model updates
-    with torch.no_grad():
-        for batch in batches:
-            try:
-                # Move the batch to the specified device (e.g., CPU or GPU)
-                inputs: torch.Tensor = batch.to(device)
-                # Forward pass: Compute the model's output and loss for the given inputs
-                outputs = model(inputs, labels=inputs)
-                # Accumulate the loss
-                total_loss += outputs.loss.item()
-            except Exception as e:
-                bt.logging.error(f"Error during loss computation for a batch: {e}")
-                raise Exception(f"Error during loss computation for a batch: {e}")
-
-    # Compute the average loss across all batches
-    try:
-        average_loss: float = total_loss / num_batches
-        # TODO Should we add same loss/ppl calculation as in sn9? https://github.com/RaoFoundation/pretraining/blob/d2faaec9737c8858cd22373140bd5db0ace02c4c/scripts/run_benchmarks.py#L37
-        perplexity: float = torch.exp(torch.tensor(average_loss)).item()
-    except ZeroDivisionError as e:
-        bt.logging.error(
-            "Division by zero encountered while computing average loss. This should not happen."
+    search_start = random.choice(
+        range(
+            len(self.dataset_indices)
+            - self.config.neuron.training_examples_per_miner
+            + 1
         )
-        raise ZeroDivisionError(
-            "Division by zero encountered while computing average loss."
+    )
+    start = self.dataset_indices.index(
+        bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+    )
+    group = [
+        i for i in range(start, start + self.config.neuron.training_examples_per_miner)
+    ]
+    self.dataset_indices[group] = True
+
+    # Create Dataloader
+    dataloader = SubsetFalconLoader(
+        batch_size=self.config.neuron.local_batch_size_train,
+        sequence_length=1024,
+        rows=group,
+    )
+
+    total_loss = 0
+    # Train data for one epoch
+    for index, batch in enumerate(dataloader):
+        inputs = batch.to(self.device)
+
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=inputs)
+
+        # Normalize loss to account for batch accumulation
+        loss = outputs.loss
+
+        # Accumulate Total Loss
+        total_loss += outputs.loss.detach().item()
+
+        # Backward Pass
+        loss.backward()
+
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
         )
 
-    # Log the computed average loss
-    bt.logging.debug(f"Average loss computed successfully: {average_loss}")
+        # Accumulate Gradients
+        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
-    return average_loss, perplexity
+        # Zero Gradients
+        self.opt.zero_grad()
+
+        # Update Tracker
+        self.local_progress.samples_accumulated += 1
+        self.tracker.report_local_progress(self.local_epoch, self.local_samples)
+
+        # Log accumulation status
+        bt.logging.info(
+            f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
+        )
+
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log(
+                {
+                    "loss": outputs.loss.detach().item(),
+                    "local_epoch": self.local_epoch,
+                    "global_epoch": self.tracker.global_progress.epoch,
+                }
+            )
+
+
+def update_global_tracker_state(self):
+    runs = wandb.Api().runs(
+        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
+    )
+    global_progress = 0
+    global_epoch = 0
+
+    for run in runs:
+        if (
+            ("validator" in run.name)
+            and (run.state == "running")
+            and (f"UID{self.uid}" not in run.name.split("_"))
+        ):
+            history = run.history()
+            if (
+                ("local_samples_accumulated" in history.columns)
+                and ("global_samples_accumulated" in history.columns)
+                and (
+                    not history.loc[
+                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                    ].empty
+                )
+            ):
+                max_epoch = max(
+                    history.loc[
+                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                    ]
+                )
+                filtered_history = history.loc[
+                    (history.loc[:, "local_epoch"] == max_epoch), :
+                ]
+                filtered_history = filtered_history.loc[
+                    (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
+                ]
+                if max_epoch > global_epoch:
+                    global_epoch = max(global_epoch, max_epoch)
+                    global_progress = 0
+                elif max_epoch < global_epoch:
+                    continue
+
+                global_progress += max(
+                    filtered_history.loc[:, "local_samples_accumulated"]
+                )
+
+        else:
+            continue
+
+    # Add local samples
+    global_progress += self.local_progress.samples_accumulated
+    global_epoch = max(global_epoch, self.local_progress.epoch)
+
+    self.global_progress.samples_accumulated = global_progress
+    self.global_progress.epoch = global_epoch
+    bt.logging.info(
+        f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
+    )
+    bt.logging.info(
+        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
+    )

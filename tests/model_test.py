@@ -15,6 +15,7 @@ from transformers import (AutoModelForCausalLM, AutoTokenizer,
                           default_data_collator)
 
 
+
 # Define encoding function
 def encode(examples):
     return tokenizer(

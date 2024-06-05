@@ -87,7 +87,7 @@ if not args.initial_peers:
 
 model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
 # Move the model to the appropriate device
-model = model.to("cuda")
+self.model = self.model.to(self.device)
 
 # Set up a decentralized optimizer that will average with peers in background
 opt = torch.optim.AdamW(model.parameters(), lr=0.001)

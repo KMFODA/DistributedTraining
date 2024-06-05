@@ -27,39 +27,8 @@ import torch
 from template.data.dataset import SubsetFalconLoader  # , get_random_batches
 from template.utils.misc import compute_losses
 from template.utils.uids import get_random_uids
-
-
-def score_metrics(self):
-    """
-    Scores the metrics of the model after running AllReduce.
-    We are using both loss and perplexity here to get a more nuanced view of the model's performance to balance the validation of miners more fairly.
-    """
-
-    # Load a random set of batches
-    batches = get_random_batches(
-        n=self.config.pages_per_epoch,
-        batch_size=self.config.bs,
-        sequence_length=self.config.sl,
-    )
-
-    # TODO Should we do add/remove delta? Or just use the model as is?
-    average_loss, ppl = self.previous_loss - compute_losses(
-        self.model, batches, device=self.config.device
-    )
-
-    delta_loss = average_loss - self.previous_loss
-    delta_ppl = ppl - self.previous_ppl
-
-    # Weights are the softmax of the loss and perplexity deltas, i.e. scaled according to how much the metrics have changed.
-    score = self.config.alpha * torch.softmax(delta_loss, dim=0) + (
-        1 - self.config.alpha
-    )
-    score *= self.config.beta * torch.softmax(delta_ppl, dim=0) + (1 - self.config.beta)
-
-    self.previous_loss = average_loss
-    self.previous_ppl = ppl
-
-    return score
+import time
+import asyncio
 
 
 def score_gradients(self, response, uid):
@@ -87,19 +56,19 @@ def score_gradients(self, response, uid):
     # Backward Pass
     loss.backward()
 
+    # Copy gradients
+    gradients = tuple(
+        (
+            param.grad.detach().cpu().clone()
+            if param.grad is not None
+            else torch.zeros_like(param)
+        )
+        for param in self.model.parameters()
+    )
+
     # Accumulate Gradients
     self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
-    if not self.config.neuron.dont_wandb_log:
-        self.wandb.log({"loss": outputs.loss.detach().item()})
-
-    # Store summed random gradients in the synapse
-    gradients = tuple(
-        param.grad.detach().cpu().clone()
-        if param.grad is not None
-        else torch.zeros_like(param)
-        for param in self.model.parameters()
-    )
     gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
 
     bt.logging.info(
