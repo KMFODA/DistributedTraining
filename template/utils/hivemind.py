@@ -300,7 +300,6 @@ class DTAverager(hivemind.DecentralizedAverager):
             trigger, cancel = MPFuture(), MPFuture()
             step.attach(trigger, cancel)
             future_for_init.set_result((trigger, cancel))
-
             while not step.done():
                 try:
                     self._pending_groups_registered.clear()
