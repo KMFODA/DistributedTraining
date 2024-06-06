@@ -24,9 +24,7 @@ from typing import List
 import bittensor as bt
 import torch
 
-from template.data.dataset import SubsetFalconLoader  # , get_random_batches
-from template.utils.misc import compute_losses
-from template.utils.uids import get_random_uids
+from template.data.dataset import SubsetFalconLoader
 import time
 import asyncio
 
