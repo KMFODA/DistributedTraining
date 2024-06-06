@@ -69,7 +69,7 @@ async def forward(self):
         and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # bt.logging.info("Scheduling all-reduce synapse call")
-        sample_size = int(self.metagraph.n)
+        sample_size = int(self.metagraph.n) # TODO Set all_reduce sample size
         # next_step_control = self.grad_averager.schedule_step()
         # self.step_scheduled = True
         all_reduce = True
@@ -136,8 +136,8 @@ async def forward(self):
                 custom_group_info=custom_group, wait=False
             )
             
-            # Start synapse queries - don't await so we can enter below timeout counter
-            queries = asyncio.gather(*query_tasks)
+            # Start synapse queries
+            queries = await asyncio.gather(*query_tasks)
 
             sleep_counter = 1
             while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):

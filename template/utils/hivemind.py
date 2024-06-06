@@ -126,7 +126,7 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
             except BaseException as e:
-                if isinstance(e, Exception):
+                if isinstance(e, Exception): #TODO Here we need to catch if peers disconnect ("Connection Reset By Peer")
                     logger.debug(
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
