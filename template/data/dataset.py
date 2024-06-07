@@ -42,8 +42,8 @@ class SubsetFalconLoader(IterableDataset):
         self.tokenizer = tokenizer
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
-            "dataset": "tiiuae/falcon-refinedweb",
-            "config": "default",
+            "dataset": "HuggingFaceFW/fineweb",
+            "config": "sample-350BT",
             "split": "train",
         }
         self.rows = rows

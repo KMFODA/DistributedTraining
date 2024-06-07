@@ -8,16 +8,15 @@ import time
 from contextlib import contextmanager
 
 import hivemind
-import torch
+import schedulefree
+
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHTID
 from hivemind.utils.logging import use_hivemind_log_handler
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
-from template.base.neuron import BaseNeuron
 from template.data.dataset import SubsetFalconLoader
 from template.utils.hivemind import DTGradientAverager
-from template.utils.misc import init_dht, setup_logging
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(
@@ -85,12 +84,11 @@ if not args.initial_peers:
 
     time.sleep(16)
 
-model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
-# Move the model to the appropriate device
-self.model = self.model.to(self.device)
+model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-500m")
 
 # Set up a decentralized optimizer that will average with peers in background
-opt = torch.optim.AdamW(model.parameters(), lr=0.001)
+# opt = torch.optim.AdamW(model.parameters(), lr=0.001)
+opt = schedulefree.AdamWScheduleFree(model.parameters(), lr=args.lr)
 
 global_target_batch_size = 600  # set your target batch size
 grad_averager = DTGradientAverager(
@@ -125,7 +123,7 @@ while True:
     dataloader = SubsetFalconLoader(
         batch_size=5,
         sequence_length=1024,
-        rows=random.choices(range(0, 968000015), k=1000),
+        rows=random.choices(range(0, 519_000_000), k=1000),
     )
 
     for i, batch in enumerate(dataloader):
@@ -162,25 +160,24 @@ while True:
 
         # aggregate gradients and perform optimizer step when target batch size is reached
         if tracker.global_progress.samples_accumulated >= global_target_batch_size:
-            # if not group_is_set:
-            _p2p = loop.run_until_complete(dht.replicate_p2p())
+            if not group_is_set:
+                _p2p = loop.run_until_complete(dht.replicate_p2p())
 
-            group_id = base64.b64decode(b"akGgUCKXywtpOCU76x9Ncxzi2qk=")
-            ordered_peer_ids = [dht.peer_id]
-            remote_peer = loop.run_until_complete(_p2p.list_peers())
-            remote_peer = [peer.peer_id for peer in remote_peer]
-            ordered_peer_ids += remote_peer
-            ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
-            custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
-            print(custom_group)
-            group_is_set = True
+                group_id = base64.b64decode(b"akGgUCKXywtpOCU76x9Ncxzi2qk=")
+                ordered_peer_ids = [dht.peer_id]
+                remote_peer = loop.run_until_complete(_p2p.list_peers())
+                remote_peer = [peer.peer_id for peer in remote_peer]
+                ordered_peer_ids += remote_peer
+                ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
+                custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+                print(custom_group)
+                group_is_set = True
 
             with tracker.pause_updates():
                 print("grad stepping..")
                 # grad_averager.step(custom_group_info=custom_group)
                 grad_step = grad_averager.step(
-                    custom_group_info=custom_group, timeout=180
-                )
+                    custom_group_info=custom_group)
                 # if gradient_averaging_step.done():
                 # while not grad_step.done():
                 # print("Sleeping for 10")
