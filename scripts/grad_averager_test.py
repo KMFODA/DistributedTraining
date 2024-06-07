@@ -53,15 +53,15 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "104.167.17.2"
+address = "83.26.116.172"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/31796"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/41385"]
 
 # Prepare DHT parameters
 dht_params = {
     "host_maddrs": [
-        f"/ip4/0.0.0.0/tcp/31796",
-        f"/ip4/0.0.0.0/udp/31796/quic",
+        f"/ip4/0.0.0.0/tcp/41385",
+        f"/ip4/0.0.0.0/udp/41385/quic",
     ],
     "announce_maddrs": announce_maddrs,
     "start": True,
@@ -85,10 +85,11 @@ if not args.initial_peers:
     time.sleep(16)
 
 model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-500m")
+model.to("cuda")
 
 # Set up a decentralized optimizer that will average with peers in background
 # opt = torch.optim.AdamW(model.parameters(), lr=0.001)
-opt = schedulefree.AdamWScheduleFree(model.parameters(), lr=args.lr)
+opt = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.001)
 
 global_target_batch_size = 600  # set your target batch size
 grad_averager = DTGradientAverager(
@@ -115,13 +116,14 @@ time.sleep(5)
 loop = asyncio.new_event_loop()
 group_is_set = False
 # _p2p = loop.run_until_complete(dht.replicate_p2p())
+BATCH_SIZE = 1
 
 while True:
     print("Starting training..")
     # for i in range(0, 1):
     print("Getting new data..")
     dataloader = SubsetFalconLoader(
-        batch_size=5,
+        batch_size=BATCH_SIZE,
         sequence_length=1024,
         rows=random.choices(range(0, 519_000_000), k=1000),
     )
@@ -134,15 +136,15 @@ while True:
 
         loss = outputs.loss
         scaled_loss = (
-            loss / global_target_batch_size / 5
+            loss / global_target_batch_size / BATCH_SIZE
         )  # Minus batch size (in this case 1)
         print(loss)
         scaled_loss.backward()
 
         # Only use this if reuse_grad_buffers=False
-        grad_averager.accumulate_grads_(batch_size=5)
+        grad_averager.accumulate_grads_(batch_size=BATCH_SIZE)
 
-        local_samples += 5  # increment the total batch size
+        local_samples += BATCH_SIZE  # increment the total batch size
 
         tracker.report_local_progress(local_epoch, local_samples)
         print(

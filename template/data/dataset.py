@@ -64,7 +64,7 @@ class SubsetFalconLoader(IterableDataset):
                     response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
 
                     for row in response.json()["rows"]:
-                        content = row["row"]["content"]
+                        content = row["row"]["text"]
                         self.buffer += self.tokenizer(content, truncation=True)[
                             "input_ids"
                         ]
