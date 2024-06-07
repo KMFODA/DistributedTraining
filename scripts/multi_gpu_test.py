@@ -2,23 +2,37 @@ import argparse
 import logging
 import os
 import random
+from torch.utils.data import IterableDataset
 
 import torch
+from torch.utils.data import DataLoader
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
 
 # from template.data.dataset import SubsetFalconLoader
 
 def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = '172.18.0.1'
-    os.environ['MASTER_PORT'] = '50464'
+    os.environ['MASTER_ADDR'] = '192.168.100.188'
+    os.environ['MASTER_PORT'] = '48732'
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 def cleanup():
     dist.destroy_process_group()
+    
+    
+class CustomIterableDataset(IterableDataset):
+    def __init__(self, dataset, rank, world_size):
+        self.dataset = split_dataset_by_node(dataset, rank=rank, world_size=world_size)
+        self.rank = rank
+        self.world_size = world_size
+
+    def __iter__(self):
+        for example in self.dataset:
+            yield example
 
 def train(rank, world_size, args):
     setup(rank, world_size)
@@ -50,12 +64,13 @@ def train(rank, world_size, args):
     tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=False)
     tokenizer.pad_token = tokenizer.eos_token
     
-    dataset = load_dataset('HuggingFaceFW/fineweb', 'sample-10BT', split='train')
-    dataset = dataset.map(lambda e: tokenizer(e['text'], truncation=True, padding='max_length', max_length=1024), batched=True, num_proc=mp.cpu_count())
-    dataset.set_format(type='torch', columns=['input_ids'])
+    dataset = load_dataset('HuggingFaceFW/fineweb', 'sample-10BT', split='train', streaming=True)
+    dataset = dataset.map(lambda e: tokenizer(e['text'], truncation=True, padding='max_length', max_length=1024), batched=True)
+    #dataset.set_format(type='torch', columns=['input_ids'])
 
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-    dataloader = DataLoader(dataset, batch_size=local_batch_size, sampler=sampler)
+    # Split dataset by node
+    custom_dataset = CustomIterableDataset(dataset, rank, world_size)
+    dataloader = DataLoader(custom_dataset, batch_size=local_batch_size, collate_fn=default_data_collator)
 
     while True:
         logger.info("Starting training..")
@@ -67,7 +82,10 @@ def train(rank, world_size, args):
 
         model.zero_grad()
         for i, batch in enumerate(dataloader):
-            inputs = batch.to(rank)
+            #inputs = batch.to(rank)
+            #inputs = torch.stack([item["input_ids"] for item in batch]).to(rank)
+            inputs = batch["input_ids"].to(rank)
+
 
             outputs = model(input_ids=inputs, labels=inputs)
             loss = outputs.loss
