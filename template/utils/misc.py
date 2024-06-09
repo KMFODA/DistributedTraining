@@ -354,7 +354,7 @@ def warmup(self):
     self.local_epoch, self.local_samples = 0, 0
     # Load dataset
     self.dataset_loader = ()
-    dataset_length = 968000015
+    dataset_length = 22_700_000_000
     self.dataset_indices = bitarray(dataset_length)
 
     search_start = random.choice(

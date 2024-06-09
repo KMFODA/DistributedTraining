@@ -137,10 +137,10 @@ async def forward(self):
             )
             
             # Start synapse queries
-            queries = await asyncio.gather(*query_tasks)
+            responses = await asyncio.gather(*query_tasks)
 
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= self.all_reduce_timeout):
                 time.sleep(1)
                 sleep_counter += 1
 
