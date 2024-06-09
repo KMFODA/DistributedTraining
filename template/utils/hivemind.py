@@ -98,7 +98,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 part_index = 0
 
                 def _try_deserialize(msg):
-                    print("try_deserialize..")
+                    # print("try_deserialize..")
 
                     if msg.code != averaging_pb2.AVERAGED_PART:
                         raise AllreduceException(
@@ -115,7 +115,7 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                    print("amap_in_executor..")
+                    # print("amap_in_executor..")
 
                 if (
                     part_index
@@ -164,7 +164,7 @@ class DTAllReduceRunner(AllReduceRunner):
             #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
             # else:
             async for message in super().rpc_aggregate_part(stream, context):
-                print("rpc_aggregate_part..")
+                # print("rpc_aggregate_part..")
                 yield message
 
         except Exception as e:
@@ -185,7 +185,7 @@ class DTAllReduceRunner(AllReduceRunner):
         )
         print("_generate_input_for_peer..")
         async for part in parts_aiter:
-            print("_generate_input_for_peer for loop")
+            # print("_generate_input_for_peer for loop")
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
         # except Exception as e:
@@ -924,7 +924,7 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
-            revision=str(self.global_progress.epoch),
+            revision=str(tag_name),
         )
         self.model.to(self.device)
         loaded_state = True

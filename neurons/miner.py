@@ -64,7 +64,7 @@ class Miner(BaseMinerNeuron):
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -91,6 +91,11 @@ class Miner(BaseMinerNeuron):
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True,
         )
+        if self.model_hf_tag is not None:
+            with self.tracker.pause_updates():
+                self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                                self.tracker.local_progress.epoch + 1
+                )
 
         # Init State Averager
         self.state_averager = DTStateAverager(
@@ -121,7 +126,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = 968000015
+        dataset_length = 27_000_000_000
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -173,7 +178,7 @@ class Miner(BaseMinerNeuron):
             )
             
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= 300):
+            while (gradient_averaging_step.done() is False) and (sleep_counter <= synapse.timeout):
                 time.sleep(1)
                 sleep_counter += 1
 
@@ -184,34 +189,35 @@ class Miner(BaseMinerNeuron):
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()
+                with self.tracker.pause_updates():
+                    with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                        bt.logging.info("Performing Optimizer Step")
+                        self.opt.step()
 
-                bt.logging.info("Model Weights After Optimizer Step")
-                new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
-                )
-                bt.logging.info(new_model_weights_sample)
-
-                if new_model_weights_sample == current_model_weights_sample:
-                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
-
-                elif np.nan in new_model_weights_sample:
-                    bt.logging.info(
-                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                    bt.logging.info("Model Weights After Optimizer Step")
+                    new_model_weights_sample = copy.copy(
+                        [layer for layer in self.model.parameters()][-1][-10:].tolist()
                     )
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                    bt.logging.info(new_model_weights_sample)
 
-                else:
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                        self.tracker.local_progress.epoch + 1
-                    )
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
-                    synapse.completion = "True"
+                    if new_model_weights_sample == current_model_weights_sample:
+                        bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+
+                    elif np.nan in new_model_weights_sample:
+                        bt.logging.info(
+                            "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                        )
+                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+
+                    else:
+                        self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                        self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                            self.tracker.local_progress.epoch + 1
+                        )
+                        self.local_progress.epoch += 1
+                        self.local_progress.samples_accumulated = 0
+                        synapse.completion = "True"
                     
             elif gradient_averaging_step.cancelled():
                 raise asyncio.CancelledError("Gradient averaging step was cancelled.")
@@ -219,9 +225,6 @@ class Miner(BaseMinerNeuron):
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
             
-
-                
-
             return synapse
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
@@ -244,7 +247,7 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         update_global_tracker_state(self)
-        if (self.tracker.local_progress.epoch < self.global_progress.epoch) and (
+        if (self.local_progress.epoch < self.global_progress.epoch) and (
             self.model_hf_tag < self.global_progress.epoch
         ):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
