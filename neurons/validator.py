@@ -32,6 +32,7 @@ from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.optim.state_averager import TrainingStateAverager
+from template.data.dataset import SubsetFalconLoader
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
