@@ -48,7 +48,7 @@ class SubsetFalconLoader(IterableDataset):
         }
         self.rows = rows
         self.buffer = []
-        self.retry_limit = 10  # Number of retries
+        self.retry_limit = 20  # Number of retries
         self.retry_delay = 5  # Seconds to wait between retries
         self.fetch_data_for_page(min(self.rows), len(self.rows))
 
