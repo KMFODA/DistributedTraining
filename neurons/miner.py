@@ -126,7 +126,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = 27_000_000_000
+        dataset_length = SubsetFalconLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -276,7 +276,7 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
-
+        
         total_loss = 0
         # Train data for one epoch
         for index, batch in enumerate(dataloader):

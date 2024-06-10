@@ -32,7 +32,7 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
-    max_pages: int = 27_000_000_000
+    max_pages: int = 519_000_000
 
     def __init__(
         self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
@@ -43,7 +43,8 @@ class SubsetFalconLoader(IterableDataset):
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
             "dataset": "HuggingFaceFW/fineweb",
-            "config": "default",
+            # "dataset" : "tiiuae/falcon-refinedweb",
+            "config": "sample-350BT",
             "split": "train",
         }
         self.rows = rows

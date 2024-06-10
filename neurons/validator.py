@@ -96,7 +96,7 @@ class Validator(BaseValidatorNeuron):
             )
 
         # Init Dataset
-        dataset_length = 22_700_000_000
+        dataset_length = SubsetFalconLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device, Model & Tokenizer
