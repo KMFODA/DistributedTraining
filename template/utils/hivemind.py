@@ -65,12 +65,12 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
-        print(f"WE ARE HERE NOW! {peer_id}")
-        print("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
+        bt.logging.debug(f"WE ARE HERE NOW! {peer_id}")
+        bt.logging.debug("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
-            print("self.peer_id..")
+            bt.logging.debug("self.peer_id..")
             sender_index = self.sender_peer_ids.index(peer_id)
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
@@ -82,7 +82,7 @@ class DTAllReduceRunner(AllReduceRunner):
 
         else:
             try:
-                print("DTAllReduceRunner..")
+                bt.logging.debug("DTAllReduceRunner..")
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
                     self._generate_input_for_peer(peer_index), done_sending
@@ -90,7 +90,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
-                print(f"_get_peer_stub done.. {peer_id}")
+                bt.logging.debug(f"_get_peer_stub done.. {peer_id}")
 
                 if self.should_delay_results(self.peer_id):
                     await done_sending.wait()
@@ -98,7 +98,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 part_index = 0
 
                 def _try_deserialize(msg):
-                    # print("try_deserialize..")
+                    # bt.logging.debug("try_deserialize..")
 
                     if msg.code != averaging_pb2.AVERAGED_PART:
                         raise AllreduceException(
@@ -115,7 +115,7 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                    # print("amap_in_executor..")
+                    # bt.logging.debug("amap_in_executor..")
 
                 if (
                     part_index
@@ -164,7 +164,7 @@ class DTAllReduceRunner(AllReduceRunner):
             #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
             # else:
             async for message in super().rpc_aggregate_part(stream, context):
-                # print("rpc_aggregate_part..")
+                # bt.logging.debug("rpc_aggregate_part..")
                 yield message
 
         except Exception as e:
@@ -183,9 +183,9 @@ class DTAllReduceRunner(AllReduceRunner):
             tensor_part=first_part,
             weight=self.weight,
         )
-        print(f"_generate_input_for_peer.. {peer_index}")
+        bt.logging.debug(f"_generate_input_for_peer.. {peer_index}")
         async for part in parts_aiter:
-            # print("_generate_input_for_peer for loop")
+            # bt.logging.debug("_generate_input_for_peer for loop")
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
         # except Exception as e:
@@ -194,7 +194,7 @@ class DTAllReduceRunner(AllReduceRunner):
         #     raise e
 
     async def _ban_sender(self, peer_id: PeerID):
-        print("ban sender..")
+        bt.logging.debug("ban sender..")
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
@@ -273,8 +273,8 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
-        print("DTAverager.. self.next_chunk_timeout", self.next_chunk_timeout)
-        print("DTAverager.. timeout", timeout)
+        bt.logging.debug("DTAverager.. self.next_chunk_timeout", self.next_chunk_timeout)
+        bt.logging.debug("DTAverager.. timeout", timeout)
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
 
@@ -302,11 +302,11 @@ class DTAverager(hivemind.DecentralizedAverager):
             step.allow_allreduce()
 
         if wait:
-            print("wait step")
-            print(step.result())
+            bt.logging.debug("wait step")
+            bt.logging.debug(step.result())
         else:
-            print("non wait step")
-            print(step)
+            bt.logging.debug("non wait step")
+            bt.logging.debug(step)
 
         return step.result() if wait else step
 
@@ -328,17 +328,17 @@ class DTAverager(hivemind.DecentralizedAverager):
 
                     async def distributed_barrier():
                         key = f"{base64.b64encode(custom_group_info.group_id).decode('utf-8')}.barrier"
-                        print(key)
+                        bt.logging.debug(key)
                         peer_id_strs = [
                             peer_id.to_string()
                             for peer_id in custom_group_info.peer_ids
                         ]
-                        print("HERE YO..")
+                        bt.logging.debug("HERE YO..")
                         expiration_time = (
                             get_dht_time() + 300 # TODO propogate timeout to here??
                         )  
-                        print("NOT HERE YO..")
-                        print(expiration_time)
+                        bt.logging.debug("NOT HERE YO..")
+                        bt.logging.debug(expiration_time)
 
                         # Register this peer
                         store_result = self.dht.store(
@@ -352,7 +352,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                 f"Failed to store peer {self.peer_id} in DHT"
                             )
 
-                        print("later:", get_dht_time(), expiration_time)
+                        bt.logging.debug("later:", get_dht_time(), expiration_time)
                         while get_dht_time() < expiration_time:
                             # Check if all peers have registered
                             gathered = self.dht.get(key, latest=True)
@@ -365,7 +365,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                     if not step.triggered:
                                         step.stage = AveragingStage.AWAITING_TRIGGER
                                         await step.wait_for_trigger()
-                                    print(registered_peers)
+                                    bt.logging.debug(registered_peers)
                                     return  # All peers are ready
                             await asyncio.sleep(0.5)
 
@@ -377,26 +377,26 @@ class DTAverager(hivemind.DecentralizedAverager):
                     matchmaking_task = asyncio.create_task(distributed_barrier())
                     check_cancel_task = asyncio.create_task(step.wait_for_cancel())
 
-                    print("Here1")
+                    bt.logging.debug("Here1")
                     await asyncio.wait(
                         {matchmaking_task, check_cancel_task},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                    print("Here2")
+                    bt.logging.debug("Here2")
 
                     if step.cancelled():
-                        print("CANCELLING APPARENTLY..")
+                        bt.logging.debug("CANCELLING APPARENTLY..")
                         matchmaking_task.cancel()
                         raise asyncio.CancelledError()
                     else:
-                        print("checking CANCELLING APPARENTLY..")
+                        bt.logging.debug("checking CANCELLING APPARENTLY..")
                         check_cancel_task.cancel()
 
                     await matchmaking_task
-                    print("Finished waiting for group to assemble")
+                    bt.logging.debug("Finished waiting for group to assemble")
 
                     with self._register_allreduce_group(custom_group_info):
-                        print("Running AllReduce..")
+                        bt.logging.debug("Running AllReduce..")
                         step.stage = AveragingStage.RUNNING_ALLREDUCE
                         step.set_result(
                             await asyncio.wait_for(
@@ -440,7 +440,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                 step.set_exception(e)
             raise
         finally:
-            print("Finally..")
+            bt.logging.debug("Finally..")
             step.stage = AveragingStage.FINISHED
             if not step.done():
                 step.set_exception(
@@ -647,7 +647,7 @@ class DTGradientAverager(DTAverager):
             raise RuntimeError(
                 f"Averaging with a pre-scheduled group, parameters {kwargs} will have no effect"
             )
-        print(control)
+        bt.logging.debug(f"control {control}")
         assert not control.triggered, f"This {type(control)} instance was already used"
         if self._new_averaged_grads and self.warn:
             logger.warning(
@@ -663,7 +663,7 @@ class DTGradientAverager(DTAverager):
         if reset_accumulators:
             self.reset_accumulated_grads_()
         control.allow_allreduce()
-        print(control.stage)
+        bt.logging.debug(f"control.stage {control.stage}")
 
         return control.result(timeout) if wait else control
 
