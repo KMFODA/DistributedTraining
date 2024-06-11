@@ -255,6 +255,7 @@ class Miner(BaseMinerNeuron):
         )
 
         total_loss = 0
+        index = 0
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
