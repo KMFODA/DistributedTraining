@@ -220,7 +220,7 @@ async def forward(self):
             scores = torch.FloatTensor([0 for _ in self.miner_uids]).to(self.device)
             responses = [[]]
             # self.update_scores(rewards, self.miner_uids)
-            load_state_from_peer(self)
+            load_state_from_peer(self, self.local_progress.epoch + 1)
 
         rewards = await get_rewards(
             self,

@@ -65,7 +65,7 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
-        print("WE ARE HERE NOW!")
+        print(f"WE ARE HERE NOW! {peer_id}")
         print("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
@@ -90,7 +90,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
-                print("_get_peer_stub done..")
+                print(f"_get_peer_stub done.. {peer_id}")
 
                 if self.should_delay_results(self.peer_id):
                     await done_sending.wait()
@@ -183,7 +183,7 @@ class DTAllReduceRunner(AllReduceRunner):
             tensor_part=first_part,
             weight=self.weight,
         )
-        print("_generate_input_for_peer..")
+        print(f"_generate_input_for_peer.. {peer_index}")
         async for part in parts_aiter:
             # print("_generate_input_for_peer for loop")
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
@@ -300,12 +300,14 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         if not require_trigger:
             step.allow_allreduce()
+
         if wait:
             print("wait step")
             print(step.result())
         else:
             print("non wait step")
             print(step)
+
         return step.result() if wait else step
 
     async def _step_custom(
@@ -350,7 +352,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                 f"Failed to store peer {self.peer_id} in DHT"
                             )
 
-                        print("later:", get_dht_time, expiration_time)
+                        print("later:", get_dht_time(), expiration_time)
                         while get_dht_time() < expiration_time:
                             # Check if all peers have registered
                             gathered = self.dht.get(key, latest=True)
@@ -645,6 +647,7 @@ class DTGradientAverager(DTAverager):
             raise RuntimeError(
                 f"Averaging with a pre-scheduled group, parameters {kwargs} will have no effect"
             )
+        print(control)
         assert not control.triggered, f"This {type(control)} instance was already used"
         if self._new_averaged_grads and self.warn:
             logger.warning(
@@ -917,7 +920,7 @@ def load_state_from_peer(self, epoch=None):
 
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
     tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
+    bt.logging.info(f"Old Model Tag {self.model_hf_tag}")
     if tag_name and (tag_name >= epoch):
         bt.logging.info(
             f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."

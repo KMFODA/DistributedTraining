@@ -229,7 +229,7 @@ class Miner(BaseMinerNeuron):
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
             update_global_tracker_state(self)
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+            load_state_from_peer(self, epoch= self.local_progress.epoch + 1)
             synapse.completion = "False"
 
             return synapse
