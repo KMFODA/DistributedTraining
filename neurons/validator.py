@@ -104,7 +104,7 @@ class Validator(BaseValidatorNeuron):
         self.device = self.config.neuron.device
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
