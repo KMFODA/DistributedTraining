@@ -219,7 +219,7 @@ def setup_logging(level=logging.INFO):
 
     # Create a file handler that logs debug and higher level messages
     hivemind_log_file = (
-        f"/root/logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
+        f"/root/logs_{datetime.now().strftime('mylogfile_%d_%m_%Y_%H_%M')}.txt"
     )
     hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
