@@ -42,6 +42,7 @@ from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
 
 
 from template.utils.misc import update_global_tracker_state
+from huggingface_hub import scan_cache_dir
 
 GatheredData = Any
 
@@ -87,14 +88,16 @@ class DTAllReduceRunner(AllReduceRunner):
                 inputs_aiter = attach_event_on_finished(
                     self._generate_input_for_peer(peer_index), done_sending
                 )
+                bt.logging.info(f"_generate_input_for_peer done.. {peer_id}")
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
                 bt.logging.info(f"_get_peer_stub done.. {peer_id}")
 
                 if self.should_delay_results(self.peer_id):
+                    bt.logging.info(f"self.should_delay_results(self.peer_id) {self.should_delay_results(self.peer_id)}")
                     await done_sending.wait()
-
+                bt.logging.info(f"sending done.. {peer_id}")
                 part_index = 0
 
                 def _try_deserialize(msg):
@@ -116,15 +119,17 @@ class DTAllReduceRunner(AllReduceRunner):
                     )
                     part_index += 1
                     # bt.logging.info("amap_in_executor..")
-
+                bt.logging.info(f"register_processed_part done.. {peer_id}")
                 if (
                     part_index
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
+                    bt.logging.info(f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]")
                     raise AllreduceException(
                         f"peer {peer_id} sent {part_index} parts, but we expected "
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
+                
             except BaseException as e:
                 if isinstance(e, Exception): #TODO Here we need to catch if peers disconnect ("Connection Reset By Peer")
                     logger.debug(
@@ -171,6 +176,15 @@ class DTAllReduceRunner(AllReduceRunner):
 
     def __aiter__(self):
         return self.run()
+
+    async def _handle_missing_senders(self):
+        """Detect senders that should have sent tensors for averaging, but did not send anything within timeout"""
+        try:
+            await asyncio.wait_for(self.all_senders_started.wait(), self.sender_timeout)
+        except asyncio.TimeoutError:
+            for peer_id in self.sender_peer_ids:
+                if peer_id not in self.active_senders and peer_id not in self.banned_senders:
+                    await self._ban_sender(peer_id)
 
     async def run(self) -> AsyncIterator[torch.Tensor]:
         """Run all-reduce, return differences between averaged and original tensors as they are computed"""
@@ -232,10 +246,11 @@ class DTAllReduceRunner(AllReduceRunner):
             tensor_part=first_part,
             weight=self.weight,
         )
-        bt.logging.info(f"_generate_input_for_peer.. {peer_index}")
+        bt.logging.info(f"_generate_input_for_peer.. {peer_index} start")
         async for part in parts_aiter:
             # bt.logging.info("_generate_input_for_peer for loop")
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
+        bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
 
 
     async def _ban_sender(self, peer_id: PeerID):
@@ -978,6 +993,20 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model.to(self.device)
         loaded_state = True
+        
+        # Delete one model from the chace to maintain disk space
+        try:
+            for repo in scan_cache_dir().repos:
+                if repo == self.config.neuron.model_name:
+                    for r in repo.revisions: 
+                        scan_cache_dir().delete_revisions(r.commit_hash).execute()
+                        break
+                else:
+                    continue        
+        except:
+            bt.logging.warning(
+                "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
+            )
     else:
         try:
             loaded_state = self.state_averager.load_final_state_from_peers(epoch)
