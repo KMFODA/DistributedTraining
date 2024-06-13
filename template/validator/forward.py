@@ -112,6 +112,7 @@ async def forward(self):
         queries = [
             template.protocol.AllReduce(
                 group=group,
+                timeout=self.all_reduce_timeout
             )
             for _ in self.miner_uids
         ]

@@ -186,6 +186,8 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.finalize()
 
             elif self.peer_id in self.sender_peer_ids:
+                bt.logging.info(f"self.peer_id in self.sender_peer_ids")
+
                 for peer_id, parts in zip(self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer):
                     if parts != 0:
                         pending_tasks.add(asyncio.create_task(self._communicate_with_peer(peer_id)))
@@ -396,12 +398,18 @@ class DTAverager(hivemind.DecentralizedAverager):
                             # Check if all peers have registered
                             gathered = self.dht.get(key, latest=True)
                             if gathered:
+                                bt.logging.info("Gathered")
                                 registered_peers = gathered.value.keys()
+                                bt.logging.info(f"{key}")
+                                bt.logging.info(f"registered_peers {registered_peers}")
+                                bt.logging.info(f"peer_id_strs {peer_id_strs}")
                                 if all(
                                     peer_id in registered_peers
                                     for peer_id in peer_id_strs
                                 ):
+                                    bt.logging.info(f"peer_id in registered_peers True")
                                     if not step.triggered:
+                                        bt.logging.info(f"not step.triggered:")
                                         step.stage = AveragingStage.AWAITING_TRIGGER
                                         await step.wait_for_trigger()
                                     bt.logging.info(registered_peers)
