@@ -52,6 +52,7 @@ from hivemind.utils.timed_storage import (
     get_dht_time,
 )
 from huggingface_hub import create_tag, list_repo_refs
+from huggingface_hub import scan_cache_dir
 from transformers import AutoModelForCausalLM
 from dataclasses import dataclass
 from template.utils.misc import update_global_tracker_state
@@ -901,17 +902,32 @@ def load_state_from_peer(self, epoch=None):
 
     refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
     tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-    bt.logging.info(f"Old Model Tag {refs.tags[-1].name}")
-    if tag_name and (tag_name >= epoch):
+    bt.logging.info(f"Old Model Tag {self.model_hf_tag}")
+    if (tag_name is not None) and (tag_name >= epoch):
         bt.logging.info(
             f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
-            revision=str(self.global_progress.epoch),
+            revision=str(tag_name),
         )
+        self.model_tag = tag_name
         self.model.to(self.device)
         loaded_state = True
+
+        # Delete one model from the chace to maintain disk space
+        try:
+            for repo in scan_cache_dir().repos:
+                if repo == self.config.neuron.model_name:
+                    for r in repo.revisions:
+                        scan_cache_dir().delete_revisions(r.commit_hash).execute()
+                        break
+                else:
+                    continue
+        except:
+            bt.logging.warning(
+                "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
+            )
     else:
         try:
             loaded_state = self.state_averager.load_final_state_from_peers(epoch)
@@ -931,7 +947,7 @@ def load_state_from_peer(self, epoch=None):
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         bt.logging.info(f"New Model Tag {tag_name}")
-        if tag_name and (tag_name < self.global_progress.epoch):
+        if (tag_name is not None) and (tag_name < self.global_progress.epoch):
             bt.logging.info("Pushing New Model Weights To HF Hub")
             self.model.push_to_hub(self.config.neuron.model_name)
             create_tag(
@@ -941,6 +957,10 @@ def load_state_from_peer(self, epoch=None):
                 tag_message="Bump release version.",
             )
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else self.model_hf_tag
+            tag_name = (
+                max([int(tag.name) for tag in refs.tags])
+                if refs.tags
+                else self.model_hf_tag
+            )
             self.model_hf_tag = tag_name
             bt.logging.info(f"New Model Tag {tag_name}")

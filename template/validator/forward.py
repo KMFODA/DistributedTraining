@@ -135,13 +135,13 @@ async def forward(self):
 
                 if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                 elif np.nan in new_model_weights_sample:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
@@ -154,12 +154,11 @@ async def forward(self):
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
                     )
-                    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                    tag_name = (
+                        max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                    )
                     bt.logging.info(f"Old Model Tag {tag_name}")
-                    if (
-                        tag_name
-                        and tag_name < self.local_progress.epoch
-                    ):
+                    if (tag_name is not None) and tag_name < self.local_progress.epoch:
                         bt.logging.info("Pushing New Model Weights To HF Hub")
                         self.model.push_to_hub(self.config.neuron.model_name)
                         create_tag(

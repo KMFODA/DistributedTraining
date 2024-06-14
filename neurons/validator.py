@@ -90,10 +90,20 @@ class Validator(BaseValidatorNeuron):
         # Init Device, Model & Tokenizer
         self.device = self.config.neuron.device
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        self.model_hf_tag = (
+            max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        )
         if self.model_hf_tag is None:
-            bt.logging.warning(f"Model Tag Is None. Make Sure You Are Using The Correct Model Name")
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            bt.logging.warning(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, revision=str(self.model_hf_tag)
+            )
+            if self.model_hf_tag
+            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        )
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
@@ -147,7 +157,7 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info(
             f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }"
         )
-        
+
         self.step_scheduled = False
         self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
         self.local_progress.epoch, self.local_progress.samples_accumulated = (

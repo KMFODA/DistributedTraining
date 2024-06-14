@@ -72,10 +72,20 @@ class Miner(BaseMinerNeuron):
 
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        self.model_hf_tag = (
+            max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        )
         if self.model_hf_tag is None:
-            bt.logging.warning(f"Model Tag Is None. Make Sure You Are Using The Correct Model Name")
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            bt.logging.warning(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, revision=str(self.model_hf_tag)
+            )
+            if self.model_hf_tag
+            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        )
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -196,13 +206,13 @@ class Miner(BaseMinerNeuron):
 
                 if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                 elif np.nan in new_model_weights_sample:
                     bt.logging.info(
                         "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                     )
-                    load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                 else:
                     self.grad_averager.reset_accumulated_grads_()  # prepare for next step
