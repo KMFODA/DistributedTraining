@@ -64,6 +64,8 @@ class Miner(BaseMinerNeuron):
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        if self.model_hf_tag is None:
+            bt.logging.warning(f"Model Tag Is None. Make Sure You Are Using The Correct Model Name")
         self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
         # Move the model to the appropriate device
@@ -111,7 +113,7 @@ class Miner(BaseMinerNeuron):
         # Init Tracker
         self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
         self.local_progress.epoch, self.local_progress.samples_accumulated = (
-            self.model_hf_tag,
+            self.model_hf_tag if self.model_hf_tag is not None else 0,
             0,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
