@@ -31,7 +31,7 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class SubsetFalconLoader(IterableDataset):
-    max_pages: int = 968000015
+    max_pages: int = 519_000_000
 
     def __init__(
         self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
@@ -41,8 +41,9 @@ class SubsetFalconLoader(IterableDataset):
         self.tokenizer = tokenizer
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
-            "dataset": "tiiuae/falcon-refinedweb",
-            "config": "default",
+            "dataset": "HuggingFaceFW/fineweb",
+            # "dataset" : "tiiuae/falcon-refinedweb",
+            "config": "sample-350BT",
             "split": "train",
         }
         self.rows = rows
@@ -63,7 +64,7 @@ class SubsetFalconLoader(IterableDataset):
                     response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
 
                     for row in response.json()["rows"]:
-                        content = row["row"]["content"]
+                        content = row["row"]["text"]
                         self.buffer += self.tokenizer(content, truncation=True)[
                             "input_ids"
                         ]

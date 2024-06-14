@@ -73,7 +73,9 @@ class Miner(BaseMinerNeuron):
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        if self.model_hf_tag is None:
+            bt.logging.warning(f"Model Tag Is None. Make Sure You Are Using The Correct Model Name")
+        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -100,6 +102,11 @@ class Miner(BaseMinerNeuron):
             target_batch_size=self.config.neuron.global_batch_size_train,
             start=True,
         )
+        if self.model_hf_tag is not None:
+            with self.tracker.pause_updates():
+                self.tracker.local_progress.epoch = self.tracker.update_epoch(
+                    self.model_hf_tag
+                )
 
         # Init State Averager
         self.state_averager = DTStateAverager(
@@ -115,11 +122,14 @@ class Miner(BaseMinerNeuron):
         # Init Tracker
         self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
         self.local_progress.epoch, self.local_progress.samples_accumulated = (
-            self.model_hf_tag,
+            self.model_hf_tag if self.model_hf_tag is not None else 0,
             0,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
+        self.global_progress.epoch, self.global_progress.samples_accumulated = (
+            self.model_hf_tag if self.model_hf_tag is not None else 0,
+            0,
+        )
         update_global_tracker_state(self)
 
         # Init UID
@@ -130,7 +140,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = 968000015
+        dataset_length = SubsetFalconLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -164,7 +174,7 @@ class Miner(BaseMinerNeuron):
 
     async def all_reduce(
         self, synapse: template.protocol.AllReduce
-    ) -> template.protocol.IsAlive:
+    ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         try:
             with self.tracker.pause_updates():
@@ -224,7 +234,7 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         update_global_tracker_state(self)
-        if (self.tracker.local_progress.epoch < self.global_progress.epoch) and (
+        if (self.local_progress.epoch < self.global_progress.epoch) and (
             self.model_hf_tag < self.global_progress.epoch
         ):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
