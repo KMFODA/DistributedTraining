@@ -32,7 +32,7 @@ import template
 from template.utils.hivemind import load_state_from_peer
 from template.utils.misc import get_bandwidth, update_global_tracker_state
 from template.utils.uids import get_random_uids
-from template.validator.reward import get_rewards
+from template.validator.reward import get_rewards, score_blacklist
 import copy
 import numpy as np
 
@@ -91,13 +91,26 @@ async def forward(self):
 
     if all_reduce:
         group_peerids = None
-
+        blacklist_scores = None
         # All-reduce synapse
-        while group_peerids is None or any(
-            peer_id is None for peer_id in group_peerids.values()
+        while (group_peerids is None) or (blacklist_scores is None) or any(
+            peer_id is None for index, peer_id in zip(blacklist_scores, group_peerids.values()) if index != 0.0
         ):
-            group_peerids = await self.map_uid_to_peerid(self.miner_uids)
-
+            group_peerids = await self.map_uid_to_peerid(self.miner_uids.tolist())
+            blacklist_scores = await score_blacklist(self, group_peerids.keys())
+        
+        new_group_peerids = {}
+        new_miner_uids = []
+        for i,key in enumerate(group_peerids.keys()):
+            if blacklist_scores[i] == 0.0:
+                continue
+            else:
+                new_group_peerids[key] = group_peerids[key]
+                new_miner_uids.append(key)
+        
+        group_peerids = new_group_peerids
+        self.miner_uids = new_miner_uids
+        
         group_id = DHTID.generate().to_bytes()
         print("DHT:", self.dht.peer_id)
         print("Peers:", list(group_peerids.values()))
