@@ -72,8 +72,12 @@ class GlobalTrainingProgress:
 
 
 class LocalTrainingProgress(BaseModel):
+    peer_id: bytes
     epoch: conint(ge=0, strict=True)
     samples_accumulated: conint(ge=0, strict=True)
+    samples_per_second: confloat(ge=0.0, strict=True)
+    time: StrictFloat
+    client_mode: StrictBool
 
 
 class DTAllReduceRunner(AllReduceRunner):

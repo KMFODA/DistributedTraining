@@ -130,7 +130,14 @@ class Miner(BaseMinerNeuron):
         )
 
         # Init Tracker
-        self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
+        self.local_progress = LocalTrainingProgress(
+            peer_id=self.tracker.local_progress.peer_id,
+            epoch=0,
+            samples_accumulated=0,
+            samples_per_second=self.tracker.local_progress.samples_per_second,
+            time=self.tracker.local_progress.time,
+            client_mode=self.tracker.local_progress.client_mode,
+        )
         self.local_progress.epoch, self.local_progress.samples_accumulated = (
             self.model_hf_tag if self.model_hf_tag is not None else 0,
             0,
