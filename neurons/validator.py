@@ -19,7 +19,6 @@
 
 import asyncio
 import datetime as dt
-import threading
 import time
 import traceback
 from typing import Optional
@@ -31,7 +30,6 @@ import torch
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
@@ -42,12 +40,15 @@ from huggingface_hub import list_repo_refs
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import (
+from template.utils.gradient_averager import (
     DTGradientAverager,
-    DTStateAverager,
-    load_state_from_peer,
+)
+from template.utils.state_loader import load_state_from_peer, DTStateAverager
+
+from template.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
+    update_global_tracker_state,
 )
 from template.utils.misc import (
     AsyncDendritePool,
@@ -55,7 +56,6 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
     warmup,
-    update_global_tracker_state,
 )
 from template.validator import forward
 
@@ -213,11 +213,11 @@ class Validator(BaseValidatorNeuron):
             )
             self.warmup()
 
-        # Load State From Peer If Out Of Sync
-        if (
-            self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
-        ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
-            load_state_from_peer(self, epoch=self.tracker.global_progress.epoch)
+        # Load state from peers if validator is not on latest global epoch
+        if (self.local_progress.epoch < self.global_progress.epoch) and (
+            self.model_hf_tag < self.global_progress.epoch
+        ):
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")

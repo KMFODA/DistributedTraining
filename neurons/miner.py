@@ -17,22 +17,15 @@
 # DEALINGS IN THE SOFTWARE.
 
 import random
-import re
 import time
 import typing
-from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
-import requests
 import torch
-import wandb
 from bitarray import bitarray
-from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
-import psutil
 import copy
 import numpy as np
 
@@ -42,20 +35,21 @@ import template
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.data.dataset import SubsetFalconLoader
-from template.utils.hivemind import (
+from template.utils.gradient_averager import (
     DTGradientAverager,
-    DTStateAverager,
-    load_state_from_peer,
+)
+from template.utils.state_loader import load_state_from_peer, DTStateAverager
+
+from template.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
+    update_global_tracker_state,
 )
 from template.utils.misc import (
     get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
-    warmup,
-    update_global_tracker_state,
 )
 from huggingface_hub import list_repo_refs
 
@@ -166,11 +160,11 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
-        # Load state from peers if miner is not on latest epoch
+        # Load state from peers if miner is not on latest global epoch
         if (self.local_progress.epoch < self.global_progress.epoch) and (
             self.model_hf_tag < self.global_progress.epoch
         ):
-            load_state_from_peer(self)
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     def get_miner_info(self):
         return {

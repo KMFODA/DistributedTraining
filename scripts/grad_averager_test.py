@@ -5,10 +5,9 @@ from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
 import torch
-from template.utils.hivemind import (
+from DTraining.template.utils.gradient_averager import (
     DTGradientAverager,
     DTStateAverager,
-    load_state_from_peer,
 )
 import hivemind
 from bitarray import bitarray

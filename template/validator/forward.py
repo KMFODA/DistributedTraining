@@ -19,14 +19,14 @@
 import asyncio
 import random
 import time
-import torch
 
 import bittensor as bt
 from huggingface_hub import create_tag, list_repo_refs
 
 import template
-from template.utils.hivemind import load_state_from_peer
-from template.utils.misc import get_bandwidth, update_global_tracker_state
+from template.utils.state_loader import load_state_from_peer
+from template.utils.misc import get_bandwidth
+from template.utils.progress_tracker import update_global_tracker_state
 from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
 import copy
