@@ -125,6 +125,7 @@ async def forward(self):
             bt.logging.info(current_model_weights_sample)
             with self.tracker.pause_updates():
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    # bt.logging.info({n:p.grad for n,p in self.model.named_parameters() if p.grad is not None})
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad
                 bt.logging.info("Model Weights After Optimizer Step")

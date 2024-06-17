@@ -200,7 +200,7 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
 
-        self.all_reduce_timeout = 600
+        self.all_reduce_timeout = 300
         # self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
         # self.stop_event = threading.Event()
         # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
