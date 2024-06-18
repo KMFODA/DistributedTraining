@@ -331,6 +331,87 @@ class DTAverager(hivemind.DecentralizedAverager):
             step.allow_allreduce()
         return step.result() if wait else step
 
+    async def _step(self, *, step: StepControl, future_for_init: MPFuture):
+        try:
+            trigger, cancel = MPFuture(), MPFuture()
+            step.attach(trigger, cancel)
+            future_for_init.set_result((trigger, cancel))
+
+            async def find_peers_or_notify_cancel():
+                group_info = await self._matchmaking.look_for_group(step)
+                if not step.triggered:
+                    step.stage = AveragingStage.AWAITING_TRIGGER
+                    await step.wait_for_trigger()
+                return group_info
+
+            while not step.done():
+                try:
+                    self._pending_groups_registered.clear()
+                    step.stage = AveragingStage.LOOKING_FOR_GROUP
+                    matchmaking_task = asyncio.create_task(find_peers_or_notify_cancel())
+                    check_cancel_task = asyncio.create_task(step.wait_for_cancel())
+
+                    await asyncio.wait({matchmaking_task, check_cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+                    if step.cancelled():
+                        matchmaking_task.cancel()
+                        raise asyncio.CancelledError()
+                    else:
+                        check_cancel_task.cancel()
+
+                    group_info = await matchmaking_task
+
+                    if group_info is None:
+                        raise AllreduceException("Averaging step failed: could not find a group")
+
+                    with self._register_allreduce_group(group_info):
+                        step.stage = AveragingStage.RUNNING_ALLREDUCE
+
+                        step.set_result(
+                            await asyncio.wait_for(
+                                self._aggregate_with_group(
+                                    group_info,
+                                    tensor_infos=self.tensor_infos,
+                                    weight=step.weight,
+                                    **self.allreduce_kwargs,
+                                ),
+                                timeout=self._allreduce_timeout,
+                            )
+                        )
+                        # averaging is finished, loop will now exit
+
+                except (
+                    AllreduceException,
+                    MatchmakingException,
+                    AssertionError,
+                    StopAsyncIteration,
+                    asyncio.CancelledError,
+                    asyncio.InvalidStateError,
+                    P2PHandlerError,
+                    P2PDaemonError,
+                ) as e:
+                    if step.done() or not step.allow_retries or get_dht_time() >= step.deadline:
+                        if not step.cancelled():
+                            logger.exception(e)
+                        if not step.done():
+                            step.set_exception(e)
+                    else:
+                        logger.warning(f"{self.__class__.__name__} caught {repr(e)}, retrying")
+
+        except BaseException as e:
+            if not step.done():
+                step.set_exception(e)
+            raise
+        finally:
+            step.stage = AveragingStage.FINISHED
+            if not step.done():
+                step.set_exception(
+                    RuntimeError(
+                        "Internal sanity check failed: averager.step left future pending."
+                        " Please report this to hivemind issues."
+                    )
+                )
+
+
     async def _step_custom(
         self,
         *,
