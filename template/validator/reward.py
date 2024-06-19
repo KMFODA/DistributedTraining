@@ -37,10 +37,15 @@ def score_gradients(self, response, uid):
         rows=response.dataset_indices,
     )
 
+    index = 0
     # Train data for on last indices
     for index, batch in enumerate(dataloader):
         continue
 
+    if index == 0:
+        score = 0
+        return score
+    
     inputs = batch.to(self.device)
 
     # Zero Gradients
