@@ -191,6 +191,9 @@ class Miner(BaseMinerNeuron):
             with self.tracker.pause_updates():
                 self.grad_averager.step(timeout=(synapse.timeout - 20))
                 bt.logging.info("Model Weights Before Optimizer Step")
+                current_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
                 current_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
@@ -201,12 +204,15 @@ class Miner(BaseMinerNeuron):
                     self.opt.step()
 
                 bt.logging.info("Model Weights After Optimizer Step")
+                new_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
                 new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if new_model_weights_sample == current_model_weights_sample:
+                if new_model_weights == current_model_weights:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
@@ -319,6 +325,8 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(
                 f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
             )
+            if isinstance(outputs.loss.detach(), float):
+                breakpoint()
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {

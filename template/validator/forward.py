@@ -119,6 +119,9 @@ async def forward(self):
         if gradient_averaging_step.done():
             # Log the results for monitoring purposes.
             bt.logging.info("Model Weights Before Optimizer Step")
+            current_model_weights = copy.deepcopy(
+                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            )
             current_model_weights_sample = copy.copy(
                 [layer for layer in self.model.parameters()][-1][-10:].tolist()
             )
@@ -129,12 +132,15 @@ async def forward(self):
                     bt.logging.info("Performing Optimizer Step")
                     self.opt.step()  # update model parameters using averaged grad
                 bt.logging.info("Model Weights After Optimizer Step")
+                new_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
                 new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if new_model_weights_sample == current_model_weights_sample:
+                if new_model_weights == current_model_weights:
                     bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
                     load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 

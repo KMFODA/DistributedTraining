@@ -196,7 +196,9 @@ class BittensorLogHandler(logging.Handler):
 
 
 def logging_filter(record):
-    if (record.name != "hivemind.dht.protocol") and (record.name != "hivemind.optim.progress_tracker"):
+    if (record.name != "hivemind.dht.protocol") and (
+        record.name != "hivemind.optim.progress_tracker"
+    ):
         return True
     else:
         return False
