@@ -200,8 +200,12 @@ class IpFilter(logging.Filter):
     This is a filter which injects contextual information into the log.
     """
 
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
     def filter(self, record):
-        record.ip = bt.utils.networking.get_external_ip()
+        record.host = f"{self.ip}:{self.port}"
         return True
 
 
@@ -214,15 +218,15 @@ def logging_filter(record):
         return False
 
 
-def setup_logging(level=logging.INFO):
+def setup_logging(level=logging.INFO, ip=None, port=None):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
     logtail_handler = LogtailHandler(source_token="Lfxe1irj5HVQB6TJMovmowiA")
     logtail_handler.addFilter(logging_filter)
-    formatter = logging.Formatter("%(ip)s %(message)s")
+    formatter = logging.Formatter("%(host)s%(message)s")
     logtail_handler.setFormatter(formatter)
-    logtail_handler.addFilter(IpFilter())
+    logtail_handler.addFilter(IpFilter(ip=ip, port=port))
 
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False

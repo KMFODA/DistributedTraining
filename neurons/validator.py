@@ -66,6 +66,9 @@ class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
 
+        # Init Logging
+        setup_logging(ip=self.config.axon.ip, port=self.config.axon.port)
+
         bt.logging.info("load_state()")
         self.load_state()
 
@@ -373,7 +376,6 @@ class Validator(BaseValidatorNeuron):
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
-    setup_logging()
     with Validator() as validator:
         while True:
             time.sleep(5)

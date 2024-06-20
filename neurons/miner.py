@@ -58,6 +58,9 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
+        # Init Logging
+        setup_logging(ip=self.config.axon.ip, port=self.config.axon.port)
+
         # Init DHT
         init_dht(self)
 
@@ -200,6 +203,8 @@ class Miner(BaseMinerNeuron):
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
             update_global_tracker_state(self)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
@@ -456,7 +461,6 @@ class Miner(BaseMinerNeuron):
 
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
-    setup_logging()
     with Miner() as miner:
         while True:
             bt.logging.info("Miner running...", time.time())

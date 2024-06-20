@@ -178,6 +178,8 @@ async def forward(self):
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
             gradient_averaging_step.cancel()
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
             load_state_from_peer(self)
 
         self.step_scheduled = False
