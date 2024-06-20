@@ -284,7 +284,6 @@ class Miner(BaseMinerNeuron):
             self.opt.zero_grad()
 
             # Update Tracker
-            self.local_samples += 1
             self.local_progress.samples_accumulated += 1
 
             # Log accumulation status
