@@ -195,6 +195,16 @@ class BittensorLogHandler(logging.Handler):
             bt_logger.trace(log_entry)
 
 
+class IpFilter(logging.Filter):
+    """
+    This is a filter which injects contextual information into the log.
+    """
+
+    def filter(self, record):
+        record.ip = bt.utils.networking.get_external_ip()
+        return True
+
+
 def logging_filter(record):
     if (record.name != "hivemind.dht.protocol") and (
         record.name != "hivemind.optim.progress_tracker"
@@ -210,11 +220,14 @@ def setup_logging(level=logging.INFO):
 
     logtail_handler = LogtailHandler(source_token="Lfxe1irj5HVQB6TJMovmowiA")
     logtail_handler.addFilter(logging_filter)
+    formatter = logging.Formatter("%(ip)s %(message)s")
+    logtail_handler.setFormatter(formatter)
+    logtail_handler.addFilter(IpFilter())
 
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
     bt_logger_.addHandler(logtail_handler)
-    
+
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
