@@ -43,7 +43,7 @@ import random
 from template.data.dataset import SubsetFalconLoader
 from bitarray import bitarray
 import wandb
-import pandas as pd
+from logtail import LogtailHandler
 
 
 # LRU Cache with TTL
@@ -208,9 +208,13 @@ def setup_logging(level=logging.INFO):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
+    logtail_handler = LogtailHandler(source_token="Lfxe1irj5HVQB6TJMovmowiA")
+    logtail_handler.addFilter(logging_filter)
+
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
-
+    bt_logger_.addHandler(logtail_handler)
+    
     use_hivemind_log_handler("nowhere")
 
     root_logger = logging.getLogger()
@@ -222,10 +226,9 @@ def setup_logging(level=logging.INFO):
     formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
+    root_logger.addHandler(logtail_handler)
 
     # Create a file handler that logs debug and higher level messages
-    # hivemind_log_file = f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
-
     if os.path.exists("/root/logs_mylogfile.txt"):
         shutil.copyfile("/root/logs_mylogfile.txt", "/root/logs_mylogfile_v1.txt")
         os.remove("/root/logs_mylogfile.txt")
@@ -243,6 +246,7 @@ def setup_logging(level=logging.INFO):
     )
     file_handler.setFormatter(formatter)
     hivemind_logger.addHandler(file_handler)
+    # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (
         False  # Stop hivemind logs from propagating to the root logger
     )
@@ -363,7 +367,6 @@ def warmup(self):
         template.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
 
-    self.local_epoch, self.local_samples = 0, 0
     # Load dataset
     self.dataset_loader = ()
     dataset_length = SubsetFalconLoader.max_pages
