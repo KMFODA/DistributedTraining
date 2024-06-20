@@ -427,18 +427,15 @@ def warmup(self):
 
         # Update Tracker
         self.local_progress.samples_accumulated += 1
-        self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
         # Log accumulation status
-        bt.logging.info(
-            f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
-        )
+        bt.logging.info(f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}")
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(
                 {
                     "loss": outputs.loss.detach().item(),
-                    "local_epoch": self.local_epoch,
-                    "global_epoch": self.tracker.global_progress.epoch,
+                    "local_epoch": self.local_progress.local_epoch,
+                    "global_epoch": self.global_progress.epoch,
                 }
             )

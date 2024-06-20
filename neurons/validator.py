@@ -87,7 +87,7 @@ class Validator(BaseValidatorNeuron):
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
 
-        # Init Device, Model & Tokenizer
+        # Init Device & Model
         self.device = self.config.neuron.device
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = (
@@ -104,6 +104,8 @@ class Validator(BaseValidatorNeuron):
             if self.model_hf_tag
             else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         )
+
+        # Move the model to the appropriate device
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
@@ -131,41 +133,14 @@ class Validator(BaseValidatorNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer=self.opt,
-            initialize_optimizer=False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
-            next_chunk_timeout=30.0,
-        )
-
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True,
-        )
-        if self.model_hf_tag is not None:
-            with self.tracker.pause_updates():
-                self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                    self.model_hf_tag
-                )
-        bt.logging.info(
-            f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }"
-        )
-
-        self.step_scheduled = False
+        # Init Local & Global Progress
         self.local_progress = LocalTrainingProgress(
-            peer_id=self.tracker.local_progress.peer_id,
+            peer_id=self.dht.peer_id.to_bytes(),
             epoch=0,
             samples_accumulated=0,
-            samples_per_second=self.tracker.local_progress.samples_per_second,
-            time=self.tracker.local_progress.time,
-            client_mode=self.tracker.local_progress.client_mode,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
         )
         self.local_progress.epoch, self.local_progress.samples_accumulated = (
             self.model_hf_tag if self.model_hf_tag is not None else 0,
@@ -200,18 +175,9 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
 
+        # Init All Reduce Variables
         self.all_reduce_timeout = 300
-        # self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
-        # self.stop_event = threading.Event()
-        # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
-        # self.update_thread.start()
-
-        # Warmup DHT
-        if self.tracker.global_progress.num_peers == 0:
-            bt.logging.info(
-                f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle."
-            )
-            self.warmup()
+        self.step_scheduled = False
 
         # Load state from peers if validator is not on latest global epoch
         if (self.local_progress.epoch < self.global_progress.epoch) and (
@@ -391,7 +357,6 @@ class Validator(BaseValidatorNeuron):
                 return
 
             logger.info(f"Finished downloading state from {peer}")
-            # future.set_result((metadata, tensors))
             return metadata, tensors
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
@@ -406,7 +371,7 @@ class Validator(BaseValidatorNeuron):
         warmup(self)
 
 
-# # The main function parses the configuration and runs the validator.
+# The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
     setup_logging()
     with Validator() as validator:

@@ -43,9 +43,6 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    # while self.tracker.global_progress.num_peers == 0:
-    #     self.warmup()
-
     update_global_tracker_state(self)
     if (self.local_progress.epoch < self.global_progress.epoch) and (
         self.model_hf_tag < self.global_progress.epoch
@@ -84,9 +81,8 @@ async def forward(self):
 
     query_tasks = []
     if all_reduce:
-        with self.tracker.pause_updates():
-            bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(wait=False)
+        bt.logging.info("Performing Gradient Averaging")
+        gradient_averaging_step = self.grad_averager.step(wait=False)
 
         queries = [template.protocol.AllReduce() for _ in self.miner_uids]
     else:
@@ -104,6 +100,7 @@ async def forward(self):
         )
     )
     bt.logging.info("Responses Sent Out")
+    start_time = time.perf_counter()
     responses = await asyncio.gather(*query_tasks)
     bt.logging.info("Responses Received")
     if all_reduce and responses != []:
@@ -111,13 +108,13 @@ async def forward(self):
         sleep_counter = 1
 
         while (gradient_averaging_step.done() is False) and (
-            sleep_counter <= self.all_reduce_timeout
+            (time.perf_counter() - start_time) <= self.all_reduce_timeout
         ):
             time.sleep(1)
             sleep_counter += 1
 
         if gradient_averaging_step.done():
-            # Log the results for monitoring purposes.
+            # Log Model Weight Before Optimizer Step
             bt.logging.info("Model Weights Before Optimizer Step")
             current_model_weights = copy.deepcopy(
                 [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
@@ -126,59 +123,57 @@ async def forward(self):
                 [layer for layer in self.model.parameters()][-1][-10:].tolist()
             )
             bt.logging.info(current_model_weights_sample)
-            with self.tracker.pause_updates():
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    # bt.logging.info({n:p.grad for n,p in self.model.named_parameters() if p.grad is not None})
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged grad
-                bt.logging.info("Model Weights After Optimizer Step")
-                new_model_weights = copy.deepcopy(
-                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+
+            # Optimizer Step
+            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info("Performing Optimizer Step")
+                self.opt.step()  # update model parameters using averaged grad
+
+            # Log Model Weight After Optimizer Step
+            bt.logging.info("Model Weights After Optimizer Step")
+            new_model_weights = copy.deepcopy(
+                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            )
+            new_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(new_model_weights_sample)
+
+            if new_model_weights == current_model_weights:
+                bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+
+            elif sum(np.isnan(new_model_weights_sample)) > 1:
+                bt.logging.info(
+                    "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
-                new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+
+            else:
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
+
+                # Push to HF Hub if local model is the first to update
+                refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+                tag_name = (
+                    max([int(tag.name) for tag in refs.tags]) if refs.tags else None
                 )
-                bt.logging.info(new_model_weights_sample)
-
-                if new_model_weights == current_model_weights:
-                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
-
-                elif np.nan in new_model_weights_sample:
-                    bt.logging.info(
-                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                bt.logging.info(f"Old Model Tag {tag_name}")
+                if (tag_name is not None) and tag_name < self.local_progress.epoch:
+                    bt.logging.info("Pushing New Model Weights To HF Hub")
+                    self.model.push_to_hub(self.config.neuron.model_name)
+                    create_tag(
+                        self.config.neuron.model_name,
+                        repo_type="model",
+                        tag=str(self.local_progress.epoch),
+                        tag_message="Bump release version.",
                     )
-                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
-
-                else:
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                        self.tracker.local_progress.epoch + 1
-                    )
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
-
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
                     )
-                    tag_name = (
-                        max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-                    )
-                    bt.logging.info(f"Old Model Tag {tag_name}")
-                    if (tag_name is not None) and tag_name < self.local_progress.epoch:
-                        bt.logging.info("Pushing New Model Weights To HF Hub")
-                        self.model.push_to_hub(self.config.neuron.model_name)
-                        create_tag(
-                            self.config.neuron.model_name,
-                            repo_type="model",
-                            tag=str(self.local_progress.epoch),
-                            tag_message="Bump release version.",
-                        )
-                        refs = list_repo_refs(
-                            self.config.neuron.model_name, repo_type="model"
-                        )
-                        tag_name = max([int(tag.name) for tag in refs.tags])
-                        bt.logging.info(f"New Model Tag {tag_name}")
+                    tag_name = max([int(tag.name) for tag in refs.tags])
+                    bt.logging.info(f"New Model Tag {tag_name}")
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")

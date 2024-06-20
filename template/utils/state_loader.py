@@ -246,7 +246,6 @@ def load_state_from_peer(self, epoch=None):
     if epoch == None:
         update_global_tracker_state(self)
         epoch = self.global_progress.epoch
-    loaded_state = False
 
     bt.logging.info("Model Weights Before Loading State")
     current_model_weights_sample = copy.copy(
@@ -267,7 +266,15 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model_hf_tag = tag_name
         self.model.to(self.device)
-        loaded_state = True
+
+        bt.logging.info("Model Weights After Loading State")
+        new_model_weights_sample = copy.copy(
+            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        )
+        bt.logging.info(new_model_weights_sample)
+        self.local_epoch = self.local_progress.epoch
+        self.local_progress.epoch = self.global_progress.epoch
+        bt.logging.info(f"New Model Tag {self.model_hf_tag}")
 
         # Delete one model from the chace to maintain disk space
         try:
@@ -282,39 +289,6 @@ def load_state_from_peer(self, epoch=None):
             bt.logging.warning(
                 "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
             )
-    else:
-        try:
-            loaded_state = self.state_averager.load_final_state_from_peers(epoch)
-        except:
-            bt.logging.warning(
-                "Failed to load latest state using DHT. Local model is most likely out of sync with global model"
-            )
 
-    if loaded_state:
-        bt.logging.info("Model Weights After Loading State")
-        new_model_weights_sample = copy.copy(
-            [layer for layer in self.model.parameters()][-1][-10:].tolist()
-        )
-        bt.logging.info(new_model_weights_sample)
-        self.local_epoch = self.local_progress.epoch
-        self.local_progress.epoch = self.global_progress.epoch
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        bt.logging.info(f"New Model Tag {tag_name}")
-        if (tag_name is not None) and (tag_name < self.global_progress.epoch):
-            bt.logging.info("Pushing New Model Weights To HF Hub")
-            self.model.push_to_hub(self.config.neuron.model_name)
-            create_tag(
-                self.config.neuron.model_name,
-                repo_type="model",
-                tag=str(self.local_progress.epoch),
-                tag_message="Bump release version.",
-            )
-            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            tag_name = (
-                max([int(tag.name) for tag in refs.tags])
-                if refs.tags
-                else self.model_hf_tag
-            )
-            self.model_hf_tag = tag_name
-            bt.logging.info(f"New Model Tag {tag_name}")
+    else:
+        bt.logging.info("Model with tag {epoch} does not exist")

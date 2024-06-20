@@ -74,7 +74,7 @@ def update_global_tracker_state(self):
     self.global_progress.samples_accumulated = global_progress
     self.global_progress.epoch = global_epoch
     bt.logging.info(
-        f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
+        f"Local samples:  {self.local_progress.samples_accumulated} | Local epoch:  {self.local_progress.epoch}"
     )
     bt.logging.info(
         f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"

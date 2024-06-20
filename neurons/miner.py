@@ -61,10 +61,8 @@ class Miner(BaseMinerNeuron):
         # Init DHT
         init_dht(self)
 
-        # Init device
+        # Init Device & Model
         self.device = self.config.neuron.device
-
-        # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         self.model_hf_tag = (
             max([int(tag.name) for tag in refs.tags]) if refs.tags else None
@@ -99,38 +97,14 @@ class Miner(BaseMinerNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True,
-        )
-        if self.model_hf_tag is not None:
-            with self.tracker.pause_updates():
-                self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                    self.model_hf_tag
-                )
-
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer=self.opt,
-            initialize_optimizer=False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
-            next_chunk_timeout=30.0,
-        )
-
-        # Init Tracker
+        # Init Local & Global Progress
         self.local_progress = LocalTrainingProgress(
-            peer_id=self.tracker.local_progress.peer_id,
+            peer_id=self.dht.peer_id.to_bytes(),
             epoch=0,
             samples_accumulated=0,
-            samples_per_second=self.tracker.local_progress.samples_per_second,
-            time=self.tracker.local_progress.time,
-            client_mode=self.tracker.local_progress.client_mode,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
         )
         self.local_progress.epoch, self.local_progress.samples_accumulated = (
             self.model_hf_tag if self.model_hf_tag is not None else 0,
@@ -145,9 +119,6 @@ class Miner(BaseMinerNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-
-        self.step_scheduled = False
-        self.local_epoch, self.local_samples = 0, 0
 
         # Load dataset
         self.dataset_loader = ()
@@ -188,48 +159,44 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         try:
-            with self.tracker.pause_updates():
-                self.grad_averager.step(timeout=(synapse.timeout - 20))
-                bt.logging.info("Model Weights Before Optimizer Step")
-                current_model_weights = copy.deepcopy(
-                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
-                )
-                current_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
-                )
-                bt.logging.info(current_model_weights_sample)
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    # bt.logging.info({n:p.grad for n,p in self.model.named_parameters() if p.grad is not None})
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()
+            self.grad_averager.step(timeout=(synapse.timeout - 20))
+            bt.logging.info("Model Weights Before Optimizer Step")
+            current_model_weights = copy.deepcopy(
+                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            )
+            current_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(current_model_weights_sample)
+            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                # bt.logging.info({n:p.grad for n,p in self.model.named_parameters() if p.grad is not None})
+                bt.logging.info("Performing Optimizer Step")
+                self.opt.step()
 
-                bt.logging.info("Model Weights After Optimizer Step")
-                new_model_weights = copy.deepcopy(
-                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            bt.logging.info("Model Weights After Optimizer Step")
+            new_model_weights = copy.deepcopy(
+                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            )
+            new_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(new_model_weights_sample)
+
+            if new_model_weights == current_model_weights:
+                bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+
+            elif sum(np.isnan(new_model_weights_sample)) > 1:
+                bt.logging.info(
+                    "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
-                new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
-                )
-                bt.logging.info(new_model_weights_sample)
+                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
-                if new_model_weights == current_model_weights:
-                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
-
-                elif np.nan in new_model_weights_sample:
-                    bt.logging.info(
-                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
-                    )
-                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
-
-                else:
-                    self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                    self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                        self.tracker.local_progress.epoch + 1
-                    )
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
-                    synapse.completion = "True"
+            else:
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
+                synapse.completion = "True"
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
@@ -319,11 +286,10 @@ class Miner(BaseMinerNeuron):
             # Update Tracker
             self.local_samples += 1
             self.local_progress.samples_accumulated += 1
-            self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
             # Log accumulation status
             bt.logging.info(
-                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
+                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
             )
             if isinstance(outputs.loss.detach(), float):
                 breakpoint()
@@ -331,7 +297,7 @@ class Miner(BaseMinerNeuron):
                 self.wandb.log(
                     {
                         "loss": outputs.loss.detach().item(),
-                        "local_epoch": self.local_epoch,
+                        "local_epoch": self.local_progress.epoch,
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
@@ -352,9 +318,6 @@ class Miner(BaseMinerNeuron):
         except:
             bt.logging.info("Error getting bandwidth metrics")
         event.update({"steps": index})
-
-        # bt.logging.debug(f"Events: {str(event)}")
-        # bt.logging.info("EVENTS", "events", **event)
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(event)
