@@ -213,7 +213,9 @@ class DTAllReduceRunner(AllReduceRunner):
 
                 bt.logging.info(f"Succesfully communicated with all peers")
 
-                async for averaged_tensor_delta in self.tensor_part_container.iterate_output_tensors():
+                async for (
+                    averaged_tensor_delta
+                ) in self.tensor_part_container.iterate_output_tensors():
                     yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
 
                 bt.logging.info(f"Iterate output tensors")

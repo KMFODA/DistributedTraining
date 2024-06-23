@@ -1,32 +1,27 @@
-import hivemind
-import logging
-from typing import (
-    Any,
-    Dict,
-    Optional,
-    Sequence,
-    Tuple,
-)
-import torch
-import bittensor as bt
-from huggingface_hub import create_tag, list_repo_refs
-from huggingface_hub import scan_cache_dir
-from transformers import AutoModelForCausalLM
-from template.utils.progress_tracker import (
-    update_global_tracker_state,
-    LocalTrainingProgress,
-)
-from hivemind.compression import deserialize_torch_tensor
-import re
-import random
-from itertools import chain
 import copy
+import logging
+import random
+import re
+from itertools import chain
+from typing import Any, Dict, Optional, Sequence, Tuple
+
+import bittensor as bt
+import hivemind
+import torch
+from hivemind.compression import deserialize_torch_tensor
 from hivemind.p2p import PeerID
-from hivemind.utils.streaming import combine_from_streaming
-from hivemind.utils import MPFuture, nested_pack, get_logger
-from hivemind.utils.timed_storage import ValueWithExpiration
-from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.proto import averaging_pb2
+from hivemind.utils import MPFuture, get_logger, nested_pack
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
+from hivemind.utils.timed_storage import ValueWithExpiration
+from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
+from transformers import AutoModelForCausalLM
+
+from template.utils.progress_tracker import (
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -272,8 +267,9 @@ def load_state_from_peer(self, epoch=None):
             [layer for layer in self.model.parameters()][-1][-10:].tolist()
         )
         bt.logging.info(new_model_weights_sample)
-        self.local_epoch = self.local_progress.epoch
+
         self.local_progress.epoch = self.global_progress.epoch
+        self.local_progress.samples_accumulated = 0
         bt.logging.info(f"New Model Tag {self.model_hf_tag}")
 
         # Delete one model from the chace to maintain disk space
