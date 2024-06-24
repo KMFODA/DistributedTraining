@@ -39,7 +39,7 @@ logger.addHandler(handler)
 class DummyModel(nn.Module):
     def __init__(self):
         super(DummyModel, self).__init__()
-        self.fc = nn.Linear(37, 1)
+        self.fc = nn.Linear(1024, 1)
 
     def forward(self, x):
         return self.fc(x)
@@ -81,7 +81,7 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
     ]
     # Define a dummy input and target
     dummy_input = torch.randn(
-        1, 37
+        1, 1024
     )  # Adjust the size according to your model's input size
     dummy_target = torch.randn(
         1, 1
@@ -119,8 +119,7 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             time.sleep(sleep_int)
             # control = averager.schedule_step(custom_group_info=custom_group)
             future = averager.step(
-                wait=False, allow_retries=False, custom_group_info=custom_group
-            )
+                wait=False, allow_retries=False, custom_group_info=custom_group)
             futures.append(future)
 
         for future in futures:

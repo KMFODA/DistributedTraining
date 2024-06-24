@@ -1,10 +1,14 @@
-import os
-import numpy as np
-import wandb
-import torch
 import math
-from transformers import AutoModelForCausalLM
+import os
+import random
+
+import numpy as np
+import torch
+import wandb
 from torch_optimizer import Lamb
+from transformers import AutoModelForCausalLM
+from template.data import SubsetFalconLoader
+
 
 # Custom learning rate scheduler function
 def get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr):
@@ -108,11 +112,9 @@ def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288,
         rows=random.choices(range(0, 519_000_000), k=1000),
         )
 
+        for i, batch in enumerate(dataloader):
     
-        for micro_step in range(grad_accum_steps):
-            x, y = train_loader.next_batch()
-            inputs = x.to("cuda")
-            targets = y.to("cuda")
+            inputs = batch.to("cuda")
 
             # Forward pass
             outputs = model(input_ids=inputs, labels=inputs)
@@ -125,17 +127,19 @@ def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288,
             local_samples += BATCH_SIZE
             step += BATCH_SIZE
             current_step += BATCH_SIZE
+                
+            if current_step % grad_accum_steps == 0:
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-        lr = get_lr(step, warmup_steps, 
-                    lr_decay_iters, learning_rate, min_lr)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
+                lr = get_lr(step, warmup_steps, 
+                            lr_decay_iters, learning_rate, min_lr)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
 
-        optimizer.step()
-        optimizer.zero_grad()  # Reset gradients after each step
-        local_samples = 0
+                optimizer.step()
+                optimizer.zero_grad()  # Reset gradients after each step
+                local_samples = 0
         
         # TODO - implement on chain
         # tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size

@@ -164,3 +164,4 @@ wandb/
 scripts/*.png
 scripts/*.csv
 logs*.txt
+template/custom_proto/*.py
