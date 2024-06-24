@@ -126,6 +126,8 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
+                logger.info(f"Failed reducer {peer_index}")
+                bt.logging.info(f"Failed reducer {peer_index}")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
 

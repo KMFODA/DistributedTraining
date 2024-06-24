@@ -16,7 +16,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import random
 from typing import List
 
 import bittensor as bt
@@ -70,20 +69,27 @@ def score_gradients(self, response, uid):
     # Zero Gradients
     self.opt.zero_grad()
 
-    # Store summed random gradients in the synapse
-    gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
+    if response.gradient_test_index > len(gradients):
+        bt.logging.info(
+            f"UID {uid} running incorrect model. Assigning it a gradients core of 0."
+        )
+        score = 0
+        return score
+    else:
+        # Store summed random gradients in the synapse
+        gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
 
-    bt.logging.info(
-        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
-    )
-    bt.logging.info(
-        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
-    )
+        bt.logging.info(
+            f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
+        )
+        bt.logging.info(
+            f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
+        )
 
-    # TODO Address issue where gradient sum is negative
-    score = 1 - (abs(gradients - response.gradients))
+        # TODO Address issue where gradient sum is negative
+        score = 1 - (abs(gradients - response.gradients))
 
-    return score
+        return score
 
 
 async def score_blacklist(self, uids):
@@ -151,7 +157,7 @@ async def get_rewards(
         [
             response[0]
             for response in responses
-            if response[0].dendrite.status_code == 200 and response[0].loss != []
+            if response[0].dendrite.status_code == 200 and response[0].loss != 0.0
         ]
         == []
     ):
@@ -198,7 +204,9 @@ async def get_rewards(
     else:
         scores = torch.FloatTensor(
             [
-                1 if response.dendrite.status_code == 200 and response.loss != [] else 0
+                1
+                if response.dendrite.status_code == 200 and response.loss != 0.0
+                else 0
                 for _, response in zip(uids, responses[0])
             ]
         ).to(self.device)

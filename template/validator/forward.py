@@ -88,6 +88,7 @@ async def forward(self):
     else:
         queries = [
             template.protocol.Train(
+                model_name=self.model.name_or_path,
                 gradient_test_index=random.choice(self.test_layer_indices),
             )
             for _ in self.miner_uids
@@ -105,13 +106,11 @@ async def forward(self):
     bt.logging.info("Responses Received")
     if all_reduce and responses != []:
         responses = []
-        sleep_counter = 1
 
         while (gradient_averaging_step.done() is False) and (
             (time.perf_counter() - start_time) <= self.all_reduce_timeout
         ):
             time.sleep(1)
-            sleep_counter += 1
 
         if gradient_averaging_step.done():
             # Log Model Weight Before Optimizer Step
@@ -125,7 +124,7 @@ async def forward(self):
             bt.logging.info(current_model_weights_sample)
 
             # Optimizer Step
-            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+            with self.grad_averager.use_averaged_gradients():
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged grad
 
@@ -150,7 +149,8 @@ async def forward(self):
                 load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
             else:
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                # Reset gradients and update local progress
+                self.grad_averager.reset_accumulated_grads_()
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
 
@@ -167,7 +167,7 @@ async def forward(self):
                         self.config.neuron.model_name,
                         repo_type="model",
                         tag=str(self.local_progress.epoch),
-                        tag_message="Bump release version.",
+                        tag_message=f"Epcoh {self.local_progress.epoch}",
                     )
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
@@ -200,6 +200,7 @@ async def forward(self):
                     }
                     for response, uid in zip(responses[0], self.miner_uids)
                     if response.dendrite.status_code == 200
+                    and (response.dataset_indices is not None)
                 ]
             )
         )

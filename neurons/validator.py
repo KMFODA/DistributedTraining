@@ -122,7 +122,9 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        from template.utils.optimizer import VerboseAdamW
+
+        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(

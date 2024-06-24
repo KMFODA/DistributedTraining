@@ -86,7 +86,9 @@ class Miner(BaseMinerNeuron):
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        from template.utils.optimizer import VerboseAdamW
+
+        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -295,8 +297,6 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(
                 f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
             )
-            if isinstance(outputs.loss.detach(), float):
-                breakpoint()
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
@@ -306,27 +306,34 @@ class Miner(BaseMinerNeuron):
                     }
                 )
 
-        # Store summed random gradients in the synapse
-        synapse.gradients = float(
-            torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
-        )
+        if synapse.gradient_test_index > len(gradients):
+            bt.logging.error(
+                f"Request received from a validator running {synapse.model_name} whilst current miner is running {self.model.name_or_path}."
+            )
+            synapse.model_name = self.model.name_or_path
+            return synapse
+        else:
+            # Store summed random gradients in the synapse
+            synapse.gradients = float(
+                torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
+            )
 
-        average_loss = total_loss / index
-        synapse.loss = average_loss
-        synapse.dataset_indices = group
+            average_loss = total_loss / index
+            synapse.loss = average_loss
+            synapse.dataset_indices = group
 
-        event = {}
-        event.update(self.get_miner_info())
-        try:
-            event.update(get_bandwidth())
-        except:
-            bt.logging.info("Error getting bandwidth metrics")
-        event.update({"steps": index})
+            event = {}
+            event.update(self.get_miner_info())
+            try:
+                event.update(get_bandwidth())
+            except:
+                bt.logging.info("Error getting bandwidth metrics")
+            event.update({"steps": index})
 
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(event)
+            if not self.config.neuron.dont_wandb_log:
+                self.wandb.log(event)
 
-        return synapse
+            return synapse
 
     def warmup(
         self,
