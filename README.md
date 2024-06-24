@@ -42,9 +42,9 @@ brew update && brew install jq && brew install npm && sudo npm install pm2 -g &&
 ```
 ---
 
-Once you have installed this repo you can run the miner and validator with **auto updates enabled** using the following commands.
+# Running a Miner
+Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.
 ```bash
-# To run the miner
 chmod +x run_miner.sh
 pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --netuid <your netuid>  # Must be attained by following the instructions in the docs/running_on_*.md files
@@ -55,8 +55,12 @@ pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
     --dht.announce_ip <your device ip address>
+```
+---
 
-# To run the validator
+# Running a Validator
+Once you have installed this repo you should request access to the Distributed org on HF using the following [link](https://huggingface.co/login?next=%2Fdistributed). You can then run a validator **auto updates enabled** using the following command.
+```bash
 chmod +x run_validator.sh
 pm2 start run_validator.sh --name distributed_training_auto_update --
     --netuid <your netuid> # Must be attained by following the instructions in the docs/running_on_*.md files
@@ -84,7 +88,7 @@ This happens when one of the various async processes timesout. If your logs cont
 **Load State From Peer Error**:
 ![Subnet25](assets/error_download_state_from_peers.png)
 
-This happens when your miner or validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on wandb is above the minimum requirements this won't impact your incentive.
+This happens when a validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on wandb is above the minimum requirements this won't impact your incentive.
 
 ## License
 This repository is licensed under the MIT License.
