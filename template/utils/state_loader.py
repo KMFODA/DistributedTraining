@@ -287,4 +287,4 @@ def load_state_from_peer(self, epoch=None):
             )
 
     else:
-        bt.logging.info("Model with tag {epoch} does not exist")
+        bt.logging.info(f"Model with tag {epoch} does not exist")
