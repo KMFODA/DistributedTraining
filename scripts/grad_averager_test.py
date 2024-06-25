@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 import hivemind
 import schedulefree
+import torch
 
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHTID
@@ -53,15 +54,15 @@ logger.addHandler(handler)
 
 # DHT
 version = "4"
-address = "83.26.116.172"
+address = "213.108.196.111"
 
-announce_maddrs = [f"/ip{version}/{address}/tcp/41385"]
+announce_maddrs = [f"/ip{version}/{address}/tcp/7352"]
 
 # Prepare DHT parameters
 dht_params = {
     "host_maddrs": [
-        f"/ip4/0.0.0.0/tcp/41385",
-        f"/ip4/0.0.0.0/udp/41385/quic",
+        f"/ip4/0.0.0.0/tcp/7352",
+        f"/ip4/0.0.0.0/udp/7352/quic",
     ],
     "announce_maddrs": announce_maddrs,
     "start": True,
@@ -84,14 +85,14 @@ if not args.initial_peers:
 
     time.sleep(16)
 
-model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-500m")
+model = AutoModelForCausalLM.from_pretrained("kmfoda/gpt2-250m")
 model.to("cuda")
 
 # Set up a decentralized optimizer that will average with peers in background
-# opt = torch.optim.AdamW(model.parameters(), lr=0.001)
-opt = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.001)
+opt = torch.optim.AdamW(model.parameters(), lr=0.001)
+# opt = schedulefree.AdamWScheduleFree(model.parameters(), lr=0.001)
 
-global_target_batch_size = 600  # set your target batch size
+global_target_batch_size = 50  # set your target batch size
 grad_averager = DTGradientAverager(
     model.parameters(),
     dht=dht,
@@ -112,7 +113,7 @@ step_scheduled = False
 local_epoch, local_samples = 0, 0
 
 # * Make custom group:
-time.sleep(5)
+# time.sleep(5)
 loop = asyncio.new_event_loop()
 group_is_set = False
 # _p2p = loop.run_until_complete(dht.replicate_p2p())
