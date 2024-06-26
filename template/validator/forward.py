@@ -146,7 +146,13 @@ async def forward(self):
                 bt.logging.info(
                     "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
-                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+                state_loaded = load_state_from_peer(
+                    self, epoch=self.local_progress.epoch + 1
+                )
+                if not state_loaded:
+                    state_loaded = load_state_from_peer(
+                        self, epoch=self.local_progress.epoch
+                    )
 
             else:
                 # Reset gradients and update local progress

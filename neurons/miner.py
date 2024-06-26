@@ -195,7 +195,13 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(
                     "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
-                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+                state_loaded = load_state_from_peer(
+                    self, epoch=self.local_progress.epoch + 1
+                )
+                if not state_loaded:
+                    state_loaded = load_state_from_peer(
+                        self, epoch=self.local_progress.epoch
+                    )
 
             else:
                 self.grad_averager.reset_accumulated_grads_()  # prepare for next step

@@ -238,6 +238,7 @@ def load_optimizer_state(
 
 
 def load_state_from_peer(self, epoch=None):
+    state_loaded = False
     if epoch == None:
         update_global_tracker_state(self)
         epoch = self.global_progress.epoch
@@ -261,6 +262,7 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model_hf_tag = tag_name
         self.model.to(self.device)
+        state_loaded = False
 
         bt.logging.info("Model Weights After Loading State")
         new_model_weights_sample = copy.copy(
@@ -288,3 +290,5 @@ def load_state_from_peer(self, epoch=None):
 
     else:
         bt.logging.info(f"Model with tag {epoch} does not exist")
+
+    return state_loaded
