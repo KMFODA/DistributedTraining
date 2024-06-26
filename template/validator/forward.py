@@ -31,7 +31,7 @@ from template.utils.uids import get_random_uids
 from template.validator.reward import get_rewards
 import copy
 import numpy as np
-
+from huggingface_hub.utils import HfHubHTTPError
 
 async def forward(self):
     """
@@ -167,19 +167,45 @@ async def forward(self):
                 )
                 bt.logging.info(f"Old Model Tag {tag_name}")
                 if (tag_name is not None) and tag_name < self.local_progress.epoch:
-                    bt.logging.info("Pushing New Model Weights To HF Hub")
-                    self.model.push_to_hub(self.config.neuron.model_name)
-                    create_tag(
-                        self.config.neuron.model_name,
-                        repo_type="model",
-                        tag=str(self.local_progress.epoch),
-                        tag_message=f"Epcoh {self.local_progress.epoch}",
-                    )
-                    refs = list_repo_refs(
-                        self.config.neuron.model_name, repo_type="model"
-                    )
-                    tag_name = max([int(tag.name) for tag in refs.tags])
-                    bt.logging.info(f"New Model Tag {tag_name}")
+                    attempt = 0
+                    while attempt < self.model_upload_retry_limit:
+                        try:
+                            bt.logging.info("Pushing New Model Weights To HF Hub")
+                            self.model.push_to_hub(self.config.neuron.model_name)
+                            create_tag(
+                                self.config.neuron.model_name,
+                                repo_type="model",
+                                tag=str(self.local_progress.epoch),
+                                tag_message=f"Epcoh {self.local_progress.epoch}",
+                            )
+                            refs = list_repo_refs(
+                                self.config.neuron.model_name, repo_type="model"
+                            )
+                            tag_name = max([int(tag.name) for tag in refs.tags])
+                            bt.logging.info(f"New Model Tag {tag_name}")
+                            break
+                            
+                        except HfHubHTTPError:
+                            bt.logging.info(
+                                f"Model With Tag {tag_name} Already Uploaded. Loading that model."
+                            )
+                            state_loaded = load_state_from_peer(
+                                self, epoch=tag_name
+                            )
+                            if state_loaded:
+                                break
+                        except Exception as e:
+                            attempt += 1
+                            bt.logging.warning(
+                                f"Failed to upload model to huggingface hub, retrying. Attempt {attempt}/{self.model_upload_retry_limit}"
+                            )
+                            if attempt < self.model_upload_retry_limit:
+                                time.sleep(self.model_upload_retry_delay)  # Wait before the next retry
+                            else:
+                                bt.logging.error(
+                                    "Maximum retry limit reached. Unable to upload model to HF Hub."
+                                )
+                                raise
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")

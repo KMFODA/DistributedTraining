@@ -63,7 +63,7 @@ class VerboseAdamW(torch.optim.AdamW):
                 max_exp_avg_sqs,
                 state_steps,
             )
-            bt.logging.info(f"params_with_grad before: {params_with_grad[-1][:10]}")
+            bt.logging.info(f"params_with_grad before: {params_with_grad[-1][-10:]}")
             adamw(
                 params_with_grad,
                 grads,
@@ -86,6 +86,6 @@ class VerboseAdamW(torch.optim.AdamW):
                 found_inf=getattr(self, "found_inf", None),
                 has_complex=has_complex,
             )
-            bt.logging.info(f"params_with_grad after: {params_with_grad[-1][:10]}")
+            bt.logging.info(f"params_with_grad after: {params_with_grad[-1][-10:]}")
 
         return loss

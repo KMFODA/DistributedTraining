@@ -223,7 +223,7 @@ def setup_logging(level=logging.INFO, ip=None, port=None):
     _ = bt.logging()
 
     logtail_handler = LogtailHandler(source_token="Lfxe1irj5HVQB6TJMovmowiA")
-    logtail_handler.addFilter(logging_filter)
+    # logtail_handler.addFilter(logging_filter)
     formatter = logging.Formatter("%(host)s%(message)s")
     logtail_handler.setFormatter(formatter)
     logtail_handler.addFilter(IpFilter(ip=ip, port=port))

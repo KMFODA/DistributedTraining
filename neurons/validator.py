@@ -183,6 +183,8 @@ class Validator(BaseValidatorNeuron):
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
         self.step_scheduled = False
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
 
         # Load state from peers if validator is not on latest global epoch
         if (self.local_progress.epoch < self.global_progress.epoch) and (

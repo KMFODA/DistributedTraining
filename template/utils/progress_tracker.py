@@ -21,61 +21,65 @@ class LocalTrainingProgress(BaseModel):
 
 
 def update_global_tracker_state(self):
-    runs = wandb.Api().runs(
-        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-    )
-    global_progress = 0
-    global_epoch = 0
+    try:
+        runs = wandb.Api().runs(
+            f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
+        )
+        global_progress = 0
+        global_epoch = 0
 
-    for run in runs:
-        if (
-            ("validator" in run.name)
-            and (run.state == "running")
-            and (f"UID{self.uid}" not in run.name.split("_"))
-        ):
-            history = run.history()
+        for run in runs:
             if (
-                ("local_samples_accumulated" in history.columns)
-                and ("global_samples_accumulated" in history.columns)
-                and (
-                    not history.loc[
-                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
-                    ].empty
-                )
+                ("validator" in run.name)
+                and (run.state == "running")
+                and (f"UID{self.uid}" not in run.name.split("_"))
             ):
-                max_epoch = max(
-                    history.loc[
-                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                history = run.history()
+                if (
+                    ("local_samples_accumulated" in history.columns)
+                    and ("global_samples_accumulated" in history.columns)
+                    and (
+                        not history.loc[
+                            pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                        ].empty
+                    )
+                ):
+                    max_epoch = max(
+                        history.loc[
+                            pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                        ]
+                    )
+                    filtered_history = history.loc[
+                        (history.loc[:, "local_epoch"] == max_epoch), :
                     ]
-                )
-                filtered_history = history.loc[
-                    (history.loc[:, "local_epoch"] == max_epoch), :
-                ]
-                filtered_history = filtered_history.loc[
-                    (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
-                ]
-                if max_epoch > global_epoch:
-                    global_epoch = max(global_epoch, max_epoch)
-                    global_progress = 0
-                elif max_epoch < global_epoch:
-                    continue
+                    filtered_history = filtered_history.loc[
+                        (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
+                    ]
+                    if max_epoch > global_epoch:
+                        global_epoch = max(global_epoch, max_epoch)
+                        global_progress = 0
+                    elif max_epoch < global_epoch:
+                        continue
 
-                global_progress += max(
-                    filtered_history.loc[:, "local_samples_accumulated"]
-                )
+                    global_progress += max(
+                        filtered_history.loc[:, "local_samples_accumulated"]
+                    )
 
-        else:
-            continue
+            else:
+                continue
 
-    # Add local samples
-    global_progress += self.local_progress.samples_accumulated
-    global_epoch = max(global_epoch, self.local_progress.epoch)
+        # Add local samples
+        global_progress += self.local_progress.samples_accumulated
+        global_epoch = max(global_epoch, self.local_progress.epoch)
 
-    self.global_progress.samples_accumulated = global_progress
-    self.global_progress.epoch = global_epoch
-    bt.logging.info(
-        f"Local samples:  {self.local_progress.samples_accumulated} | Local epoch:  {self.local_progress.epoch}"
-    )
-    bt.logging.info(
-        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
-    )
+        self.global_progress.samples_accumulated = global_progress
+        self.global_progress.epoch = global_epoch
+        bt.logging.info(
+            f"Local samples:  {self.local_progress.samples_accumulated} | Local epoch:  {self.local_progress.epoch}"
+        )
+        bt.logging.info(
+            f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
+        )
+
+    except Exception as e:
+        bt.logging.info(f"Failed to update global tracker state due to error {e}")
