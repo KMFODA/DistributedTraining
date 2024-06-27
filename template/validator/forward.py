@@ -33,6 +33,7 @@ import copy
 import numpy as np
 from huggingface_hub.utils import HfHubHTTPError
 
+
 async def forward(self):
     """
     The forward function is called by the validator every time step.
@@ -184,14 +185,12 @@ async def forward(self):
                             tag_name = max([int(tag.name) for tag in refs.tags])
                             bt.logging.info(f"New Model Tag {tag_name}")
                             break
-                            
+
                         except HfHubHTTPError:
                             bt.logging.info(
                                 f"Model With Tag {tag_name} Already Uploaded. Loading that model."
                             )
-                            state_loaded = load_state_from_peer(
-                                self, epoch=tag_name
-                            )
+                            state_loaded = load_state_from_peer(self, epoch=tag_name)
                             if state_loaded:
                                 break
                         except Exception as e:
@@ -200,7 +199,9 @@ async def forward(self):
                                 f"Failed to upload model to huggingface hub, retrying. Attempt {attempt}/{self.model_upload_retry_limit}"
                             )
                             if attempt < self.model_upload_retry_limit:
-                                time.sleep(self.model_upload_retry_delay)  # Wait before the next retry
+                                time.sleep(
+                                    self.model_upload_retry_delay
+                                )  # Wait before the next retry
                             else:
                                 bt.logging.error(
                                     "Maximum retry limit reached. Unable to upload model to HF Hub."
@@ -210,8 +211,10 @@ async def forward(self):
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
             gradient_averaging_step.cancel()
+            bt.logging.info("Gradient Step Cancelled")
             with self.grad_averager.use_averaged_gradients():
                 self.opt.zero_grad()
+            bt.logging.info("Optimizer Gradients Zeroed")
             load_state_from_peer(self)
 
         self.step_scheduled = False

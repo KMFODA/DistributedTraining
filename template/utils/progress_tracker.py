@@ -40,20 +40,23 @@ def update_global_tracker_state(self):
                     and ("global_samples_accumulated" in history.columns)
                     and (
                         not history.loc[
-                            pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                            pd.isna(history.loc[:, "local_epoch"]) == False,
+                            "local_epoch",
                         ].empty
                     )
                 ):
                     max_epoch = max(
                         history.loc[
-                            pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
+                            pd.isna(history.loc[:, "local_epoch"]) == False,
+                            "local_epoch",
                         ]
                     )
                     filtered_history = history.loc[
                         (history.loc[:, "local_epoch"] == max_epoch), :
                     ]
                     filtered_history = filtered_history.loc[
-                        (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
+                        (pd.isna(history.loc[:, "local_samples_accumulated"]) == False),
+                        :,
                     ]
                     if max_epoch > global_epoch:
                         global_epoch = max(global_epoch, max_epoch)

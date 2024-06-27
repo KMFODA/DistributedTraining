@@ -213,6 +213,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"Gradient averaging step failed with error {e}")
             with self.grad_averager.use_averaged_gradients():
                 self.opt.zero_grad()
+            bt.logging.info("Optimizer Gradients Zeroed")
             update_global_tracker_state(self)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
