@@ -1,6 +1,13 @@
 import torch
+
 # from bitsandbytes.optim import LAMB
-from transformers import AutoModelForCausalLM, AutoConfig, AutoModelForMaskedLM, DataCollatorForLanguageModeling, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoConfig,
+    AutoModelForMaskedLM,
+    DataCollatorForLanguageModeling,
+    AutoTokenizer,
+)
 from datasets import load_dataset
 from torch_optimizer import Lamb
 from torch.utils.data import DataLoader
@@ -9,11 +16,16 @@ from itertools import chain
 # Hyperparameters
 optimizer_name = "LAMB"
 global_target_batch_size = 512
-learning_rate = 5 / ((2^3)*10^3)
-warmup_ratio = 1/320
+learning_rate = 5 / ((2 ^ 3) * 10 ^ 3)
+warmup_ratio = 1 / 320
 
+<<<<<<< HEAD
 batch_size = 1    
 max_seq_length = 512 # Paper indicates first 9/10 epochs have a sequence lenght of 128. Last 1/10 have a sequence length of 512.
+=======
+BATCH_SIZE = 1
+SEQ_LENGTH = 512  # Paper indicates first 9/10 epochs have a sequence lenght of 128. Last 1/10 have a sequence length of 512.
+>>>>>>> 8f04100 (Zero gradients if model weights don't change)
 number_of_epochs = 10
 gradient_accumilation_steps = global_target_batch_size // (batch_size)
 mlm_probability = 0.15
@@ -22,7 +34,9 @@ from datasets import concatenate_datasets, load_dataset
 
 bookcorpus = load_dataset("bookcorpus", split="train")
 wiki = load_dataset("wikipedia", "20220301.en", split="train")
-wiki = wiki.remove_columns([col for col in wiki.column_names if col != "text"])  # only keep the 'text' column
+wiki = wiki.remove_columns(
+    [col for col in wiki.column_names if col != "text"]
+)  # only keep the 'text' column
 
 assert bookcorpus.features.type == wiki.features.type
 raw_datasets = concatenate_datasets([bookcorpus, wiki])
@@ -105,7 +119,6 @@ local_samples = 0
 current_step = 0
 for epoch in range(number_of_epochs):
     for step, batch in enumerate(train_dataloader):
-    
         # inputs = torch.tensor(batch['input_ids']).to("cuda")
 
         # Forward pass
@@ -119,13 +132,12 @@ for epoch in range(number_of_epochs):
         scaled_loss = loss / gradient_accumilation_steps
         scaled_loss.backward()
         print(f"Current epoch {epoch+1}, Batch {step+1}, Loss: {loss.item()}")
-        
+
         # Update local_samples
         local_samples += BATCH_SIZE
         current_step += BATCH_SIZE
-            
-        if current_step % gradient_accumilation_steps == 0:
 
+        if current_step % gradient_accumilation_steps == 0:
             print(f"Running Opt Step")
             optimizer.step()
             optimizer.zero_grad()  # Reset gradients after each step

@@ -163,6 +163,7 @@ class Miner(BaseMinerNeuron):
         self, synapse: template.protocol.AllReduce
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+        failed_gradient_all_reduce = False
         try:
             self.grad_averager.step(timeout=(synapse.timeout - 20))
             bt.logging.info("Model Weights Before Optimizer Step")
@@ -189,12 +190,14 @@ class Miner(BaseMinerNeuron):
 
             if new_model_weights == current_model_weights:
                 bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                failed_gradient_all_reduce = True
                 load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
             elif sum(np.isnan(new_model_weights_sample)) > 1:
                 bt.logging.info(
                     "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
+                failed_gradient_all_reduce = True
                 state_loaded = load_state_from_peer(
                     self, epoch=self.local_progress.epoch + 1
                 )
@@ -211,12 +214,15 @@ class Miner(BaseMinerNeuron):
 
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
-            with self.grad_averager.use_averaged_gradients():
-                self.opt.zero_grad()
-            bt.logging.info("Optimizer Gradients Zeroed")
+            failed_gradient_all_reduce = True
             update_global_tracker_state(self)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
+
+        if failed_gradient_all_reduce:
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
+            bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
 
@@ -304,6 +310,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(
                 f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
             )
+            bt.logging.info(gradients[-1][-5:])
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {

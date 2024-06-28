@@ -107,7 +107,7 @@ async def forward(self):
     bt.logging.info("Responses Received")
     if all_reduce and responses != []:
         responses = []
-
+        failed_gradient_all_reduce = False
         while (gradient_averaging_step.done() is False) and (
             (time.perf_counter() - start_time) <= self.all_reduce_timeout
         ):
@@ -141,12 +141,14 @@ async def forward(self):
 
             if new_model_weights == current_model_weights:
                 bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                failed_gradient_all_reduce = True
                 load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
             elif sum(np.isnan(new_model_weights_sample)) > 1:
                 bt.logging.info(
                     "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                 )
+                failed_gradient_all_reduce = True
                 state_loaded = load_state_from_peer(
                     self, epoch=self.local_progress.epoch + 1
                 )
@@ -210,12 +212,15 @@ async def forward(self):
 
         else:
             bt.logging.info("Averaging Failed. Loading State From Peer")
+            failed_gradient_all_reduce = True
+            load_state_from_peer(self)
+
+        if failed_gradient_all_reduce:
             gradient_averaging_step.cancel()
             bt.logging.info("Gradient Step Cancelled")
             with self.grad_averager.use_averaged_gradients():
                 self.opt.zero_grad()
             bt.logging.info("Optimizer Gradients Zeroed")
-            load_state_from_peer(self)
 
         self.step_scheduled = False
     else:
