@@ -572,13 +572,13 @@ def _multi_tensor_adamw(
                 exp_avg_sq_sqrt = torch._foreach_sqrt(device_exp_avg_sqs)
 
             torch._foreach_div_(exp_avg_sq_sqrt, bias_correction2_sqrt)
-            bt.logging.info(device_params[-1][-10:])
-            bt.logging.info(exp_avg_sq_sqrt[-1][-10:])
+            bt.logging.info(f"Params Before foreach_addcdiv: {device_params[-1][-10:]}")
+            bt.logging.info(f"Exp Avg Sq Sqrt: {exp_avg_sq_sqrt[-1][-10:]}")
             torch._foreach_add_(exp_avg_sq_sqrt, eps)
             torch._foreach_addcdiv_(
                 device_params, device_exp_avgs, exp_avg_sq_sqrt, step_size
             )
-            bt.logging.info(device_params[-1][-10:])
+            bt.logging.info(f"Params After foreach_addcdiv: {device_params[-1][-10:]}")
 
 
 def _fused_adamw(
