@@ -19,13 +19,8 @@ global_target_batch_size = 512
 learning_rate = 5 / ((2 ^ 3) * 10 ^ 3)
 warmup_ratio = 1 / 320
 
-<<<<<<< HEAD
-batch_size = 1    
-max_seq_length = 512 # Paper indicates first 9/10 epochs have a sequence lenght of 128. Last 1/10 have a sequence length of 512.
-=======
-BATCH_SIZE = 1
-SEQ_LENGTH = 512  # Paper indicates first 9/10 epochs have a sequence lenght of 128. Last 1/10 have a sequence length of 512.
->>>>>>> 8f04100 (Zero gradients if model weights don't change)
+batch_size = 1
+max_seq_length = 512  # Paper indicates first 9/10 epochs have a sequence lenght of 128. Last 1/10 have a sequence length of 512.
 number_of_epochs = 10
 gradient_accumilation_steps = global_target_batch_size // (batch_size)
 mlm_probability = 0.15
@@ -60,11 +55,13 @@ tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-large-uncased")
 column_names = raw_datasets.column_names
 text_column_name = "text" if "text" in column_names else column_names[0]
 
+
 # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
 # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
 # efficient when it receives the `special_tokens_mask`.
 def tokenize_function(examples):
     return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
+
 
 tokenized_datasets = raw_datasets.map(
     tokenize_function,
@@ -74,6 +71,7 @@ tokenized_datasets = raw_datasets.map(
     load_from_cache_file=False,
     desc="Running tokenizer on every text in dataset",
 )
+
 
 # Main data processing function that will concatenate all texts from our dataset and generate chunks of
 # max_seq_length.
@@ -91,6 +89,7 @@ def group_texts(examples):
     }
     return result
 
+
 # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
 # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
 # might be slower to preprocess.
@@ -106,14 +105,19 @@ tokenized_datasets = tokenized_datasets.map(
     desc=f"Grouping texts in chunks of {max_seq_length}",
 )
 
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=mlm_probability)
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer, mlm_probability=mlm_probability
+)
 
 # DataLoaders creation:
 train_dataloader = DataLoader(
-    tokenized_datasets=['text'], shuffle=True, collate_fn=data_collator, batch_size=batch_size
+    tokenized_datasets=["text"],
+    shuffle=True,
+    collate_fn=data_collator,
+    batch_size=batch_size,
 )
 breakpoint()
-total_steps = len(train_dataloader['text']) * number_of_epochs
+total_steps = len(train_dataloader["text"]) * number_of_epochs
 warmup_steps = int(warmup_ratio * total_steps)
 local_samples = 0
 current_step = 0
