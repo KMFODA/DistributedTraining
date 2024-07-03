@@ -166,15 +166,15 @@ class Miner(BaseMinerNeuron):
         failed_gradient_all_reduce = False
         try:
             self.grad_averager.step(timeout=(synapse.timeout - 20))
-            bt.logging.info("Model Weights Before Optimizer Step")
-            current_model_weights = copy.deepcopy(
-                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
-            )
-            current_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
-            )
-            bt.logging.info(current_model_weights_sample)
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info("Model Weights Before Optimizer Step")
+                current_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
+                current_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(current_model_weights_sample)
                 bt.logging.info("Model Gradients Before Optimizer Step")
                 # Copy gradients
                 gradients = tuple(

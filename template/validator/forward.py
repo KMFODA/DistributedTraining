@@ -115,18 +115,17 @@ async def forward(self):
             time.sleep(1)
 
         if gradient_averaging_step.done():
-            # Log Model Weight Before Optimizer Step
-            bt.logging.info("Model Weights Before Optimizer Step")
-            current_model_weights = copy.deepcopy(
-                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
-            )
-            current_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
-            )
-            bt.logging.info(current_model_weights_sample)
-
             # Optimizer Step
             with self.grad_averager.use_averaged_gradients():
+                # Log Model Weight Before Optimizer Step
+                bt.logging.info("Model Weights Before Optimizer Step")
+                current_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
+                current_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(current_model_weights_sample)
                 bt.logging.info("Model Gradients Before Optimizer Step")
                 # Copy gradients
                 gradients = tuple(
