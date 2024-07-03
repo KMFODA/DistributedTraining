@@ -32,6 +32,7 @@ from template.validator.reward import get_rewards
 import copy
 import numpy as np
 from huggingface_hub.utils import HfHubHTTPError
+import torch
 
 
 async def forward(self):
@@ -126,6 +127,17 @@ async def forward(self):
 
             # Optimizer Step
             with self.grad_averager.use_averaged_gradients():
+                bt.logging.info("Model Gradients Before Optimizer Step")
+                # Copy gradients
+                gradients = tuple(
+                    (
+                        param.grad.detach().cpu().clone()
+                        if param.grad is not None
+                        else torch.zeros_like(param)
+                    )
+                    for param in self.model.parameters()
+                )
+                bt.logging.info(gradients[-1][-10:])
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()  # update model parameters using averaged grad
 

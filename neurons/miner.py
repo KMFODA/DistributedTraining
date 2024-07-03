@@ -175,7 +175,17 @@ class Miner(BaseMinerNeuron):
             )
             bt.logging.info(current_model_weights_sample)
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                # bt.logging.info({n:p.grad for n,p in self.model.named_parameters() if p.grad is not None})
+                bt.logging.info("Model Gradients Before Optimizer Step")
+                # Copy gradients
+                gradients = tuple(
+                    (
+                        param.grad.detach().cpu().clone()
+                        if param.grad is not None
+                        else torch.zeros_like(param)
+                    )
+                    for param in self.model.parameters()
+                )
+                bt.logging.info(gradients[-1][-10:])
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()
 
