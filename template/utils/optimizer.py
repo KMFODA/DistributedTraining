@@ -53,6 +53,7 @@ class VerboseAdamW(torch.optim.AdamW):
             amsgrad = group["amsgrad"]
             beta1, beta2 = group["betas"]
 
+            bt.logging.info(f"Params before init_group: {group['params'][-1][-10:]}")
             has_complex = self._init_group(
                 group,
                 params_with_grad,

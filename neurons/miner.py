@@ -165,8 +165,25 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
         try:
+            bt.logging.info(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(
+                [group["params"][-1][-10:].tolist() for group in self.opt.param_groups][
+                    0
+                ]
+            )
             self.grad_averager.step(timeout=(synapse.timeout - 20))
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(
+                    [
+                        group["params"][-1][-10:].tolist()
+                        for group in self.opt.param_groups
+                    ][0]
+                )
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights = copy.deepcopy(
                     [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
@@ -309,6 +326,16 @@ class Miner(BaseMinerNeuron):
 
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+
+            # # Test Step
+            bt.logging.info(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(
+                [group["params"][-1][-10:].tolist() for group in self.opt.param_groups][
+                    0
+                ]
+            )
 
             # Zero Gradients
             self.opt.zero_grad()
