@@ -17,6 +17,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from transformers import AutoModelForCausalLM
+from .optimizer import VerboseAdamW
 
 from template.utils.progress_tracker import (
     LocalTrainingProgress,
@@ -65,7 +66,6 @@ class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
             training_progress_metadata, _ = self.dht.get(
                 f"{re.sub('_state_averager', '_progress', self.prefix)}", latest=True
             ) or (None, -float("inf"))
-
             # Get only peers where local_epoch == global_epoch
             if training_progress_metadata is None:
                 logger.info(f"Averager could not load metadata from the tracker")
@@ -262,7 +262,8 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model_hf_tag = tag_name
         self.model.to(self.device)
-        state_loaded = False
+        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
         new_model_weights_sample = copy.copy(
