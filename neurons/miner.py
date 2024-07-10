@@ -336,7 +336,7 @@ class Miner(BaseMinerNeuron):
             # Log accumulation status
             bt.logging.info(
                 f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
-            )s
+            )
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
