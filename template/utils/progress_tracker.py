@@ -73,7 +73,8 @@ def update_global_tracker_state(self):
 
         # Add local samples
         global_progress += self.local_progress.samples_accumulated
-        global_epoch = max(global_epoch, self.local_progress.epoch)
+        if self.__class__.__name__.lower() == "validator":
+            global_epoch = max(global_epoch, self.local_progress.epoch)
 
         self.global_progress.samples_accumulated = global_progress
         self.global_progress.epoch = global_epoch

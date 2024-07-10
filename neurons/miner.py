@@ -327,16 +327,6 @@ class Miner(BaseMinerNeuron):
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
-            # # Test Step
-            bt.logging.info(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
-            )
-            bt.logging.info(
-                [group["params"][-1][-10:].tolist() for group in self.opt.param_groups][
-                    0
-                ]
-            )
-
             # Zero Gradients
             self.opt.zero_grad()
 
@@ -346,8 +336,7 @@ class Miner(BaseMinerNeuron):
             # Log accumulation status
             bt.logging.info(
                 f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
-            )
-            bt.logging.info(gradients[-1][-5:])
+            )s
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {

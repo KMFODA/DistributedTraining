@@ -263,6 +263,7 @@ def load_state_from_peer(self, epoch=None):
         self.model_hf_tag = tag_name
         self.model.to(self.device)
         self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
