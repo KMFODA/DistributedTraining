@@ -266,8 +266,16 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         update_global_tracker_state(self)
-        if (self.local_progress.epoch < self.global_progress.epoch) and (
-            self.model_hf_tag < self.global_progress.epoch
+        if (
+            (self.local_progress.epoch < self.global_progress.epoch)
+            and (self.model_hf_tag < self.global_progress.epoch)
+        ) or (
+            sum(
+                np.isnan(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+            )
+            > 1
         ):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
