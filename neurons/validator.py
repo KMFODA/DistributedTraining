@@ -191,10 +191,10 @@ class Validator(BaseValidatorNeuron):
             self.warmup()
 
         # Load State From Peer If Out Of Sync
-        if (
-            self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
-        ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
-            load_state_from_peer(self, epoch=self.tracker.global_progress.epoch)
+        # if (
+        #     self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
+        # ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
+        #     load_state_from_peer(self, epoch=self.tracker.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
