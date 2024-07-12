@@ -10,8 +10,9 @@
 ---
 
 # Overview
+[Blog post](https://distributed-training.notion.site/Decentralised-Distributed-Training-fd21bdfa72294dfeab8fb092770212b9)
 
-#### Minimum Requirements
+# Minimum Requirements
 
 [min.compute.yml](min.compute.yml)
 
@@ -78,17 +79,22 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
 ---
 
 ## Known Errors
-Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
+Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate the all-reduce part of distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
 
 **Asyncio Timeout Error**:
 ![Subnet25](assets/error_asyncio_timeout.png)
 
-This happens when one of the various async processes timesout. If your logs continue after this error and you still receive validator calls your miner will still gain incentive.
+This happens when one of the various async processes times out. If your logs continue after this error and you still receive validator calls your miner will still gain incentive.
 
 **Load State From Peer Error**:
 ![Subnet25](assets/error_download_state_from_peers.png)
 
-This happens when a validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on wandb is above the minimum requirements this won't impact your incentive.
+This happens when a validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on WandB is above the minimum requirements this won't impact your incentive.
+
+**Averaging step failed: could not find a group**:
+![Subnet25](assets/error_download_state_from_peers.png)
+
+This occurs when your miner hasn't been able to find a group to join to perform the all-reduce round. This might be due to low bandwidth or issues with your DHT connecting with other DHTs. Make sure your bandwidth is above the minimum requirements and that you aren't running any other background processes or miners on the same machine. Getting this error once shouldn't have a huge impact on incentive but if it keeps repeating incentives will drop.
 
 ## License
 This repository is licensed under the MIT License.
