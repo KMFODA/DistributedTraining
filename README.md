@@ -44,7 +44,7 @@ brew update && brew install jq && brew install npm && sudo npm install pm2 -g &&
 
 4. Copy the .env file to your root directory
 ```bash
-cp DTraining/.venv /root/
+cp DTraining/.env /root/
 ```
 ---
 # Running a Miner
