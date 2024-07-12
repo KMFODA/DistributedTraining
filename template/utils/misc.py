@@ -44,6 +44,10 @@ from template.data.dataset import SubsetFalconLoader
 from bitarray import bitarray
 import wandb
 from logtail import LogtailHandler
+import os
+from dotenv import load_dotenv, dotenv_values
+
+load_dotenv()
 
 
 # LRU Cache with TTL
@@ -222,8 +226,7 @@ def setup_logging(level=logging.INFO, ip=None, port=None):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    logtail_handler = LogtailHandler(source_token="Lfxe1irj5HVQB6TJMovmowiA")
-    # logtail_handler.addFilter(logging_filter)
+    logtail_handler = LogtailHandler(source_token=os.getenv("LOGTAIL_KEY"))
     formatter = logging.Formatter("%(host)s%(message)s")
     logtail_handler.setFormatter(formatter)
     logtail_handler.addFilter(IpFilter(ip=ip, port=port))
@@ -289,17 +292,14 @@ def get_bandwidth():
 
 def init_dht(self):
     # Init DHT and model
-    if self.config.dht.use_google_dns:
-        request = requests.get("https://api.ipify.org")
-        request.raise_for_status()
-
-        address = request.text
-        bt.logging.info(f"Received public IP address of this machine: {address}")
-        version = ip_address(address).version
+    if self.config.dht.ip:
+        version = "4"
+        address = self.config.dht.ip
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
     else:
-        version = "4"
-        address = self.config.dht.announce_ip
+        address = bt.utils.networking.get_external_ip()
+        bt.logging.info(f"Received public IP address of this machine: {address}")
+        version = ip_address(address).version
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
 
     # Init list of available DHT addresses from wandb

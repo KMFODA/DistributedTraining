@@ -67,7 +67,12 @@ class Validator(BaseValidatorNeuron):
         super(Validator, self).__init__(config=config)
 
         # Init Logging
-        setup_logging(ip=self.config.axon.ip, port=self.config.axon.port)
+        setup_logging(
+            ip=self.config.axon.ip
+            if self.config.axon.ip != "[::]"
+            else bt.utils.networking.get_external_ip(),
+            port=self.config.axon.port,
+        )
 
         bt.logging.info("load_state()")
         self.load_state()

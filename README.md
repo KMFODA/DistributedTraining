@@ -41,8 +41,12 @@ sudo apt update && sudo apt install jq && sudo apt install npm && sudo npm insta
 ```bash
 brew update && brew install jq && brew install npm && sudo npm install pm2 -g && pm2 update
 ```
----
 
+4. Copy the .env file to your root directory
+```bash
+cp DTraining/.venv /root/
+```
+---
 # Running a Miner
 Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.
 ```bash
