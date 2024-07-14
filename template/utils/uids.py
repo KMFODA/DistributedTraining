@@ -7,18 +7,23 @@ import asyncio
 import template
 
 
-async def check_uid(dendrite, axon, uid):
+async def check_uid(dendrite, axon, uid, epoch=None):
     try:
         response = await dendrite(
             axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3
         )
         if response.is_success:
-            bt.logging.trace(f"UID {uid} is active.")
-            # loop.close()
-            return True
+            if epoch is not None and response.epoch == epoch:
+                bt.logging.trace(f"UID {uid} is active but and on epoch {epoch}")
+                return True
+            elif epoch is not None and response.epoch != epoch:
+                bt.logging.trace(f"UID {uid} is active but not on epoch {epoch}")
+                return True
+            else:
+                bt.logging.trace(f"UID {uid} is active.")
+                return True
         else:
             bt.logging.trace(f"UID {uid} is not active.")
-            # loop.close()
             return False
     except Exception as e:
         bt.logging.error(f"Error checking UID {uid}: {e}\n{traceback.format_exc()}")
@@ -27,7 +32,11 @@ async def check_uid(dendrite, axon, uid):
 
 
 async def check_uid_availability(
-    dendrite, metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int
+    dendrite,
+    metagraph: "bt.metagraph.Metagraph",
+    uid: int,
+    vpermit_tao_limit: int,
+    epoch: int = None,
 ) -> bool:
     """Check if uid is available. The UID should be available if it is serving and has less than vpermit_tao_limit stake
     Args:
@@ -52,7 +61,7 @@ async def check_uid_availability(
 
 
 async def get_random_uids(
-    self, dendrite, k: int, exclude: List[int] = None
+    self, dendrite, k: int, exclude: List[int] = None, epoch: int = None
 ) -> torch.LongTensor:
     """Returns k available random uids from the metagraph.
     Args:
@@ -72,7 +81,11 @@ async def get_random_uids(
         # The dendrite client queries the network.
         tasks.append(
             check_uid_availability(
-                dendrite, self.metagraph, uid, self.config.neuron.vpermit_tao_limit
+                dendrite,
+                self.metagraph,
+                uid,
+                self.config.neuron.vpermit_tao_limit,
+                epoch,
             )
         )
 

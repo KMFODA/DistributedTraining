@@ -162,6 +162,7 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
+        synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(

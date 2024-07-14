@@ -222,7 +222,9 @@ def logging_filter(record):
         return False
 
 
-def setup_logging(level=logging.INFO, ip=None, port=None):
+def setup_logging(
+    level=logging.INFO, ip=None, port=None, local_logfile="/root/logs_mylogfile.txt"
+):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
@@ -249,9 +251,10 @@ def setup_logging(level=logging.INFO, ip=None, port=None):
     root_logger.addHandler(logtail_handler)
 
     # Create a file handler that logs debug and higher level messages
-    if os.path.exists("/root/logs_mylogfile.txt"):
-        shutil.copyfile("/root/logs_mylogfile.txt", "/root/logs_mylogfile_v1.txt")
-        os.remove("/root/logs_mylogfile.txt")
+    if os.path.exists(local_logfile):
+        # Archive any existing logfile
+        shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
+        os.remove(local_logfile)
 
     hivemind_log_file = f"/root/logs_mylogfile.txt"
     hivemind_logger = logging.getLogger("hivemind")

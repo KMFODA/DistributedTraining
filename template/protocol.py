@@ -32,6 +32,7 @@ class IsAlive(bt.Synapse):
         description="Completion status of the current StreamPrompting object. "
         "This attribute is mutable and can be updated.",
     )
+    epoch: Optional[int] = None
 
 
 class Train(bt.Synapse):

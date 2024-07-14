@@ -59,7 +59,7 @@ pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --logging.debug # Run in debug mode, alternatively --logging.trace for trace mode
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
-    --dht.announce_ip <your device ip address>
+    --dht.ip <your device ip address>
 ```
 ---
 
@@ -75,7 +75,7 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
     --logging.debug # Run in debug mode, alternatively --logging.trace for trace mode
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
-    --dht.announce_ip <your device ip address>
+    --dht.ip <your device ip address>
 ```
 
 </div>
