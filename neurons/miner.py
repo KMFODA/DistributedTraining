@@ -52,6 +52,7 @@ from template.utils.misc import (
     setup_logging,
 )
 from huggingface_hub import list_repo_refs
+from template.utils.optimizer import VerboseAdamW
 
 
 class Miner(BaseMinerNeuron):
@@ -91,8 +92,6 @@ class Miner(BaseMinerNeuron):
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        from template.utils.optimizer import VerboseAdamW
-
         self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager

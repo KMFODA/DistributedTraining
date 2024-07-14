@@ -58,6 +58,7 @@ from template.utils.misc import (
     warmup,
 )
 from template.validator import forward
+from template.utils.optimizer import VerboseAdamW
 
 logger = get_logger(__name__)
 
@@ -127,8 +128,6 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        from template.utils.optimizer import VerboseAdamW
-
         self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
