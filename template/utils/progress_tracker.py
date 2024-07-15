@@ -48,6 +48,7 @@ def update_global_tracker_state(self):
                             "local_epoch",
                         ].empty
                     )
+                    and (sum(history.loc[:, "local_epoch"] == global_epoch) > 0)
                 ):
                     filtered_history = history.loc[
                         (history.loc[:, "local_epoch"] == global_epoch), :
