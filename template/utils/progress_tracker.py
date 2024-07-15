@@ -3,6 +3,7 @@ from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from dataclasses import dataclass
 import pandas as pd
 import bittensor as bt
+from huggingface_hub import list_repo_refs
 
 
 @dataclass(frozen=False)
@@ -25,14 +26,17 @@ def update_global_tracker_state(self):
         runs = wandb.Api().runs(
             f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
         )
+        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         global_progress = 0
-        global_epoch = 0
 
         for run in runs:
             if (
-                ("validator" in run.name)
-                and (run.state == "running")
-                and (f"UID{self.uid}" not in run.name.split("_"))
+                ("validator" in run.name)  # Filter our any miner runs
+                and (run.state == "running")  # Filter out any idle wandb runs
+                and (
+                    f"UID{self.uid}" not in run.name.split("_")
+                )  # Filter out any wandb data from the current neuron's UID
             ):
                 history = run.history()
                 if (
@@ -45,25 +49,18 @@ def update_global_tracker_state(self):
                         ].empty
                     )
                 ):
-                    max_epoch = max(
-                        history.loc[
-                            pd.isna(history.loc[:, "local_epoch"]) == False,
-                            "local_epoch",
-                        ]
-                    )
                     filtered_history = history.loc[
-                        (history.loc[:, "local_epoch"] == max_epoch), :
+                        (history.loc[:, "local_epoch"] == global_epoch), :
                     ]
                     filtered_history = filtered_history.loc[
-                        (pd.isna(history.loc[:, "local_samples_accumulated"]) == False),
+                        (
+                            pd.isna(
+                                filtered_history.loc[:, "local_samples_accumulated"]
+                            )
+                            == False
+                        ),
                         :,
                     ]
-                    if max_epoch > global_epoch:
-                        global_epoch = max(global_epoch, max_epoch)
-                        global_progress = 0
-                    elif max_epoch < global_epoch:
-                        continue
-
                     global_progress += max(
                         filtered_history.loc[:, "local_samples_accumulated"]
                     )
@@ -73,11 +70,17 @@ def update_global_tracker_state(self):
 
         # Add local samples
         global_progress += self.local_progress.samples_accumulated
-        if self.__class__.__name__.lower() == "validator":
-            global_epoch = max(global_epoch, self.local_progress.epoch)
 
+        # Update global progress
         self.global_progress.samples_accumulated = global_progress
         self.global_progress.epoch = global_epoch
+
+        # Update local progress
+        if self.global_progress.epoch != self.local_progress.epoch:
+            self.local_progress.epoch = self.global_progress.epoch
+            self.global_progress.samples_accumulated = 0
+
+        # Log new porgress
         bt.logging.info(
             f"Local samples:  {self.local_progress.samples_accumulated} | Local epoch:  {self.local_progress.epoch}"
         )

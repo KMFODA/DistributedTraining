@@ -46,12 +46,10 @@ async def forward(self):
 
     """
     update_global_tracker_state(self)
-    if (self.local_progress.epoch < self.global_progress.epoch) and (
-        self.model_hf_tag < self.global_progress.epoch
-    ):
+    if self.local_progress.epoch < self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
-    # breakpoint()
+
     if (
         (
             (
@@ -84,7 +82,7 @@ async def forward(self):
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
     if self.miner_uids.tolist() == []:
-        responses = []
+        responses = [[]]
         bt.logging.info("No active miners found this step.")
     else:
         query_tasks = []

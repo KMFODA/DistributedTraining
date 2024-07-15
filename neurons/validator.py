@@ -86,6 +86,18 @@ class Validator(BaseValidatorNeuron):
         # Init DHT
         init_dht(self)
 
+        # Init Local & Global Progress
+        self.local_progress = LocalTrainingProgress(
+            peer_id=self.dht.peer_id.to_bytes(),
+            epoch=0,
+            samples_accumulated=0,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
+        )
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
+        update_global_tracker_state(self)
+
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(
@@ -98,19 +110,15 @@ class Validator(BaseValidatorNeuron):
 
         # Init Device & Model
         self.device = self.config.neuron.device
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = (
-            max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        )
-        if self.model_hf_tag is None:
-            bt.logging.warning(
+        if self.global_progress.epoch is None:
+            bt.logging.error(
                 f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.model_hf_tag)
+                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
             )
-            if self.model_hf_tag
+            if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         )
 
@@ -142,26 +150,6 @@ class Validator(BaseValidatorNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init Local & Global Progress
-        self.local_progress = LocalTrainingProgress(
-            peer_id=self.dht.peer_id.to_bytes(),
-            epoch=0,
-            samples_accumulated=0,
-            samples_per_second=0.0,
-            time=0.0,
-            client_mode=False,
-        )
-        self.local_progress.epoch, self.local_progress.samples_accumulated = (
-            self.model_hf_tag if self.model_hf_tag is not None else 0,
-            0,
-        )
-        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch, self.global_progress.samples_accumulated = (
-            self.model_hf_tag if self.model_hf_tag is not None else 0,
-            0,
-        )
-        update_global_tracker_state(self)
-
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -191,9 +179,7 @@ class Validator(BaseValidatorNeuron):
         self.model_upload_retry_delay = 10
 
         # Load state from peers if validator is not on latest global epoch
-        if (self.local_progress.epoch < self.global_progress.epoch) and (
-            self.model_hf_tag < self.global_progress.epoch
-        ):
+        if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop

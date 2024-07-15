@@ -249,18 +249,16 @@ def load_state_from_peer(self, epoch=None):
     )
     bt.logging.info(current_model_weights_sample)
 
-    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-    bt.logging.info(f"Old Model Tag {self.model_hf_tag}")
-    if (tag_name is not None) and (tag_name >= epoch):
+    bt.logging.info(f"Old Model Tag {self.local_progress.epoch}")
+    # if (self.global_progress.epoch is not None) and (tag_name >= epoch):
+    if self.global_progress.epoch is not None:
         bt.logging.info(
-            f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
+            f"Latest model state found on HF Hub with tag epoch = {self.global_progress.epoch}. Loading state using HF."
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
-            revision=str(tag_name),
+            revision=str(self.global_progress.epoch),
         )
-        self.model_hf_tag = tag_name
         self.model.to(self.device)
         self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
         self.grad_averager.parameters = tuple(self.model.parameters())
@@ -274,7 +272,7 @@ def load_state_from_peer(self, epoch=None):
 
         self.local_progress.epoch = self.global_progress.epoch
         self.local_progress.samples_accumulated = 0
-        bt.logging.info(f"New Model Tag {self.model_hf_tag}")
+        bt.logging.info(f"New Model Tag {self.global_progress.epoch}")
 
         # Delete one model from the chace to maintain disk space
         try:
