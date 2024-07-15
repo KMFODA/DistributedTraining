@@ -62,6 +62,10 @@ def update_global_tracker_state(self):
                         ),
                         :,
                     ]
+                    bt.logging.info(run.name.split("_"))
+                    bt.logging.info(
+                        max(filtered_history.loc[:, "local_samples_accumulated"])
+                    )
                     global_progress += max(
                         filtered_history.loc[:, "local_samples_accumulated"]
                     )
@@ -70,16 +74,12 @@ def update_global_tracker_state(self):
                 continue
 
         # Add local samples
-        global_progress += self.local_progress.samples_accumulated
+        if self.global_progress.epoch == self.local_progress.epoch:
+            global_progress += self.local_progress.samples_accumulated
 
         # Update global progress
         self.global_progress.samples_accumulated = global_progress
         self.global_progress.epoch = global_epoch
-
-        # Update local progress
-        if self.global_progress.epoch != self.local_progress.epoch:
-            self.local_progress.epoch = self.global_progress.epoch
-            self.global_progress.samples_accumulated = 0
 
         # Log new porgress
         bt.logging.info(

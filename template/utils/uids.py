@@ -13,12 +13,12 @@ async def check_uid(dendrite, axon, uid, epoch=None):
             axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3
         )
         if response.is_success:
-            if epoch is not None and response.epoch == epoch:
-                bt.logging.trace(f"UID {uid} is active but and on epoch {epoch}")
+            if (epoch is not None) and (response.epoch == epoch):
+                bt.logging.trace(f"UID {uid} is active and on epoch {epoch}")
                 return True
-            elif epoch is not None and response.epoch != epoch:
+            elif (epoch is not None) and (response.epoch != epoch):
                 bt.logging.trace(f"UID {uid} is active but not on epoch {epoch}")
-                return True
+                return False
             else:
                 bt.logging.trace(f"UID {uid} is active.")
                 return True
@@ -54,7 +54,7 @@ async def check_uid_availability(
         if metagraph.S[uid] > vpermit_tao_limit:
             return False
     # Filter for miners that are processing other responses
-    if not await check_uid(dendrite, metagraph.axons[uid], uid):
+    if not await check_uid(dendrite, metagraph.axons[uid], uid, epoch):
         return False
     # Available otherwise.
     return True
