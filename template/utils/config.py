@@ -123,7 +123,7 @@ def add_args(cls, parser):
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
-        default="kmfoda/gpt2-200m",
+        default="distributed/gpt2-250m",
     )
 
     parser.add_argument(
@@ -188,13 +188,6 @@ def add_args(cls, parser):
         type=str,
         help="The wandb project to log to",
         default="kf_ps",
-    )
-
-    parser.add_argument(
-        "--dht.use_google_dns",
-        action="store_true",
-        help="If set, we use google dns to get public IP.",
-        default=False,
     )
 
     parser.add_argument(

@@ -17,21 +17,17 @@
 # DEALINGS IN THE SOFTWARE.
 
 import random
-import re
 import time
 import typing
-from ipaddress import ip_address
 
 import bittensor as bt
 import hivemind
-import requests
 import torch
-import wandb
 from bitarray import bitarray
-from hivemind import utils
 from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
 from transformers import AutoModelForCausalLM
+import copy
+import numpy as np
 
 # Bittensor Miner Template:
 import template
@@ -39,32 +35,71 @@ import template
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.data.dataset import SubsetFalconLoader
-from template.utils.hivemind import (
+from template.utils.gradient_averager import (
     DTGradientAverager,
-    DTStateAverager,
-    load_state_from_peer,
 )
-from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging
+from template.utils.state_loader import load_state_from_peer, DTStateAverager
+
+from template.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
+from template.utils.misc import (
+    get_bandwidth,
+    init_dht,
+    load_wandb,
+    setup_logging,
+)
+from template.utils.optimizer import VerboseAdamW
 
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
+        # Init Logging
+        setup_logging(
+            ip=self.config.axon.ip
+            if self.config.axon.ip != "[::]"
+            else bt.utils.networking.get_external_ip(),
+            port=self.config.axon.port,
+        )
+
         # Init DHT
         init_dht(self)
 
-        # Init device
-        self.device = self.config.neuron.device
+        # Init Local & Global Progress
+        self.local_progress = LocalTrainingProgress(
+            peer_id=self.dht.peer_id.to_bytes(),
+            epoch=0,
+            samples_accumulated=0,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
+        )
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
+        update_global_tracker_state(self)
 
-        # Init Model
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        # Init Device & Model
+        self.device = self.config.neuron.device
+        if self.global_progress.epoch is None:
+            bt.logging.error(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+            )
+            if self.global_progress.epoch
+            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        )
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -78,34 +113,12 @@ class Miner(BaseMinerNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True,
-        )
-
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer=self.opt,
-            initialize_optimizer=False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
-            next_chunk_timeout=30.0,
-        )
-
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        self.step_scheduled = False
-        self.local_epoch, self.local_samples = 0, 0
-
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = 968000015
+        dataset_length = SubsetFalconLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -114,9 +127,9 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
-        # Load state from peers if miner is not on latest epoch
-        if self.tracker.global_progress.epoch != self.tracker.local_progress.epoch:
-            load_state_from_peer(self)
+        # Load state from peers if miner is not on latest global epoch
+        if self.local_progress.epoch < self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     def get_miner_info(self):
         return {
@@ -133,36 +146,100 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
+        synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(
         self, synapse: template.protocol.AllReduce
-    ) -> template.protocol.IsAlive:
-
+    ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+        failed_gradient_all_reduce = False
         try:
-            # Aggregate gradients and perform optimizer step when target batch size is reached
-            bt.logging.info("Performing Gradient Averaging")
-            with self.tracker.pause_updates():
-
-                self.grad_averager.step(timeout=(synapse.timeout - 20))
+            bt.logging.info(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(
+                [group["params"][-1][-10:].tolist() for group in self.opt.param_groups][
+                    0
+                ]
+            )
+            self.grad_averager.step(timeout=(synapse.timeout - 20))
+            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                bt.logging.info(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(
+                    [
+                        group["params"][-1][-10:].tolist()
+                        for group in self.opt.param_groups
+                    ][0]
+                )
                 bt.logging.info("Model Weights Before Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged gradients
-                bt.logging.info("Model Weights After Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
+                current_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
+                current_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(current_model_weights_sample)
+                bt.logging.info("Model Gradients Before Optimizer Step")
+                # Copy gradients
+                gradients = tuple(
+                    (
+                        param.grad.detach().cpu().clone()
+                        if param.grad is not None
+                        else torch.zeros_like(param)
+                    )
+                    for param in self.model.parameters()
+                )
+                bt.logging.info(gradients[-1][-10:])
+                bt.logging.info("Performing Optimizer Step")
+                self.opt.step()
+
+            bt.logging.info("Model Weights After Optimizer Step")
+            new_model_weights = copy.deepcopy(
+                [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+            )
+            new_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            )
+            bt.logging.info(new_model_weights_sample)
+
+            if new_model_weights == current_model_weights:
+                bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                failed_gradient_all_reduce = True
+                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+
+            elif sum(np.isnan(new_model_weights_sample)) > 1:
+                bt.logging.info(
+                    "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                )
+                failed_gradient_all_reduce = True
+                state_loaded = load_state_from_peer(
+                    self, epoch=self.local_progress.epoch + 1
+                )
+                if not state_loaded:
+                    state_loaded = load_state_from_peer(
+                        self, epoch=self.local_progress.epoch
+                    )
+
+            else:
                 self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_epoch = self.tracker.update_epoch(self.local_epoch + 1)
-                self.local_samples = 0
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
                 synapse.completion = "True"
 
         except Exception as e:
-
             bt.logging.info(f"Gradient averaging step failed with error {e}")
-            load_state_from_peer(self)
+            failed_gradient_all_reduce = True
+            update_global_tracker_state(self)
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
+
+        if failed_gradient_all_reduce:
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
+            bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
 
@@ -178,8 +255,16 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
-        if self.tracker.global_progress.epoch != self.tracker.local_progress.epoch:
-            load_state_from_peer(self)
+        update_global_tracker_state(self)
+        if (self.local_progress.epoch < self.global_progress.epoch) or (
+            sum(
+                np.isnan(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+            )
+            > 1
+        ):
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         search_start = random.choice(
             range(
@@ -207,6 +292,7 @@ class Miner(BaseMinerNeuron):
         )
 
         total_loss = 0
+        index = 0
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
@@ -240,59 +326,54 @@ class Miner(BaseMinerNeuron):
             self.opt.zero_grad()
 
             # Update Tracker
-            self.local_samples += 1
-            self.tracker.report_local_progress(self.local_epoch, self.local_samples)
+            self.local_progress.samples_accumulated += 1
 
             # Log accumulation status
-            if index % 10 == 0:
-                bt.logging.info(
-                    f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
-                )
-                bt.logging.info(
-                    f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
-                )
-
+            bt.logging.info(
+                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
+            )
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
                         "loss": outputs.loss.detach().item(),
-                        "local_epoch": self.local_epoch,
-                        "global_epoch": self.tracker.global_progress.epoch,
+                        "local_epoch": self.local_progress.epoch,
+                        "global_epoch": self.global_progress.epoch,
                     }
                 )
 
-        if index % 10 != 0:
-            bt.logging.info(
-                f"Local samples: {self.local_samples} | Local epoch: {self.local_epoch} | Loss: {outputs.loss.detach().item():.2f}"
+        if synapse.gradient_test_index > len(gradients):
+            bt.logging.error(
+                f"Request received from a validator running {synapse.model_name} whilst current miner is running {self.model.name_or_path}."
             )
-            bt.logging.info(
-                f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
+            synapse.model_name = self.model.name_or_path
+            return synapse
+        else:
+            # Store summed random gradients in the synapse
+            synapse.gradients = float(
+                torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
             )
 
-        # Store summed random gradients in the synapse
-        synapse.gradients = float(
-            torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
-        )
+            average_loss = total_loss / index
+            synapse.loss = average_loss
+            synapse.dataset_indices = group
 
-        average_loss = total_loss / index
-        synapse.loss = average_loss
-        synapse.dataset_indices = group
+            event = {}
+            event.update(self.get_miner_info())
+            try:
+                event.update(get_bandwidth())
+            except:
+                bt.logging.info("Error getting bandwidth metrics")
+            event.update({"steps": index})
 
-        event = {}
-        event.update(self.get_miner_info())
-        try:
-            event.update(get_bandwidth())
-        except:
-            bt.logging.info("Error getting bandwidth metrics")
-        event.update({"steps": index})
+            if not self.config.neuron.dont_wandb_log:
+                self.wandb.log(event)
 
-        # bt.logging.debug(f"Events: {str(event)}")
-        # bt.logging.info("EVENTS", "events", **event)
+            return synapse
 
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(event)
-
-        return synapse
+    def warmup(
+        self,
+    ):
+        (self)
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
@@ -422,7 +503,6 @@ class Miner(BaseMinerNeuron):
 
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
-    setup_logging()
     with Miner() as miner:
         while True:
             bt.logging.info("Miner running...", time.time())

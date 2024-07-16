@@ -10,8 +10,9 @@
 ---
 
 # Overview
+[Blog post](https://distributed-training.notion.site/Decentralised-Distributed-Training-fd21bdfa72294dfeab8fb092770212b9)
 
-#### Minimum Requirements
+# Minimum Requirements
 
 [min.compute.yml](min.compute.yml)
 
@@ -40,11 +41,15 @@ sudo apt update && sudo apt install jq && sudo apt install npm && sudo npm insta
 ```bash
 brew update && brew install jq && brew install npm && sudo npm install pm2 -g && pm2 update
 ```
----
 
-Once you have installed this repo you can run the miner and validator with **auto updates enabled** using the following commands.
+4. Copy the .env file to your root directory
 ```bash
-# To run the miner
+cp DTraining/.env /root/
+```
+---
+# Running a Miner
+Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.
+```bash
 chmod +x run_miner.sh
 pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --netuid <your netuid>  # Must be attained by following the instructions in the docs/running_on_*.md files
@@ -54,9 +59,13 @@ pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --logging.debug # Run in debug mode, alternatively --logging.trace for trace mode
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
-    --dht.announce_ip <your device ip address>
+    --dht.ip <your device ip address>
+```
+---
 
-# To run the validator
+# Running a Validator
+Once you have installed this repo you should request access to the Distributed org on HF using the following [link](https://huggingface.co/login?next=%2Fdistributed). You can then run a validator **auto updates enabled** using the following command.
+```bash
 chmod +x run_validator.sh
 pm2 start run_validator.sh --name distributed_training_auto_update --
     --netuid <your netuid> # Must be attained by following the instructions in the docs/running_on_*.md files
@@ -66,7 +75,7 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
     --logging.debug # Run in debug mode, alternatively --logging.trace for trace mode
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
-    --dht.announce_ip <your device ip address>
+    --dht.ip <your device ip address>
 ```
 
 </div>
@@ -74,17 +83,22 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
 ---
 
 ## Known Errors
-Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
+Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate the all-reduce part of distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
 
 **Asyncio Timeout Error**:
-![Subnet25](assets/error_asyncio_timeout.png)
+![Image](assets/error_asyncio_timeout.png)
 
-This happens when one of the various async processes timesout. If your logs continue after this error and you still receive validator calls your miner will still gain incentive.
+This happens when one of the various async processes times out. If your logs continue after this error and you still receive validator calls your miner will still gain incentive.
 
 **Load State From Peer Error**:
-![Subnet25](assets/error_download_state_from_peers.png)
+![Image](assets/error_download_state_from_peers.png)
 
-This happens when your miner or validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on wandb is above the minimum requirements this won't impact your incentive.
+This happens when a validator tries to pull the latest model state frorm another peer and fails to do so in the timeout period. This is most likely due to low bandwidth on either your or your peers side. So long as your bandwidth on WandB is above the minimum requirements this won't impact your incentive.
+
+**Averaging step failed: could not find a group**:
+![Image](assets/error_could_not_find_a_group_error.png)
+
+This occurs when your miner hasn't been able to find a group to join to perform the all-reduce round. This might be due to low bandwidth or issues with your DHT connecting with other DHTs. Make sure your bandwidth is above the minimum requirements and that you aren't running any other background processes or miners on the same machine. Getting this error once shouldn't have a huge impact on incentive but if it keeps repeating incentives will drop.
 
 ## License
 This repository is licensed under the MIT License.

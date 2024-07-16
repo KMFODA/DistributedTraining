@@ -32,7 +32,7 @@ compute_spec:
 
 network_spec:
   bandwidth:  # GBPS. THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER.
-    min_download : 1
-    recommended_download: 5
-    min_upload: 1
-    recommended_upload: 5
+    min_download : 5
+    recommended_download: 10
+    min_upload: 5
+    recommended_upload: 10

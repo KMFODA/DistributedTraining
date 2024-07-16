@@ -115,7 +115,6 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
-
                     # Wait before checking again.
                     time.sleep(1)
 

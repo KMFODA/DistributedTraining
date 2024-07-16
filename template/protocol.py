@@ -32,6 +32,7 @@ class IsAlive(bt.Synapse):
         description="Completion status of the current StreamPrompting object. "
         "This attribute is mutable and can be updated.",
     )
+    epoch: Optional[int] = None
 
 
 class Train(bt.Synapse):
@@ -43,61 +44,20 @@ class Train(bt.Synapse):
     Attributes:
     """
 
-    # class Config:
-    #     """
-    #     Pydantic model configuration class for Prompting. This class sets validation of attribute assignment as True.
-    #     validate_assignment set to True means the pydantic model will validate attribute assignments on the class.
-    #     """
-
-    #     validate_assignment = False
-    #     arbitrary_types_allowed = True
-
-    # Required request input, filled by sending dendrite caller.
+    # List of indices trained on
     dataset_indices: list = None
 
-    # Initial peers
-    initial_peers: str = (
-        "/ip4/127.0.0.1/tcp/8008/p2p/12D3KooWPVy8joVQgKe2o3LYncfFvHN1VCEZNV5UZhmzj45dSs1z"
-    )
-
-    # Required request input hash, filled automatically when dendrite creates the request.
-    # This allows for proper data validation and messages are signed with the hashes of the
-    # required body fields. Ensure you have a {field}_hash field for each required field.
-    # dummy_input_hash: str = ""
-
-    # Required run_id
-    # allows peers to set run_id for DHT connection
-    run_id: str = "s25_test_run"
-
-    # Optional request output, filled by recieving axon.
+    # Gradient Value of a randomly chosen index
     gradients: float = None
-    # gradients: list = None
 
+    # Gradient Index to be evaluated
     gradient_test_index: int = None
 
-    # Optional model name
-    model_name: str = "kmfoda/tiny-random-gpt2"
+    # Model Name
+    model_name: str = "distributed/gpt2-250m"
 
-    # # Optional learning rate
-    lr: float = 1e-5
-
-    # # Optional dataset name
-    dataset_name: str = "wikitext"
-
-    # # Required optimizer
-    # optimizer_name: str = "adam"
-
-    # # Required batch size
-    batch_size: int = 2
-
-    # # Required gradient_accumilation_steps
-    gradient_accumilation_steps: int = 16
-
-    # # Optional score
+    # Model Loss
     loss: float = 0.0
-
-    # Epoch
-    epoch: int | None
 
 
 class AllReduce(bt.Synapse):

@@ -19,10 +19,10 @@
 
 import asyncio
 import datetime as dt
-import threading
 import time
 import traceback
 from typing import Optional
+
 
 import bittensor as bt
 import hivemind
@@ -30,19 +30,35 @@ import torch
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
+from huggingface_hub import list_repo_refs
 from transformers import AutoModelForCausalLM
 
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import DTGradientAverager, DTStateAverager
-from template.utils.misc import AsyncDendritePool, init_dht, load_wandb, setup_logging
+from template.utils.gradient_averager import (
+    DTGradientAverager,
+)
+from template.utils.state_loader import load_state_from_peer, DTStateAverager
+
+from template.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
+from template.utils.misc import (
+    AsyncDendritePool,
+    init_dht,
+    load_wandb,
+    setup_logging,
+    warmup,
+)
 from template.validator import forward
+from template.utils.optimizer import VerboseAdamW
 
 logger = get_logger(__name__)
 
@@ -51,30 +67,36 @@ class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
 
+        # Init Logging
+        setup_logging(
+            ip=self.config.axon.ip
+            if self.config.axon.ip != "[::]"
+            else bt.utils.networking.get_external_ip(),
+            port=self.config.axon.port,
+        )
+
         bt.logging.info("load_state()")
         self.load_state()
 
-        num_peers = 0
-        while num_peers == 0:
+        # Init Dendrite Pool
+        self.dendrite_pool = AsyncDendritePool(
+            wallet=self.wallet, metagraph=self.metagraph
+        )
 
-            # Init DHT
-            init_dht(self)
+        # Init DHT
+        init_dht(self)
 
-            # Init Tracker
-            self.tracker = ProgressTracker(
-                dht=self.dht,
-                prefix=f"{self.config.neuron.run_id}",
-                target_batch_size=self.config.neuron.global_batch_size_train,
-                start=True,
-            )
-            num_peers = self.tracker.global_progress.num_peers
-
-            bt.logging.info(
-                f"Number of connected peers after initialising the DHT is {num_peers}"
-            )
-            if num_peers == 0:
-                bt.logging.info("Re-initialising the DHT")
-            break
+        # Init Local & Global Progress
+        self.local_progress = LocalTrainingProgress(
+            peer_id=self.dht.peer_id.to_bytes(),
+            epoch=0,
+            samples_accumulated=0,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
+        )
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
+        update_global_tracker_state(self)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -82,18 +104,25 @@ class Validator(BaseValidatorNeuron):
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
 
-        # Init Dendrite Pool
-        self.dendrite_pool = AsyncDendritePool(
-            wallet=self.wallet, metagraph=self.metagraph
-        )
-
-        # # Init Dataset
+        # Init Dataset
         dataset_length = 968000015
         self.dataset_indices = bitarray(dataset_length)
 
-        # Init Device, Model & Tokenizer
+        # Init Device & Model
         self.device = self.config.neuron.device
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        if self.global_progress.epoch is None:
+            bt.logging.error(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+            )
+            if self.global_progress.epoch
+            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        )
+
+        # Move the model to the appropriate device
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
@@ -107,7 +136,7 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -121,19 +150,6 @@ class Validator(BaseValidatorNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer=self.opt,
-            initialize_optimizer=False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
-            next_chunk_timeout=30.0,
-        )
-
-        self.step_scheduled = False
-        self.local_epoch, self.local_samples = 0, 0
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -156,13 +172,25 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
 
-        # self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
-        # self.stop_event = threading.Event()
-        # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
-        # self.update_thread.start()
+        # Init All Reduce Variables
+        self.all_reduce_timeout = 300
+        self.step_scheduled = False
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+
+        # Load state from peers if validator is not on latest global epoch
+        if self.local_progress.epoch < self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+    def update_local_tracker_state(self, rewards, responses):
+        for reward, response in zip(rewards, responses[0]):
+            if reward != 0:
+                self.local_progress.samples_accumulated += len(response.dataset_indices)
+            else:
+                continue
 
     def map_uids_to_peerids(self):
         # Track how recently we updated each uid
@@ -326,7 +354,6 @@ class Validator(BaseValidatorNeuron):
                 return
 
             logger.info(f"Finished downloading state from {peer}")
-            # future.set_result((metadata, tensors))
             return metadata, tensors
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
@@ -335,10 +362,14 @@ class Validator(BaseValidatorNeuron):
     async def forward(self):
         return await forward(self)
 
+    def warmup(
+        self,
+    ):
+        warmup(self)
 
-# # The main function parses the configuration and runs the validator.
+
+# The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
-    setup_logging()
     with Validator() as validator:
         while True:
             time.sleep(5)

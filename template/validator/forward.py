@@ -16,18 +16,23 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import bittensor as bt
-
-from template.validator.reward import get_rewards
-from template.utils.uids import get_random_uids
-from template.utils.hivemind import load_state_from_peer
-
-import template
 import asyncio
 import random
-
-from template.utils.misc import get_bandwidth
 import time
+
+import bittensor as bt
+from huggingface_hub import create_tag, list_repo_refs
+
+import template
+from template.utils.state_loader import load_state_from_peer
+from template.utils.misc import get_bandwidth
+from template.utils.progress_tracker import update_global_tracker_state
+from template.utils.uids import get_random_uids
+from template.validator.reward import get_rewards
+import copy
+import numpy as np
+from huggingface_hub.utils import HfHubHTTPError
+import torch
 
 
 async def forward(self):
@@ -40,11 +45,8 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-
-    bt.logging.info(
-        f"Global samples: {self.tracker.global_progress.samples_accumulated} | Global epoch: {self.tracker.global_progress.epoch} | Number of Peers: {self.tracker.global_progress.num_peers}"
-    )
-    if self.tracker.global_progress.epoch != self.tracker.local_progress.epoch:
+    update_global_tracker_state(self)
+    if self.local_progress.epoch < self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
         load_state_from_peer(self)
 
@@ -52,96 +54,217 @@ async def forward(self):
         (
             (
                 self.config.neuron.global_batch_size_train
-                - self.tracker.global_progress.samples_accumulated
+                - self.global_progress.samples_accumulated
             )
             <= 25
         )
         and (not self.step_scheduled)
-        and (self.tracker.global_progress.epoch == self.tracker.local_progress.epoch)
+        and (self.global_progress.epoch == self.local_progress.epoch)
     ):
-
-        # bt.logging.info("Scheduling all-reduce synapse call")
         sample_size = int(self.metagraph.n)
-        # next_step_control = self.grad_averager.schedule_step()
-        # self.step_scheduled = True
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
     else:
-
         sample_size = self.config.neuron.sample_size
         all_reduce = False
         self.event.update({"synapse_type": "train"})
 
     # Get as many active miners as possible
-    self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=sample_size)
+    self.miner_uids = await get_random_uids(
+        self,
+        dendrite=self.dendrite,
+        k=sample_size,
+        epoch=self.local_progress.epoch if all_reduce else None,
+    )
+
     self.event.update({"uids": self.miner_uids})
     bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-    query_tasks = []
-    if all_reduce:
-        with self.tracker.pause_updates():
+    if self.miner_uids.tolist() == []:
+        responses = [[]]
+        bt.logging.info("No active miners found this step.")
+    else:
+        query_tasks = []
+        if all_reduce:
             bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(wait=False)
 
-        queries = [template.protocol.AllReduce() for _ in self.miner_uids]
-    else:
-        queries = [
-            template.protocol.Train(
-                gradient_test_index=random.choice(self.test_layer_indices),
-            )
-            for _ in self.miner_uids
-        ]
-
-    # The dendrite client queries the network.
-    query_tasks.append(self.dendrite_pool.async_forward(self.miner_uids, queries))
-    responses = await asyncio.gather(*query_tasks)
-    if all_reduce and responses != []:
-        responses = []
-        sleep_counter = 1
-        while (gradient_averaging_step.done() is False) and (sleep_counter <= 150):
-            time.sleep(1)
-            sleep_counter += 1
-        if gradient_averaging_step.done():
-            # Log the results for monitoring purposes.
-            bt.logging.info("Model Weights Before Optimizer Step")
-            bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-            with self.tracker.pause_updates():
-                with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                    bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged grad
-                bt.logging.info("Model Weights After Optimizer Step")
-                bt.logging.info([layer for layer in self.model.parameters()][-1][-10:])
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                    self.tracker.local_progress.epoch + 1
-                )
-
+            queries = [template.protocol.AllReduce() for _ in self.miner_uids]
         else:
-            bt.logging.info("Averaging Failed. Loading State From Peer")
-            load_state_from_peer(self)
+            queries = [
+                template.protocol.Train(
+                    model_name=self.model.name_or_path,
+                    gradient_test_index=random.choice(self.test_layer_indices),
+                )
+                for _ in self.miner_uids
+            ]
 
-        self.step_scheduled = False
-    else:
-        bt.logging.info(
-            "Received responses: "
-            + str(
-                [
-                    {
-                        "Loss": response.loss,
-                        "Dataset Indices": (
-                            min(response.dataset_indices),
-                            max(response.dataset_indices),
-                        ),
-                        "IP": self.metagraph.axons[uid].ip,
-                        "Port": self.metagraph.axons[uid].port,
-                        "Hotkey": self.metagraph.axons[uid].hotkey,
-                    }
-                    for response, uid in zip(responses[0], self.miner_uids)
-                    if response.dendrite.status_code == 200
-                ]
+        # The dendrite client queries the network.
+        query_tasks.append(
+            self.dendrite_pool.async_forward(
+                self.miner_uids, queries, timeout=self.all_reduce_timeout
             )
         )
+        bt.logging.info("Responses Sent Out")
+        start_time = time.perf_counter()
+        responses = await asyncio.gather(*query_tasks)
+        bt.logging.info("Responses Received")
+
+        if all_reduce and responses != []:
+            failed_gradient_all_reduce = False
+            while (gradient_averaging_step.done() is False) and (
+                (time.perf_counter() - start_time) <= self.all_reduce_timeout
+            ):
+                time.sleep(1)
+
+            if gradient_averaging_step.done():
+                # Optimizer Step
+                with self.grad_averager.use_averaged_gradients():
+                    # Log Model Weight Before Optimizer Step
+                    bt.logging.info("Model Weights Before Optimizer Step")
+                    current_model_weights = copy.deepcopy(
+                        [layer for layer in self.model.parameters()][-100][
+                            -10:
+                        ].tolist()[0]
+                    )
+                    current_model_weights_sample = copy.copy(
+                        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    )
+                    bt.logging.info(current_model_weights_sample)
+                    bt.logging.info("Model Gradients Before Optimizer Step")
+                    # Copy gradients
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:])
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()  # update model parameters using averaged grad
+
+                # Log Model Weight After Optimizer Step
+                bt.logging.info("Model Weights After Optimizer Step")
+                new_model_weights = copy.deepcopy(
+                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
+                )
+                new_model_weights_sample = copy.copy(
+                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                )
+                bt.logging.info(new_model_weights_sample)
+
+                if new_model_weights == current_model_weights:
+                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                    failed_gradient_all_reduce = True
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+
+                elif sum(np.isnan(new_model_weights_sample)) > 1:
+                    bt.logging.info(
+                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                    )
+                    failed_gradient_all_reduce = True
+                    state_loaded = load_state_from_peer(
+                        self, epoch=self.local_progress.epoch + 1
+                    )
+                    if not state_loaded:
+                        state_loaded = load_state_from_peer(
+                            self, epoch=self.local_progress.epoch
+                        )
+
+                else:
+                    # Reset gradients and update local progress
+                    self.grad_averager.reset_accumulated_grads_()
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
+
+                    # Push to HF Hub if local model is the first to update
+                    refs = list_repo_refs(
+                        self.config.neuron.model_name, repo_type="model"
+                    )
+                    tag_name = (
+                        max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                    )
+                    bt.logging.info(f"Old Model Tag {tag_name}")
+                    if (tag_name is not None) and tag_name < self.local_progress.epoch:
+                        attempt = 0
+                        while attempt < self.model_upload_retry_limit:
+                            try:
+                                bt.logging.info("Pushing New Model Weights To HF Hub")
+                                self.model.push_to_hub(self.config.neuron.model_name)
+                                create_tag(
+                                    self.config.neuron.model_name,
+                                    repo_type="model",
+                                    tag=str(self.local_progress.epoch),
+                                    tag_message=f"Epcoh {self.local_progress.epoch}",
+                                )
+                                refs = list_repo_refs(
+                                    self.config.neuron.model_name, repo_type="model"
+                                )
+                                tag_name = max([int(tag.name) for tag in refs.tags])
+                                bt.logging.info(f"New Model Tag {tag_name}")
+                                break
+
+                            except HfHubHTTPError:
+                                bt.logging.info(
+                                    f"Model With Tag {tag_name} Already Uploaded. Loading that model."
+                                )
+                                state_loaded = load_state_from_peer(
+                                    self, epoch=tag_name
+                                )
+                                if state_loaded:
+                                    break
+                            except Exception as e:
+                                attempt += 1
+                                bt.logging.warning(
+                                    f"Failed to upload model to huggingface hub, retrying. Attempt {attempt}/{self.model_upload_retry_limit}"
+                                )
+                                if attempt < self.model_upload_retry_limit:
+                                    time.sleep(
+                                        self.model_upload_retry_delay
+                                    )  # Wait before the next retry
+                                else:
+                                    bt.logging.error(
+                                        "Maximum retry limit reached. Unable to upload model to HF Hub."
+                                    )
+                                    raise
+
+            else:
+                bt.logging.info("Averaging Failed. Loading State From Peer")
+                failed_gradient_all_reduce = True
+                load_state_from_peer(self)
+
+            if failed_gradient_all_reduce:
+                gradient_averaging_step.cancel()
+                bt.logging.info("Gradient Step Cancelled")
+                with self.grad_averager.use_averaged_gradients():
+                    self.opt.zero_grad()
+                bt.logging.info("Optimizer Gradients Zeroed")
+
+            self.step_scheduled = False
+        else:
+            bt.logging.info(
+                "Received responses: "
+                + str(
+                    [
+                        {
+                            "Loss": response.loss,
+                            "Dataset Indices": (
+                                min(response.dataset_indices),
+                                max(response.dataset_indices),
+                            ),
+                            "IP": self.metagraph.axons[uid].ip,
+                            "Port": self.metagraph.axons[uid].port,
+                            "Hotkey": self.metagraph.axons[uid].hotkey,
+                        }
+                        for response, uid in zip(responses[0], self.miner_uids)
+                        if response.dendrite.status_code == 200
+                        and (response.dataset_indices is not None)
+                    ]
+                )
+            )
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
@@ -151,8 +274,19 @@ async def forward(self):
     # Normalise Rewards
     if rewards.sum() != 0:
         rewards = rewards / rewards.sum()
-
     bt.logging.info(f"Final Scores: {rewards}")
+
+    # Update the tracker based on the rewards
+    if not all_reduce:
+        self.update_local_tracker_state(rewards, responses)
+    self.event.update(
+        {
+            "local_samples_accumulated": self.local_progress.samples_accumulated,
+            "local_epoch": self.local_progress.epoch,
+            "global_samples_accumulated": self.global_progress.samples_accumulated,
+            "global_epoch": self.global_progress.epoch,
+        }
+    )
 
     # Update the scores based on the rewards.
     self.update_scores(rewards, self.miner_uids)

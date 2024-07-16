@@ -37,6 +37,17 @@ import re
 from ipaddress import ip_address
 from template.utils.chain_storage import run_in_subprocess
 from datetime import datetime
+import os
+import shutil
+import random
+from template.data.dataset import SubsetFalconLoader
+from bitarray import bitarray
+import wandb
+from logtail import LogtailHandler
+import os
+from dotenv import load_dotenv, dotenv_values
+
+load_dotenv()
 
 
 # LRU Cache with TTL
@@ -135,7 +146,6 @@ class AsyncDendritePool:
     async def async_forward(
         self, uids: List[int], queries: List[Train], timeout: float = 150.0
     ):
-
         def call_single_uid(uid, query):
             return self.dendrite(
                 self.metagraph.axons[uid], synapse=query, timeout=timeout
@@ -151,7 +161,6 @@ class AsyncDendritePool:
 
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-
     # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
     run_name = (
         f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
@@ -190,12 +199,43 @@ class BittensorLogHandler(logging.Handler):
             bt_logger.trace(log_entry)
 
 
-def setup_logging(level=logging.INFO):
+class IpFilter(logging.Filter):
+    """
+    This is a filter which injects contextual information into the log.
+    """
+
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
+    def filter(self, record):
+        record.host = f"{self.ip}:{self.port}"
+        return True
+
+
+def logging_filter(record):
+    if (record.name != "hivemind.dht.protocol") and (
+        record.name != "hivemind.optim.progress_tracker"
+    ):
+        return True
+    else:
+        return False
+
+
+def setup_logging(
+    level=logging.INFO, ip=None, port=None, local_logfile="/root/logs_mylogfile.txt"
+):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
+    logtail_handler = LogtailHandler(source_token=os.getenv("LOGTAIL_KEY"))
+    formatter = logging.Formatter("%(host)s%(message)s")
+    logtail_handler.setFormatter(formatter)
+    logtail_handler.addFilter(IpFilter(ip=ip, port=port))
+
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
+    bt_logger_.addHandler(logtail_handler)
 
     use_hivemind_log_handler("nowhere")
 
@@ -208,22 +248,32 @@ def setup_logging(level=logging.INFO):
     formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
+    root_logger.addHandler(logtail_handler)
 
     # Create a file handler that logs debug and higher level messages
+    if os.path.exists(local_logfile):
+        # Archive any existing logfile
+        shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
+        os.remove(local_logfile)
 
-    fh = logging.FileHandler(
-        f"logs_{datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y')}.txt"
-    )
-    fh.setLevel(logging.DEBUG)
-
-    # Create a formatter and set the formatter for the handler.
+    hivemind_log_file = f"/root/logs_mylogfile.txt"
+    hivemind_logger = logging.getLogger("hivemind")
+    hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
+    file_handler = logging.FileHandler(hivemind_log_file)
+    file_handler.setLevel(
+        logging.DEBUG
+    )  # Ensure file handler captures all levels for hivemind
+    file_handler.addFilter(logging_filter)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    fh.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+    hivemind_logger.addHandler(file_handler)
+    # hivemind_logger.addHandler(logtail_handler)
+    hivemind_logger.propagate = (
+        False  # Stop hivemind logs from propagating to the root logger
+    )
 
-    # Add the FileHandler to the root logger
-    root_logger.addHandler(fh)
 
 
 def get_bandwidth():
@@ -246,17 +296,14 @@ def get_bandwidth():
 
 def init_dht(self):
     # Init DHT and model
-    if self.config.dht.use_google_dns:
-        request = requests.get("https://api.ipify.org")
-        request.raise_for_status()
-
-        address = request.text
-        bt.logging.info(f"Received public IP address of this machine: {address}")
-        version = ip_address(address).version
+    if self.config.dht.ip:
+        version = "4"
+        address = self.config.dht.ip
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
     else:
-        version = "4"
-        address = self.config.dht.announce_ip
+        address = bt.utils.networking.get_external_ip()
+        bt.logging.info(f"Received public IP address of this machine: {address}")
+        version = ip_address(address).version
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
 
     # Init list of available DHT addresses from wandb
@@ -312,12 +359,12 @@ def init_dht(self):
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
     # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.
-    partial = functools.partial(
-        self.subtensor.commit,
-        self.wallet,
-        self.config.netuid,
-        self.dht.peer_id.to_base58(),
-    )
+    # partial = functools.partial(
+    #     self.subtensor.commit,
+    #     self.wallet,
+    #     self.config.netuid,
+    #    self.dht.peer_id.to_base58(),
+    # )
     # try:
     #     run_in_subprocess(partial, 60)
     # except Exception as e:
@@ -328,3 +375,91 @@ def init_dht(self):
         re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
         for addr in self.dht.get_visible_maddrs()
     ]
+
+
+def warmup(self):
+    """
+    Processes the incoming 'Train' synapse by performing a training run
+
+    Args:
+        synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
+
+    Returns:
+        template.protocol.Train: The synapse object with the 'loss' field set to models loss.
+    """
+
+    # Load dataset
+    self.dataset_loader = ()
+    dataset_length = SubsetFalconLoader.max_pages
+    self.dataset_indices = bitarray(dataset_length)
+
+    search_start = random.choice(
+        range(
+            len(self.dataset_indices)
+            - self.config.neuron.training_examples_per_miner
+            + 1
+        )
+    )
+    start = self.dataset_indices.index(
+        bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+    )
+    group = [
+        i for i in range(start, start + self.config.neuron.training_examples_per_miner)
+    ]
+    self.dataset_indices[group] = True
+
+    # Create Dataloader
+    dataloader = SubsetFalconLoader(
+        batch_size=self.config.neuron.local_batch_size_train,
+        sequence_length=1024,
+        rows=group,
+    )
+
+    total_loss = 0
+    index = 0
+    # Train data for one epoch
+    for index, batch in enumerate(dataloader):
+        inputs = batch.to(self.device)
+
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=inputs)
+
+        # Normalize loss to account for batch accumulation
+        loss = outputs.loss
+
+        # Accumulate Total Loss
+        total_loss += outputs.loss.detach().item()
+
+        # Backward Pass
+        loss.backward()
+
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
+
+        # Accumulate Gradients
+        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+
+        # Zero Gradients
+        self.opt.zero_grad()
+
+        # Update Tracker
+        self.local_progress.samples_accumulated += 1
+
+        # Log accumulation status
+        bt.logging.info(f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}")
+
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log(
+                {
+                    "loss": outputs.loss.detach().item(),
+                    "local_epoch": self.local_progress.local_epoch,
+                    "global_epoch": self.global_progress.epoch,
+                }
+            )
