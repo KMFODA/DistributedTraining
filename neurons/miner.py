@@ -51,7 +51,7 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
 )
-from template.utils.optimizer import VerboseAdamW
+from torch_optimizer import Lamb
 
 
 class Miner(BaseMinerNeuron):
@@ -99,7 +99,7 @@ class Miner(BaseMinerNeuron):
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.lr)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(

@@ -275,7 +275,6 @@ def setup_logging(
     )
 
 
-
 def get_bandwidth():
     # Get speedtest results
     s = speedtest.Speedtest()

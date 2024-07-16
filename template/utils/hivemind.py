@@ -260,7 +260,6 @@ def load_optimizer_state(
 
 
 def load_state_from_peer(self, epoch=None):
-
     if epoch == None:
         epoch = self.tracker.global_progress.epoch
 
