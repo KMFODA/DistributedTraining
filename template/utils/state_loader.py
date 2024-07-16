@@ -17,7 +17,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from transformers import AutoModelForCausalLM
-from .optimizer import VerboseAdamW
+from torch_optimizer import Lamb
 
 from template.utils.progress_tracker import (
     LocalTrainingProgress,
@@ -260,7 +260,7 @@ def load_state_from_peer(self, epoch=None):
             revision=str(self.global_progress.epoch),
         )
         self.model.to(self.device)
-        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.lr)
         self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 
