@@ -38,6 +38,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import list_repo_refs
 from transformers import AutoModelForCausalLM
+import math
 
 from template.base.validator import BaseValidatorNeuron
 from template.utils.gradient_averager import (
@@ -136,7 +137,9 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(
+            self.model.parameters(), lr=self.config.neuron.learning_rate_max
+        )
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -250,6 +253,29 @@ class Validator(BaseValidatorNeuron):
                 )
 
         bt.logging.info("Exiting update models loop.")
+
+    def get_learning_rate(self):
+        # 1) linear warmup for warmup_iters steps
+        if self.global_progress.epoch < self.config.neuron.warmup_steps:
+            return (
+                self.config.neuron.learning_rate_max
+                * (self.epoch + 1)
+                / self.config.neuron.warmup_steps
+            )
+        # 2) if it > lr_decay_iters, return min learning rate
+        if self.global_progress.epoch > self.max_steps:
+            return self.learning_rate_min
+        # 3) in between, use cosine decay down to min learning rate
+        decay_ratio = (self.global_progress.epoch - self.config.neuron.warmup_steps) / (
+            self.config.neuron.learning_rate_max - self.config.neuron.warmup_steps
+        )
+        assert 0 <= decay_ratio <= 1
+        coeff = 0.5 * (
+            1.0 + math.cos(math.pi * decay_ratio)
+        )  # coeff starts at 1 and goes to 0
+        return self.config.neuron.learning_rate_min + coeff * (
+            self.config.neuron.learning_rate_max - self.config.neuron.learning_rate_min
+        )
 
     def get_validator_info(self):
         return {

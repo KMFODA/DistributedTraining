@@ -99,7 +99,9 @@ class Miner(BaseMinerNeuron):
         self.model = self.model.to(self.device)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(
+            self.model.parameters(), lr=self.config.neuron.learning_rate_max
+        )
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -193,6 +195,12 @@ class Miner(BaseMinerNeuron):
                     for param in self.model.parameters()
                 )
                 bt.logging.info(gradients[-1][-10:])
+                if synapse.learning_rate is not None:
+                    bt.logging.info(
+                        "Updating Optimizer Learning Rate To {synapse.learning_rate}"
+                    )
+                    for param_group in self.opt.param_groups:
+                        param_group["lr"] = synapse.learning_rate
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()
 

@@ -90,7 +90,10 @@ async def forward(self):
             bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(wait=False)
 
-            queries = [template.protocol.AllReduce() for _ in self.miner_uids]
+            queries = [
+                template.protocol.AllReduce(learning_rate=self.get_learning_rate())
+                for _ in self.miner_uids
+            ]
         else:
             queries = [
                 template.protocol.Train(
