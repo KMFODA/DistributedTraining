@@ -60,6 +60,7 @@ from template.utils.misc import (
 )
 from template.validator import forward
 from torch_optimizer import Lamb
+from template import __version__, __spec_version__
 
 logger = get_logger(__name__)
 
@@ -70,10 +71,18 @@ class Validator(BaseValidatorNeuron):
 
         # Init Logging
         setup_logging(
+            network=self.config.subtensor.network,
+            netuid=self.config.netuid,
+            hotkey=self.wallet.hotkey.ss58_address,
+            version=__version__,
+            spec_version=__spec_version__,
+            run_id=None,
             ip=self.config.axon.ip
             if self.config.axon.ip != "[::]"
             else bt.utils.networking.get_external_ip(),
             port=self.config.axon.port,
+            uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
+            neuron_type="validator",
         )
 
         bt.logging.info("load_state()")
@@ -137,9 +146,7 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = Lamb(
-            self.model.parameters(), lr=self.config.neuron.learning_rate_max
-        )
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -180,6 +187,7 @@ class Validator(BaseValidatorNeuron):
         self.step_scheduled = False
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
+        self.maximum_steps = 306 * 4
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -255,26 +263,26 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Exiting update models loop.")
 
     def get_learning_rate(self):
-        # 1) linear warmup for warmup_iters steps
+        learning_rate_minimum = self.config.neuron.learning_rate * 0.1
+        # 1) linear warmup for warmup_steps
         if self.global_progress.epoch < self.config.neuron.warmup_steps:
             return (
-                self.config.neuron.learning_rate_max
-                * (self.epoch + 1)
+                self.config.neuron.learning_rate
+                * (self.global_progress.epoch + 1)
                 / self.config.neuron.warmup_steps
             )
-        # 2) if it > lr_decay_iters, return min learning rate
-        if self.global_progress.epoch > self.max_steps:
-            return self.learning_rate_min
-        # 3) in between, use cosine decay down to min learning rate
+        # 2) if epoch > lr_decay_iters, return learning_rate_minimum
+        if self.global_progress.epoch > self.maximum_steps:
+            return learning_rate_minimum
+        # 3) if in between, use cosine decay down to min learning rate
         decay_ratio = (self.global_progress.epoch - self.config.neuron.warmup_steps) / (
-            self.config.neuron.learning_rate_max - self.config.neuron.warmup_steps
+            self.maximum_steps - self.config.neuron.warmup_steps
         )
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (
-            1.0 + math.cos(math.pi * decay_ratio)
-        )  # coeff starts at 1 and goes to 0
-        return self.config.neuron.learning_rate_min + coeff * (
-            self.config.neuron.learning_rate_max - self.config.neuron.learning_rate_min
+        # coeff starts at 1 and goes to 0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return (learning_rate_minimum + coeff) * (
+            self.config.neuron.learning_rate - learning_rate_minimum
         )
 
     def get_validator_info(self):

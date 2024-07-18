@@ -127,17 +127,10 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.learning_rate_max",
+        "--neuron.learning_rate",
         type=float,
         help="The maximum learning rate",
         default=5e-3,
-    )
-
-    parser.add_argument(
-        "--neuron.learning_rate_min",
-        type=float,
-        help="The minimum learning rate",
-        default=5e-3 * 0.1,
     )
 
     parser.add_argument(

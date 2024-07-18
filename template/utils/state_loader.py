@@ -260,9 +260,7 @@ def load_state_from_peer(self, epoch=None):
             revision=str(self.global_progress.epoch),
         )
         self.model.to(self.device)
-        self.opt = Lamb(
-            self.model.parameters(), lr=self.config.neuron.learning_rate_max
-        )
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
         self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 

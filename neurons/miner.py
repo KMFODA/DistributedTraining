@@ -52,6 +52,7 @@ from template.utils.misc import (
     setup_logging,
 )
 from torch_optimizer import Lamb
+from template import __version__, __spec_version__
 
 
 class Miner(BaseMinerNeuron):
@@ -60,10 +61,18 @@ class Miner(BaseMinerNeuron):
 
         # Init Logging
         setup_logging(
+            network=self.config.subtensor.network,
+            netuid=self.config.netuid,
+            hotkey=self.wallet.hotkey.ss58_address,
+            version=__version__,
+            spec_version=__spec_version__,
+            run_id=None,
             ip=self.config.axon.ip
             if self.config.axon.ip != "[::]"
             else bt.utils.networking.get_external_ip(),
             port=self.config.axon.port,
+            uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
+            neuron_type="miner",
         )
 
         # Init DHT
@@ -197,7 +206,7 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(gradients[-1][-10:])
                 if synapse.learning_rate is not None:
                     bt.logging.info(
-                        "Updating Optimizer Learning Rate To {synapse.learning_rate}"
+                        f"Updating Optimizer Learning Rate To {synapse.learning_rate}"
                     )
                     for param_group in self.opt.param_groups:
                         param_group["lr"] = synapse.learning_rate

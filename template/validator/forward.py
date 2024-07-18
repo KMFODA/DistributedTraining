@@ -89,6 +89,8 @@ async def forward(self):
         if all_reduce:
             bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(wait=False)
+            learning_rate = self.get_learning_rate()
+            bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
             queries = [
                 template.protocol.AllReduce(learning_rate=self.get_learning_rate())
@@ -268,6 +270,15 @@ async def forward(self):
                     ]
                 )
             )
+            average_loss = np.array(
+                [
+                    response.loss
+                    for response, uid in zip(responses[0], self.miner_uids)
+                    if response.dendrite.status_code == 200
+                    and (response.dataset_indices is not None)
+                ]
+            ).mean()
+            bt.logging.info(f"Current Average Miner Loss: {average_loss}")
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
