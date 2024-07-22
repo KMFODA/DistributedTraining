@@ -253,7 +253,7 @@ def load_state_from_peer(self, epoch=None):
     # if (self.global_progress.epoch is not None) and (tag_name >= epoch):
     if self.global_progress.epoch is not None:
         bt.logging.info(
-            f"Latest model state found on HF Hub with tag epoch = {self.global_progress.epoch}. Loading state using HF."
+            f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,

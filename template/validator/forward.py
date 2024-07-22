@@ -47,9 +47,10 @@ async def forward(self):
     """
     update_global_tracker_state(self)
     if self.local_progress.epoch < self.global_progress.epoch:
-        bt.logging.info("Local Epoch Behind Global Epoch Loading State From Peers")
+        bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
         load_state_from_peer(self)
 
+    # Evaluate wether to run an AllReduce or a Train synapse based on the global samples accumulated
     if (
         (
             (
@@ -61,16 +62,18 @@ async def forward(self):
         and (not self.step_scheduled)
         and (self.global_progress.epoch == self.local_progress.epoch)
     ):
+        # If running an AllReduce synapse, call as many miners as possible
         sample_size = int(self.metagraph.n)
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
     else:
+        # If running a Train synapse call, only call the sample_size
         sample_size = self.config.neuron.sample_size
         all_reduce = False
         self.event.update({"synapse_type": "train"})
 
-    # Get as many active miners as possible
+    # Get active miners
     self.miner_uids = await get_random_uids(
         self,
         dendrite=self.dendrite,
@@ -83,7 +86,7 @@ async def forward(self):
 
     if self.miner_uids.tolist() == []:
         responses = [[]]
-        bt.logging.info("No active miners found this step.")
+        bt.logging.info("No Active Miners Found This Step.")
     else:
         query_tasks = []
         if all_reduce:
@@ -93,31 +96,35 @@ async def forward(self):
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
             queries = [
-                template.protocol.AllReduce(learning_rate=self.get_learning_rate())
+                template.protocol.AllReduce(learning_rate=learning_rate)
                 for _ in self.miner_uids
             ]
         else:
+            # Get a random layer to check gradients against
+            gradient_test_index = random.choice(self.test_layer_indices)
             queries = [
                 template.protocol.Train(
                     model_name=self.model.name_or_path,
-                    gradient_test_index=random.choice(self.test_layer_indices),
+                    gradient_test_index=gradient_test_index,
                 )
                 for _ in self.miner_uids
             ]
 
-        # The dendrite client queries the network.
+        # Query the network
         query_tasks.append(
             self.dendrite_pool.async_forward(
                 self.miner_uids, queries, timeout=self.all_reduce_timeout
             )
         )
-        bt.logging.info("Responses Sent Out")
+        bt.logging.info("Query Sent Out")
         start_time = time.perf_counter()
         responses = await asyncio.gather(*query_tasks)
-        bt.logging.info("Responses Received")
+        bt.logging.info("Query Responses Received")
 
-        if all_reduce and responses != []:
+        # Process the AllReduce query responses
+        if all_reduce and responses != [[]]:
             failed_gradient_all_reduce = False
+            # Wait for gradient averaging to finish
             while (gradient_averaging_step.done() is False) and (
                 (time.perf_counter() - start_time) <= self.all_reduce_timeout
             ):
@@ -128,11 +135,6 @@ async def forward(self):
                 with self.grad_averager.use_averaged_gradients():
                     # Log Model Weight Before Optimizer Step
                     bt.logging.info("Model Weights Before Optimizer Step")
-                    current_model_weights = copy.deepcopy(
-                        [layer for layer in self.model.parameters()][-100][
-                            -10:
-                        ].tolist()[0]
-                    )
                     current_model_weights_sample = copy.copy(
                         [layer for layer in self.model.parameters()][-1][-10:].tolist()
                     )
@@ -149,26 +151,26 @@ async def forward(self):
                     )
                     bt.logging.info(gradients[-1][-10:])
                     bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()  # update model parameters using averaged grad
+                    # Update model parameters using averaged gradients
+                    self.opt.step()
 
                 # Log Model Weight After Optimizer Step
                 bt.logging.info("Model Weights After Optimizer Step")
-                new_model_weights = copy.deepcopy(
-                    [layer for layer in self.model.parameters()][-100][-10:].tolist()[0]
-                )
                 new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
-                if new_model_weights == current_model_weights:
-                    bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
+                if new_model_weights_sample == current_model_weights_sample:
+                    bt.logging.info(
+                        "Averaging Failed. Model Weights Haven't Changed. Loading Latest Model State."
+                    )
                     failed_gradient_all_reduce = True
                     load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                 elif sum(np.isnan(new_model_weights_sample)) > 1:
                     bt.logging.info(
-                        "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
+                        "Averaging Failed. Model Weights Corrupted With NaNs After Running The Optimizer Step. Loading Latest Model State."
                     )
                     failed_gradient_all_reduce = True
                     state_loaded = load_state_from_peer(
@@ -185,7 +187,7 @@ async def forward(self):
                     self.local_progress.epoch += 1
                     self.local_progress.samples_accumulated = 0
 
-                    # Push to HF Hub if local model is the first to update
+                    # Push to HF Hub if the current validator is the first to update
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
                     )
@@ -197,7 +199,7 @@ async def forward(self):
                         attempt = 0
                         while attempt < self.model_upload_retry_limit:
                             try:
-                                bt.logging.info("Pushing New Model Weights To HF Hub")
+                                bt.logging.info("Pushing New Model Weights To HF Hub.")
                                 self.model.push_to_hub(self.config.neuron.model_name)
                                 create_tag(
                                     self.config.neuron.model_name,
@@ -214,7 +216,7 @@ async def forward(self):
 
                             except HfHubHTTPError:
                                 bt.logging.info(
-                                    f"Model With Tag {tag_name} Already Uploaded. Loading that model."
+                                    f"Model With Tag {tag_name} Already Uploaded to HF Hub. Loading That Model."
                                 )
                                 state_loaded = load_state_from_peer(
                                     self, epoch=tag_name
@@ -224,20 +226,19 @@ async def forward(self):
                             except Exception as e:
                                 attempt += 1
                                 bt.logging.warning(
-                                    f"Failed to upload model to huggingface hub, retrying. Attempt {attempt}/{self.model_upload_retry_limit}"
+                                    f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
                                 )
                                 if attempt < self.model_upload_retry_limit:
-                                    time.sleep(
-                                        self.model_upload_retry_delay
-                                    )  # Wait before the next retry
+                                    # Wait before the next retry
+                                    time.sleep(self.model_upload_retry_delay)
                                 else:
                                     bt.logging.error(
-                                        "Maximum retry limit reached. Unable to upload model to HF Hub."
+                                        "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
                                     )
                                     raise
 
             else:
-                bt.logging.info("Averaging Failed. Loading State From Peer")
+                bt.logging.info("Averaging Failed. Loading Latest Model State.")
                 failed_gradient_all_reduce = True
                 load_state_from_peer(self)
 
@@ -249,9 +250,10 @@ async def forward(self):
                 bt.logging.info("Optimizer Gradients Zeroed")
 
             self.step_scheduled = False
+        # Process the Train query responses
         else:
             bt.logging.info(
-                "Received responses: "
+                "Received Responses: "
                 + str(
                     [
                         {
