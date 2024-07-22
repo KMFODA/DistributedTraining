@@ -153,19 +153,8 @@ async def get_rewards(
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    # Score an empty responses
-    if (responses == [[]]) or (
-        [
-            response.gradients
-            for response in responses[0]
-            if (response.dendrite.status_code == 200)
-            and (response.gradients is not None)
-        ]
-        == []
-    ):
-        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
     # Score a non-empty AllReduce response
-    elif all_reduce and (responses != [[]]):
+    if all_reduce and (responses != [[]]):
         # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
         # the scoring burden across all validators
         self.miner_uids = await get_random_uids(
@@ -199,6 +188,18 @@ async def get_rewards(
             }
         )
         scores *= bandwidth_scores
+
+    # Score an empty responses
+    elif (responses == [[]]) or (
+        [
+            response.gradients
+            for response in responses[0]
+            if (response.dendrite.status_code == 200)
+            and (response.gradients is not None)
+        ]
+        == []
+    ):
+        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
 
     # Score a non-empty Train response
     else:

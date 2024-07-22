@@ -186,14 +186,14 @@ def add_args(cls, parser):
         "--neuron.wandb_project",
         type=str,
         help="The wandb project to log to",
-        default="subnet_test",
+        default="distributed_training",
     )
 
     parser.add_argument(
         "--neuron.wandb_entity",
         type=str,
         help="The wandb project to log to",
-        default="kf_ps",
+        default="kmfoda",
     )
 
     parser.add_argument(

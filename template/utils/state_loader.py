@@ -249,7 +249,7 @@ def load_state_from_peer(self, epoch=None):
     )
     bt.logging.info(current_model_weights_sample)
 
-    bt.logging.info(f"Old Model Tag {self.local_progress.epoch}")
+    bt.logging.info(f"Old Model Tag: {self.local_progress.epoch}")
     # if (self.global_progress.epoch is not None) and (tag_name >= epoch):
     if self.global_progress.epoch is not None:
         bt.logging.info(
@@ -272,7 +272,7 @@ def load_state_from_peer(self, epoch=None):
 
         self.local_progress.epoch = self.global_progress.epoch
         self.local_progress.samples_accumulated = 0
-        bt.logging.info(f"New Model Tag {self.global_progress.epoch}")
+        bt.logging.info(f"New Model Tag: {self.global_progress.epoch}")
 
         # Delete one model from the chace to maintain disk space
         try:
@@ -289,6 +289,6 @@ def load_state_from_peer(self, epoch=None):
             )
 
     else:
-        bt.logging.info(f"Model with tag {epoch} does not exist")
+        bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
 
     return state_loaded
