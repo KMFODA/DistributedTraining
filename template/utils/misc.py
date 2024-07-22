@@ -19,7 +19,6 @@
 import time
 from math import floor
 from typing import Callable, Any
-import functools
 from functools import lru_cache, update_wrapper
 import bittensor as bt
 from typing import Any, List
@@ -31,7 +30,10 @@ from loguru import logger as bt_logger
 from hivemind.utils.logging import use_hivemind_log_handler
 import speedtest
 import hivemind
-import requests
+import logging_loki
+from logging.handlers import QueueHandler, QueueListener
+from multiprocessing import Queue
+import json
 from hivemind import utils
 import re
 from ipaddress import ip_address
@@ -45,7 +47,7 @@ from bitarray import bitarray
 import wandb
 from logtail import LogtailHandler
 import os
-from dotenv import load_dotenv, dotenv_values
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -161,10 +163,7 @@ class AsyncDendritePool:
 
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-    # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = (
-        f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
-    )
+    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"
     wandb_run = wandb.init(
         id=run_name,
         name=run_name,
@@ -213,6 +212,86 @@ class IpFilter(logging.Filter):
         return True
 
 
+class JSONFormatter(logging.Formatter):
+    def __init__(
+        self,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    ):
+        self.network = network
+        self.netuid = netuid
+        self.hotkey = hotkey
+        self.version = version
+        self.spec_version = spec_version
+        self.run_id = run_id
+        self.ip = ip
+        self.port = port
+        self.uid = uid
+        self.neuron_type = neuron_type
+
+    def format(self, record):
+        try:
+            # TODO Cleanup
+            # Extract real message from the noisy msg line emitted by bittensor
+            msg = "".join(record.getMessage().split(" - ")[1:])
+        except Exception:
+            msg = record.getMessage()
+
+        log_record = {
+            "level": record.levelname.lower(),
+            "module": record.module,
+            "func_name": record.funcName,
+            "thread": record.threadName,
+            "netuid": self.netuid,
+            "network": self.network,
+            "neuron_type": self.neuron_type,
+            "hotkey": self.hotkey,
+            "uid": self.uid,
+            "ip": self.ip,
+            "port": self.port,
+            "message": msg,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "version": self.version,
+            "spec_version": self.spec_version,
+        }
+        return json.dumps(log_record)
+
+
+class LogHandler(logging_loki.LokiHandler):
+    def handleError(self, record):
+        self.emitter.close()
+        # When Loki endpoint gives error for some reason,
+        # parent .handleError starts spamming error trace for each failure
+        # so we are disabling this default behaviour
+        # super().handleError(record)
+
+
+class CustomLokiLoggingHandler(QueueHandler):
+    def __init__(self, queue: Queue, **kwargs):
+        super().__init__(queue)
+        self.handler = LogHandler(**kwargs)  # noqa: WPS110
+        self.listener = QueueListener(self.queue, self.handler)
+        self.listener.start()
+
+
+class LogHandler(logging_loki.LokiHandler):
+    def handleError(self, record):
+        self.emitter.close()
+        # When Loki endpoints gives error for unexplained reasons,
+        # parent .handleError starts spamming error trace for each failure
+        # so we are disabling this default behaviour for now
+        # super().handleError(record)
+
+
 def logging_filter(record):
     if (record.name != "hivemind.dht.protocol") and (
         record.name != "hivemind.optim.progress_tracker"
@@ -222,8 +301,65 @@ def logging_filter(record):
         return False
 
 
+def add_loki_logger_handler(
+    logger,
+    network,
+    netuid,
+    hotkey,
+    version,
+    spec_version,
+    run_id,
+    ip,
+    port,
+    uid,
+    neuron_type,
+):
+    """Configure sending logs to loki server"""
+
+    # Use LokiQueueHandler to upload logs in background
+    loki_handler = CustomLokiLoggingHandler(
+        Queue(-1),
+        url="https://logs-prod-006.grafana.net/loki/api/v1/push",
+        tags={"application": "distributed_training"},
+        auth=(
+            "944477",
+            os.environ["LOKI_KEY"],
+        ),
+        version="1",
+    )
+
+    # Send logs to loki as JSON
+    loki_handler.setFormatter(
+        JSONFormatter(
+            network,
+            netuid,
+            hotkey,
+            version,
+            spec_version,
+            run_id,
+            ip,
+            port,
+            uid,
+            neuron_type,
+        )
+    )
+
+    logger.addHandler(loki_handler)
+
+
 def setup_logging(
-    level=logging.INFO, ip=None, port=None, local_logfile="/root/logs_mylogfile.txt"
+    network,
+    netuid,
+    hotkey,
+    version,
+    spec_version,
+    run_id,
+    uid,
+    neuron_type,
+    level=logging.INFO,
+    ip=None,
+    port=None,
+    local_logfile="/root/logs_mylogfile.txt",
 ):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
@@ -236,6 +372,19 @@ def setup_logging(
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
     bt_logger_.addHandler(logtail_handler)
+    add_loki_logger_handler(
+        bt_logger_,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    )
 
     use_hivemind_log_handler("nowhere")
 
@@ -249,6 +398,20 @@ def setup_logging(
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
     root_logger.addHandler(logtail_handler)
+
+    add_loki_logger_handler(
+        root_logger,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    )
 
     # Create a file handler that logs debug and higher level messages
     if os.path.exists(local_logfile):
@@ -273,7 +436,6 @@ def setup_logging(
     hivemind_logger.propagate = (
         False  # Stop hivemind logs from propagating to the root logger
     )
-
 
 
 def get_bandwidth():

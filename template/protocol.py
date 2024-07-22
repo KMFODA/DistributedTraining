@@ -68,3 +68,5 @@ class AllReduce(bt.Synapse):
         description="Completion status of the current StreamPrompting object. "
         "This attribute is mutable and can be updated.",
     )
+    # Learning Rate
+    learning_rate: float = None

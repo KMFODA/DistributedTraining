@@ -17,7 +17,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from transformers import AutoModelForCausalLM
-from .optimizer import VerboseAdamW
+from torch_optimizer import Lamb
 
 from template.utils.progress_tracker import (
     LocalTrainingProgress,
@@ -253,14 +253,14 @@ def load_state_from_peer(self, epoch=None):
     # if (self.global_progress.epoch is not None) and (tag_name >= epoch):
     if self.global_progress.epoch is not None:
         bt.logging.info(
-            f"Latest model state found on HF Hub with tag epoch = {self.global_progress.epoch}. Loading state using HF."
+            f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
         )
         self.model.to(self.device)
-        self.opt = VerboseAdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
         self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 

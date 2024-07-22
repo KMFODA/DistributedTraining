@@ -153,8 +153,21 @@ async def get_rewards(
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    if all_reduce and (responses != [[]]):
-        # Now that we've called all_reduce on all available UIDs only score a sample of them to spread scoring burden across all validators
+    # Score an empty responses
+    if (responses == [[]]) or (
+        [
+            response.gradients
+            for response in responses[0]
+            if (response.dendrite.status_code == 200)
+            and (response.gradients is not None)
+        ]
+        == []
+    ):
+        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
+    # Score a non-empty AllReduce response
+    elif all_reduce and (responses != [[]]):
+        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
+        # the scoring burden across all validators
         self.miner_uids = await get_random_uids(
             self, dendrite=self.dendrite, k=self.config.neuron.sample_size
         )
@@ -187,18 +200,7 @@ async def get_rewards(
         )
         scores *= bandwidth_scores
 
-    elif (responses == [[]]) or (
-        [
-            response.gradients
-            for response in responses[0]
-            if (response.dendrite.status_code == 200)
-            and (response.gradients is not None)
-        ]
-        == []
-    ):
-        # Set up the scores tensor
-        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
-
+    # Score a non-empty Train response
     else:
         scores = torch.FloatTensor(
             [
@@ -228,7 +230,7 @@ async def get_rewards(
             )
             scores *= blacklist_scores
 
-        # Re-calculate gradients for a subset of uids and score the difference between local gradients and the miner's gradients
+        # Re-calculate gradients and score the difference between local gradients and the miner's gradients
         gradient_scores = torch.FloatTensor(
             [
                 (
@@ -248,7 +250,7 @@ async def get_rewards(
         )
         scores *= gradient_scores
 
-        # Calculate Data Indices Scores
+        # Score miners based off the size of the data they have trained on this step
         steps_scores = torch.FloatTensor(
             [
                 (
