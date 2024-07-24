@@ -115,7 +115,7 @@ async def forward(self):
                 new_miner_uids.append(key)
 
         group_peerids = new_group_peerids
-        self.miner_uids = new_miner_uids
+        self.miner_uids = torch.tensor(new_miner_uids).to(self.device)
 
         group_id = DHTID.generate().to_bytes()
         print("DHT:", self.dht.peer_id)
