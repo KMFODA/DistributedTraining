@@ -10,6 +10,7 @@ import torch
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.dht import DHT, DHTID
 from hivemind.utils import use_hivemind_log_handler
+
 # from hivemindy2 import DTGradientAverager
 from hivemindy import DTGradientAverager
 from torch import nn
@@ -119,7 +120,8 @@ def perform_all_reduce(custom_group: GroupInfo, models, dht_instances: List[DHT]
             time.sleep(sleep_int)
             # control = averager.schedule_step(custom_group_info=custom_group)
             future = averager.step(
-                wait=False, allow_retries=False, custom_group_info=custom_group)
+                wait=False, allow_retries=False, custom_group_info=custom_group
+            )
             futures.append(future)
 
         for future in futures:

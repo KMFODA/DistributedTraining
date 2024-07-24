@@ -69,7 +69,7 @@ async def forward(self):
         and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # bt.logging.info("Scheduling all-reduce synapse call")
-        sample_size = int(self.metagraph.n) # TODO Set all_reduce sample size
+        sample_size = int(self.metagraph.n)  # TODO Set all_reduce sample size
         # next_step_control = self.grad_averager.schedule_step()
         # self.step_scheduled = True
         all_reduce = True
@@ -93,24 +93,30 @@ async def forward(self):
         group_peerids = None
         blacklist_scores = None
         # All-reduce synapse
-        while (group_peerids is None) or (blacklist_scores is None) or any(
-            peer_id is None for index, peer_id in zip(blacklist_scores, group_peerids.values()) if index != 0.0
+        while (
+            (group_peerids is None)
+            or (blacklist_scores is None)
+            or any(
+                peer_id is None
+                for index, peer_id in zip(blacklist_scores, group_peerids.values())
+                if index != 0.0
+            )
         ):
             group_peerids = await self.map_uid_to_peerid(self.miner_uids.tolist())
             blacklist_scores = await score_blacklist(self, group_peerids.keys())
-        
+
         new_group_peerids = {}
         new_miner_uids = []
-        for i,key in enumerate(group_peerids.keys()):
+        for i, key in enumerate(group_peerids.keys()):
             if blacklist_scores[i] == 0.0:
                 continue
             else:
                 new_group_peerids[key] = group_peerids[key]
                 new_miner_uids.append(key)
-        
+
         group_peerids = new_group_peerids
         self.miner_uids = new_miner_uids
-        
+
         group_id = DHTID.generate().to_bytes()
         print("DHT:", self.dht.peer_id)
         print("Peers:", list(group_peerids.values()))
@@ -123,13 +129,10 @@ async def forward(self):
         )
 
         queries = [
-            template.protocol.AllReduce(
-                group=group,
-                timeout=self.all_reduce_timeout
-            )
+            template.protocol.AllReduce(group=group, timeout=self.all_reduce_timeout)
             for _ in self.miner_uids
         ]
-        
+
         # Define a custom group for all-reduce
         custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
@@ -140,21 +143,21 @@ async def forward(self):
             )
         )
 
-        
         try:
-            
             bt.logging.info("Performing Gradient Averaging")
-            
+
             # Perform AllReduce step with queried miners to get averaged gradients
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group, wait=False
             )
-            
+
             # Start synapse queries
             responses = await asyncio.gather(*query_tasks)
 
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= self.all_reduce_timeout):
+            while (gradient_averaging_step.done() is False) and (
+                sleep_counter <= self.all_reduce_timeout
+            ):
                 time.sleep(1)
                 sleep_counter += 1
 
@@ -177,17 +180,19 @@ async def forward(self):
 
                     if new_model_weights_sample == current_model_weights_sample:
                         # TODO This seems like it could be optimized furhter. Sometimes some weights might not change, no?
-                        bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                        bt.logging.info(
+                            "Averaging Failed. Model Weights Haven't Changed."
+                        )
+                        load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                     elif np.nan in new_model_weights_sample:
                         bt.logging.info(
                             "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                         )
-                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                        load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                     else:
-                        self.grad_averager.reset_accumulated_grads_() 
+                        self.grad_averager.reset_accumulated_grads_()
                         self.tracker.local_progress.epoch = self.tracker.update_epoch(
                             self.tracker.local_progress.epoch + 1
                         )
@@ -197,12 +202,13 @@ async def forward(self):
                         refs = list_repo_refs(
                             self.config.neuron.model_name, repo_type="model"
                         )
-                        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+                        tag_name = (
+                            max([int(tag.name) for tag in refs.tags])
+                            if refs.tags
+                            else None
+                        )
                         bt.logging.info(f"Old Model Tag {tag_name}")
-                        if (
-                            tag_name
-                            and tag_name < self.local_progress.epoch
-                        ):
+                        if tag_name and tag_name < self.local_progress.epoch:
                             # TODO Is this awaited, if so, might need it as a background task
                             bt.logging.info("Pushing New Model Weights To HF Hub")
                             self.model.push_to_hub(self.config.neuron.model_name)
@@ -217,16 +223,17 @@ async def forward(self):
                             )
                             tag_name = max([int(tag.name) for tag in refs.tags])
                             bt.logging.info(f"New Model Tag {tag_name}")
-                    
-                    scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
-            
+                    scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(
+                        self.device
+                    )
+
             elif gradient_averaging_step.cancelled():
                 raise asyncio.CancelledError("Gradient averaging step was cancelled.")
-                
+
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
-        
+
         except Exception as e:
             bt.logging.info(
                 f"AllReduce Failed With Error: {e}"
@@ -288,7 +295,7 @@ async def forward(self):
     # Normalise Rewards
     if rewards.sum() != 0:
         rewards = rewards / rewards.sum()
-        
+
     bt.logging.info(f"Final Scores: {rewards}")
 
     # Update the tracker based on the rewards

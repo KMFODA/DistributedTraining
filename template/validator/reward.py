@@ -45,7 +45,7 @@ def score_gradients(self, response, uid):
     if index == 0:
         score = 0
         return score
-    
+
     inputs = batch.to(self.device)
 
     # Zero Gradients

@@ -9,8 +9,7 @@ from hivemind.optim.state_averager import TrainingStateAverager
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          default_data_collator)
+from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
 
 # Create dataset and model, same as in the basic tutorial
 model = nn.Linear(2, 3)

@@ -172,15 +172,16 @@ while True:
                 remote_peer = [peer.peer_id for peer in remote_peer]
                 ordered_peer_ids += remote_peer
                 ordered_peer_ids.sort(key=lambda peer: peer.xor_id)
-                custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+                custom_group = GroupInfo(
+                    group_id, tuple(ordered_peer_ids), gathered=None
+                )
                 print(custom_group)
                 group_is_set = True
 
             with tracker.pause_updates():
                 print("grad stepping..")
                 # grad_averager.step(custom_group_info=custom_group)
-                grad_step = grad_averager.step(
-                    custom_group_info=custom_group)
+                grad_step = grad_averager.step(custom_group_info=custom_group)
                 # if gradient_averaging_step.done():
                 # while not grad_step.done():
                 # print("Sleeping for 10")

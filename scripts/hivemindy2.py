@@ -4,8 +4,17 @@ import random
 import re
 from contextlib import contextmanager
 from itertools import chain
-from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
-                    Sequence, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import bittensor as bt
 import hivemind
@@ -13,25 +22,35 @@ import hivemind.averaging
 import hivemind.averaging.averager
 import numpy as np
 import torch
-from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
-                                          AveragingMode)
+from hivemind.averaging.allreduce import (
+    AllreduceException,
+    AllReduceRunner,
+    AveragingMode,
+)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import (deserialize_torch_tensor,
-                                  serialize_torch_tensor)
+from hivemind.compression import deserialize_torch_tensor, serialize_torch_tensor
 from hivemind.dht import DHT
 from hivemind.optim.progress_tracker import LocalTrainingProgress
 from hivemind.p2p import P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
-                                    amap_in_executor, as_aiter,
-                                    attach_event_on_finished, azip,
-                                    enter_asynchronously)
+from hivemind.utils.asyncio import (
+    aenumerate,
+    aiter_with_timeout,
+    amap_in_executor,
+    as_aiter,
+    attach_event_on_finished,
+    azip,
+    enter_asynchronously,
+)
 from hivemind.utils.streaming import combine_from_streaming
-from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
-                                          get_dht_time)
+from hivemind.utils.timed_storage import (
+    DHTExpiration,
+    ValueWithExpiration,
+    get_dht_time,
+)
 
 GatheredData = Any
 logger = get_logger(__name__)

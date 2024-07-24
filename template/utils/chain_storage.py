@@ -9,7 +9,6 @@ from typing import Any, List, Optional
 import bittensor as bt
 
 
-
 class MinerIterator:
     """A thread safe infinite iterator to cyclically enumerate the current set of miner UIDs.
 

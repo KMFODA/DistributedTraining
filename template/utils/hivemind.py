@@ -10,51 +10,79 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from itertools import chain
-from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
-                    Sequence, Tuple, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import bittensor as bt
 import hivemind
 import hivemind.averaging
 import hivemind.averaging.averager
 import torch
-from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
-                                          AveragingMode)
+from hivemind.averaging.allreduce import (
+    AllreduceException,
+    AllReduceRunner,
+    AveragingMode,
+)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import (deserialize_torch_tensor,
-                                  serialize_torch_tensor)
+from hivemind.compression import deserialize_torch_tensor, serialize_torch_tensor
 from hivemind.dht import DHT
 from hivemind.optim.progress_tracker import LocalTrainingProgress
-from hivemind.p2p import (P2PContext, P2PDaemonError, P2PHandlerError, PeerID,
-                          ServicerBase)
+from hivemind.p2p import (
+    P2PContext,
+    P2PDaemonError,
+    P2PHandlerError,
+    PeerID,
+    ServicerBase,
+)
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.utils.asyncio import (aenumerate, aiter_with_timeout,
-                                    amap_in_executor, as_aiter,
-                                    attach_event_on_finished, azip,
-                                    enter_asynchronously)
+from hivemind.utils.asyncio import (
+    aenumerate,
+    aiter_with_timeout,
+    amap_in_executor,
+    as_aiter,
+    attach_event_on_finished,
+    azip,
+    enter_asynchronously,
+)
 from hivemind.utils.streaming import combine_from_streaming
-from hivemind.utils.timed_storage import (DHTExpiration, ValueWithExpiration,
-                                          get_dht_time)
+from hivemind.utils.timed_storage import (
+    DHTExpiration,
+    ValueWithExpiration,
+    get_dht_time,
+)
+
 # from template.utils.misc import update_global_tracker_state
 from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from pydantic import BaseModel, conint
 from transformers import AutoModelForCausalLM
 
-from template.custom_proto import custom_averaging_pb2
+from template.proto import custom_averaging_pb2
 
 GatheredData = Any
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
 
+
 class DTAveragerError(Exception):
     """Base exception for DTAverager"""
 
+
 class BarrierError(DTAveragerError):
     """Exception raised for errors in the barrier process"""
+
 
 class AllReduceError(DTAveragerError):
     """Exception raised for errors in the AllReduce process"""
@@ -70,20 +98,26 @@ class LocalTrainingProgress(BaseModel):
     epoch: conint(ge=0, strict=True)
     samples_accumulated: conint(ge=0, strict=True)
 
+
 class BarrierState(Enum):
     IDLE = 0
     LOOKING_FOR_GROUP = 1
     JOINED_GROUP = 2
     ASSEMBLING_GROUP = 3
     BARRIER_COMPLETE = 4
-    
+
+
 class DTAllReduceRunner(AllReduceRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         bt.logging.info(f"WE ARE HERE NOW! {peer_id}")
-        bt.logging.info("DTAllReduceRunner sender + reducer timeout", self.sender_timeout, self.reducer_timeout)
+        bt.logging.info(
+            "DTAllReduceRunner sender + reducer timeout",
+            self.sender_timeout,
+            self.reducer_timeout,
+        )
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
@@ -111,7 +145,9 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info(f"_get_peer_stub done.. {peer_id}")
 
                 if self.should_delay_results(self.peer_id):
-                    bt.logging.info(f"self.should_delay_results(self.peer_id) {self.should_delay_results(self.peer_id)}")
+                    bt.logging.info(
+                        f"self.should_delay_results(self.peer_id) {self.should_delay_results(self.peer_id)}"
+                    )
                     await done_sending.wait()
                 bt.logging.info(f"sending done.. {peer_id}")
                 part_index = 0
@@ -140,14 +176,18 @@ class DTAllReduceRunner(AllReduceRunner):
                     part_index
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
-                    bt.logging.info(f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]")
+                    bt.logging.info(
+                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
+                    )
                     raise AllreduceException(
                         f"peer {peer_id} sent {part_index} parts, but we expected "
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
-                
+
             except BaseException as e:
-                if isinstance(e, Exception): #TODO Here we need to catch if peers disconnect ("Connection Reset By Peer")
+                if isinstance(
+                    e, Exception
+                ):  # TODO Here we need to catch if peers disconnect ("Connection Reset By Peer")
                     logger.debug(
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
@@ -199,28 +239,44 @@ class DTAllReduceRunner(AllReduceRunner):
             await asyncio.wait_for(self.all_senders_started.wait(), self.sender_timeout)
         except asyncio.TimeoutError:
             for peer_id in self.sender_peer_ids:
-                if peer_id not in self.active_senders and peer_id not in self.banned_senders:
+                if (
+                    peer_id not in self.active_senders
+                    and peer_id not in self.banned_senders
+                ):
                     await self._ban_sender(peer_id)
 
     async def run(self) -> AsyncIterator[torch.Tensor]:
         """Run all-reduce, return differences between averaged and original tensors as they are computed"""
         pending_tasks = set()
         bt.logging.info("Running AllReducer run()")
-        bt.logging.info(f"self.tensor_part_container.num_parts_by_peer {self.tensor_part_container.num_parts_by_peer}")
-        if self.tensor_part_container.num_parts_by_peer[self.ordered_peer_ids.index(self.peer_id)] != 0:
+        bt.logging.info(
+            f"self.tensor_part_container.num_parts_by_peer {self.tensor_part_container.num_parts_by_peer}"
+        )
+        if (
+            self.tensor_part_container.num_parts_by_peer[
+                self.ordered_peer_ids.index(self.peer_id)
+            ]
+            != 0
+        ):
             pending_tasks.add(asyncio.create_task(self._handle_missing_senders()))
 
         try:
             if len(self.sender_peer_ids) == 0:
-                logger.debug(f"{self} - finished all-reduce early: all peers are auxiliaries ({self.modes})")
+                logger.debug(
+                    f"{self} - finished all-reduce early: all peers are auxiliaries ({self.modes})"
+                )
                 self.finalize()
 
             elif self.peer_id in self.sender_peer_ids:
                 bt.logging.info(f"self.peer_id in self.sender_peer_ids")
 
-                for peer_id, parts in zip(self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer):
+                for peer_id, parts in zip(
+                    self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer
+                ):
                     if parts != 0:
-                        pending_tasks.add(asyncio.create_task(self._communicate_with_peer(peer_id)))
+                        pending_tasks.add(
+                            asyncio.create_task(self._communicate_with_peer(peer_id))
+                        )
 
                 bt.logging.info(f"Succesfully communicated with all peers")
 
@@ -250,7 +306,6 @@ class DTAllReduceRunner(AllReduceRunner):
                 except Exception as inner_exc:
                     logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
 
-
     async def _generate_input_for_peer(
         self, peer_index: int
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
@@ -268,7 +323,6 @@ class DTAllReduceRunner(AllReduceRunner):
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
         bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
 
-
     async def _ban_sender(self, peer_id: PeerID):
         bt.logging.info("ban sender..")
         async with self.banlock:
@@ -283,8 +337,6 @@ class DTAllReduceRunner(AllReduceRunner):
 class DTAverager(hivemind.DecentralizedAverager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
-        
 
     def step(
         self,
@@ -383,7 +435,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             bt.logging.info(step)
 
         return step.result() if wait else step
-    
+
     async def _step_custom(
         self,
         *,
@@ -398,7 +450,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             trigger, cancel = MPFuture(), MPFuture()
             step.attach(trigger, cancel)
             future_for_init.set_result((trigger, cancel))
-            
+
             while not step.done():
                 try:
                     self._pending_groups_registered.clear()
@@ -407,11 +459,10 @@ class DTAverager(hivemind.DecentralizedAverager):
                     logger.info("Starting distributed barrier..")
                     await self._run_distributed_barrier(step, custom_group_info)
                     logger.info("Finished waiting for group to assemble.")
-        
 
                     logger.info("Running AllReduce..")
                     await self._run_allreduce(step, custom_group_info)
-                        # Averaging is finished, loop will now exit
+                    # Averaging is finished, loop will now exit
 
                 except (
                     AllreduceException,
@@ -441,7 +492,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             if not step.done():
                 step.set_exception(e)
             raise
-        
+
         finally:
             bt.logging.info("Finally..")
             step.stage = AveragingStage.FINISHED
@@ -452,45 +503,59 @@ class DTAverager(hivemind.DecentralizedAverager):
                         " Please report this to hivemind issues."
                     )
                 )
-                
+
     async def rpc_join_barrier(
         self, request: custom_averaging_pb2.JoinBarrierRequest, context: P2PContext
     ) -> custom_averaging_pb2.JoinBarrierResponse:
-        
         logger.debug(f"Received join barrier request from {context.remote_id}")
         logger.debug(f"Current barrier state: {self.barrier_state}")
-        logger.debug(f"Barrier group peers: {self.barrier_group.peer_ids if self.barrier_group else 'None'}")
+        logger.debug(
+            f"Barrier group peers: {self.barrier_group.peer_ids if self.barrier_group else 'None'}"
+        )
 
         if self.barrier_state != BarrierState.ASSEMBLING_GROUP:
-            logger.warning(f"Rejecting join request: incorrect state {self.barrier_state}")
-            return custom_averaging_pb2.JoinBarrierResponse(code=custom_averaging_pb2.BarrierResponseCode.REJECTED)
+            logger.warning(
+                f"Rejecting join request: incorrect state {self.barrier_state}"
+            )
+            return custom_averaging_pb2.JoinBarrierResponse(
+                code=custom_averaging_pb2.BarrierResponseCode.REJECTED
+            )
 
         peer_id = PeerID(request.peer_id)
         if peer_id not in self.barrier_group.peer_ids:
             logger.warning(f"Rejecting join request: peer {peer_id} not in group")
-            return custom_averaging_pb2.JoinBarrierResponse(code=custom_averaging_pb2.BarrierResponseCode.REJECTED)
+            return custom_averaging_pb2.JoinBarrierResponse(
+                code=custom_averaging_pb2.BarrierResponseCode.REJECTED
+            )
 
         self.ready_peers[peer_id].set()
         logger.debug(f"Peer {peer_id} joined the barrier")
-        
-        return custom_averaging_pb2.JoinBarrierResponse(code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED)
-    
+
+        return custom_averaging_pb2.JoinBarrierResponse(
+            code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED
+        )
+
     async def rpc_notify_barrier_complete(
-        self, request: custom_averaging_pb2.BarrierCompleteNotification, context: P2PContext
+        self,
+        request: custom_averaging_pb2.BarrierCompleteNotification,
+        context: P2PContext,
     ) -> custom_averaging_pb2.BarrierCompleteResponse:
-        
         self.barrier_state = BarrierState.BARRIER_COMPLETE
         self.barrier_complete.set()
         logger.info(f"Peer {self.peer_id} received barrier complete notification")
-        
-        return custom_averaging_pb2.BarrierCompleteResponse(code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED)
-    
+
+        return custom_averaging_pb2.BarrierCompleteResponse(
+            code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED
+        )
+
     @contextmanager
     def _barrier_context(self, custom_group_info):
         self.barrier_state = BarrierState.LOOKING_FOR_GROUP
         self.barrier_group = custom_group_info
         self.barrier_complete = asyncio.Event()
-        self.ready_peers = {peer_id: asyncio.Event() for peer_id in custom_group_info.peer_ids}
+        self.ready_peers = {
+            peer_id: asyncio.Event() for peer_id in custom_group_info.peer_ids
+        }
         try:
             yield
         finally:
@@ -514,23 +579,29 @@ class DTAverager(hivemind.DecentralizedAverager):
                 logger.info(f"Waiting for barrier_complete for {self.peer_id}")
                 await asyncio.wait_for(self.barrier_complete.wait(), timeout=60)
                 logger.info(f"Barrier complete for {self.peer_id}")
-                
+
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
             raise BarrierError("Barrier timeout") from None
         except Exception as e:
-            logger.error(f"Error in distributed_barrier for peer {self.peer_id}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error in distributed_barrier for peer {self.peer_id}: {str(e)}",
+                exc_info=True,
+            )
             raise BarrierError(f"Error in distributed_barrier: {str(e)}") from e
- 
 
     async def _leader_coordinate_barrier(self):
         logger.info(f"Leader {self.peer_id} starting barrier coordination")
-        self.ready_peers = {peer_id: asyncio.Event() for peer_id in self.barrier_group.peer_ids}
+        self.ready_peers = {
+            peer_id: asyncio.Event() for peer_id in self.barrier_group.peer_ids
+        }
         self.ready_peers[self.peer_id].set()
-        
+
         async def notify_follower(peer_id: PeerID):
             try:
-                follower_stub = type(self).get_stub(self.p2p, peer_id, namespace=self.prefix)
+                follower_stub = type(self).get_stub(
+                    self.p2p, peer_id, namespace=self.prefix
+                )
                 await follower_stub.rpc_notify_barrier_complete(
                     custom_averaging_pb2.BarrierCompleteNotification(
                         group_id=self.barrier_group.group_id
@@ -541,18 +612,26 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         try:
             logger.info(f"Leader waiting for peers to be ready..")
-            await asyncio.gather(*(self._wait_for_peer_ready(peer_id) 
-                                for peer_id in self.barrier_group.peer_ids 
-                                if peer_id != self.peer_id))
+            await asyncio.gather(
+                *(
+                    self._wait_for_peer_ready(peer_id)
+                    for peer_id in self.barrier_group.peer_ids
+                    if peer_id != self.peer_id
+                )
+            )
             self.barrier_state = BarrierState.BARRIER_COMPLETE
             self.barrier_complete.set()
             logger.info(f"Leader {self.peer_id} completed barrier coordination")
-            
+
             # Notify all followers
-            await asyncio.gather(*(notify_follower(peer_id) 
-                                   for peer_id in self.barrier_group.peer_ids 
-                                   if peer_id != self.peer_id))
-            
+            await asyncio.gather(
+                *(
+                    notify_follower(peer_id)
+                    for peer_id in self.barrier_group.peer_ids
+                    if peer_id != self.peer_id
+                )
+            )
+
             logger.info(f"Leader {self.peer_id} notified all followers")
 
         except Exception as e:
@@ -560,38 +639,55 @@ class DTAverager(hivemind.DecentralizedAverager):
             raise
 
     async def _follower_join_barrier(self, leader_id: PeerID):
-        logger.info(f"Follower {self.peer_id} attempting to join barrier led by {leader_id}")
+        logger.info(
+            f"Follower {self.peer_id} attempting to join barrier led by {leader_id}"
+        )
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 self.barrier_state = BarrierState.JOINED_GROUP
-                leader_stub = type(self).get_stub(self.p2p, leader_id, namespace=self.prefix)
+                leader_stub = type(self).get_stub(
+                    self.p2p, leader_id, namespace=self.prefix
+                )
                 response = await asyncio.wait_for(
                     leader_stub.rpc_join_barrier(
                         custom_averaging_pb2.JoinBarrierRequest(
                             group_id=self.barrier_group.group_id,
-                            peer_id=self.peer_id.to_bytes()
+                            peer_id=self.peer_id.to_bytes(),
                         )
                     ),
-                    timeout=30
+                    timeout=30,
                 )
                 logger.debug(f"Received response from leader: {response.code}")
                 if response.code == custom_averaging_pb2.BarrierResponseCode.ACCEPTED:
-                    logger.info(f"Follower {self.peer_id} successfully joined barrier, waiting for completion")
+                    logger.info(
+                        f"Follower {self.peer_id} successfully joined barrier, waiting for completion"
+                    )
                     await self._wait_for_barrier_completion()
-                    logger.info(f"Follower {self.peer_id} successfully waited for completion")
+                    logger.info(
+                        f"Follower {self.peer_id} successfully waited for completion"
+                    )
                     return
-                elif response.code == custom_averaging_pb2.BarrierResponseCode.BARRIER_COMPLETE:
+                elif (
+                    response.code
+                    == custom_averaging_pb2.BarrierResponseCode.BARRIER_COMPLETE
+                ):
                     self.barrier_state = BarrierState.BARRIER_COMPLETE
                     self.barrier_complete.set()
                     return
                 else:
-                    logger.warning(f"Failed to join barrier, attempt {attempt + 1}/{max_retries}")
+                    logger.warning(
+                        f"Failed to join barrier, attempt {attempt + 1}/{max_retries}"
+                    )
                     if attempt == max_retries - 1:
-                        raise MatchmakingException(f"Failed to join barrier after {max_retries} attempts")
+                        raise MatchmakingException(
+                            f"Failed to join barrier after {max_retries} attempts"
+                        )
                     await asyncio.sleep(1)  # Wait before retrying
             except Exception as e:
-                logger.error(f"Error in follower_join_barrier attempt {attempt + 1}: {e}")
+                logger.error(
+                    f"Error in follower_join_barrier attempt {attempt + 1}: {e}"
+                )
                 if attempt == max_retries - 1:
                     raise
 
@@ -601,19 +697,27 @@ class DTAverager(hivemind.DecentralizedAverager):
             await asyncio.wait_for(self.barrier_complete.wait(), timeout=timeout)
             logger.info(f"Peer {self.peer_id} barrier completed")
         except asyncio.TimeoutError:
-            logger.error(f"Peer {self.peer_id} timed out waiting for barrier completion")
+            logger.error(
+                f"Peer {self.peer_id} timed out waiting for barrier completion"
+            )
             raise MatchmakingException("Barrier timeout")
 
     async def _wait_for_peer_ready(self, peer_id: PeerID):
         try:
             logger.info(f"_wait_for_peer_ready {peer_id}")
-            await asyncio.wait_for(self.ready_peers[peer_id].wait(), timeout=30)  # Adjust timeout as needed
+            await asyncio.wait_for(
+                self.ready_peers[peer_id].wait(), timeout=30
+            )  # Adjust timeout as needed
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for peer {peer_id}")
             raise
-        
-    async def _run_distributed_barrier(self, step: StepControl, custom_group_info: GroupInfo):
-        matchmaking_task = asyncio.create_task(self._distributed_barrier(custom_group_info))
+
+    async def _run_distributed_barrier(
+        self, step: StepControl, custom_group_info: GroupInfo
+    ):
+        matchmaking_task = asyncio.create_task(
+            self._distributed_barrier(custom_group_info)
+        )
         check_cancel_task = asyncio.create_task(step.wait_for_cancel())
 
         done, pending = await asyncio.wait(
@@ -630,11 +734,13 @@ class DTAverager(hivemind.DecentralizedAverager):
             check_cancel_task.cancel()
 
         await matchmaking_task
-        
+
     async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo):
         with self._register_allreduce_group(custom_group_info):
             logger.info("Running AllReduce..")
-            assert custom_group_info.group_id in self._running_groups, "Group was not properly registered"
+            assert (
+                custom_group_info.group_id in self._running_groups
+            ), "Group was not properly registered"
 
             step.stage = AveragingStage.RUNNING_ALLREDUCE
             step.set_result(
@@ -648,7 +754,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                     timeout=self._allreduce_timeout,
                 )
             )
-    
+
     async def _aggregate_with_group(
         self, group_info: GroupInfo, min_vector_size: int, **kwargs
     ) -> GatheredData:
@@ -715,7 +821,7 @@ class DTGradientAverager(DTAverager):
         self.barrier_group = None
         self.barrier_complete = asyncio.Event()
         self.ready_peers = {}
-        
+
         if reuse_grad_buffers and accumulate_grads_on is not None:
             logger.warning(
                 "Setting 'accumulate_grads_on' has no effect if reuse_grad_buffers=True"
@@ -759,7 +865,6 @@ class DTGradientAverager(DTAverager):
             client_mode=client_mode,
             **kwargs,
         )
-        
 
     @contextmanager
     @torch.no_grad()
@@ -1137,16 +1242,16 @@ def load_state_from_peer(self, epoch=None):
         )
         self.model.to(self.device)
         loaded_state = True
-        
+
         # Delete one model from the chace to maintain disk space
         try:
             for repo in scan_cache_dir().repos:
                 if repo == self.config.neuron.model_name:
-                    for r in repo.revisions: 
+                    for r in repo.revisions:
                         scan_cache_dir().delete_revisions(r.commit_hash).execute()
                         break
                 else:
-                    continue        
+                    continue
         except:
             bt.logging.warning(
                 "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
@@ -1180,6 +1285,10 @@ def load_state_from_peer(self, epoch=None):
                 tag_message="Bump release version.",
             )
             refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else self.model_hf_tag
+            tag_name = (
+                max([int(tag.name) for tag in refs.tags])
+                if refs.tags
+                else self.model_hf_tag
+            )
             self.model_hf_tag = tag_name
             bt.logging.info(f"New Model Tag {tag_name}")

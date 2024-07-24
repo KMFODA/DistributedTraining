@@ -17,8 +17,7 @@ from hivemind import utils
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          default_data_collator)
+from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
 
 from DTraining.template.base.neuron import BaseNeuron
 from template.data.dataset import SubsetFalconLoader

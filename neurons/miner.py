@@ -38,15 +38,25 @@ import numpy as np
 
 # Bittensor Miner Template:
 import template
+
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.data.dataset import SubsetFalconLoader
-from template.utils.hivemind import (DTGradientAverager, DTStateAverager,
-                                    load_state_from_peer, GlobalTrainingProgress,
-                                    LocalTrainingProgress)
-from template.utils.misc import (get_bandwidth, init_dht,
-                                load_wandb, setup_logging,
-                                warmup, update_global_tracker_state)
+from template.utils.hivemind import (
+    DTGradientAverager,
+    DTStateAverager,
+    load_state_from_peer,
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+)
+from template.utils.misc import (
+    get_bandwidth,
+    init_dht,
+    load_wandb,
+    setup_logging,
+    warmup,
+    update_global_tracker_state,
+)
 
 from huggingface_hub import list_repo_refs
 
@@ -63,10 +73,20 @@ class Miner(BaseMinerNeuron):
 
         # Init Model
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        self.model_hf_tag = (
+            max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        )
         if self.model_hf_tag is None:
-            bt.logging.warning(f"Model Tag Is None. Make Sure You Are Using The Correct Model Name")
-        self.model = AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name, revision = str(self.model_hf_tag)) if self.model_hf_tag else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            bt.logging.warning(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, revision=str(self.model_hf_tag)
+            )
+            if self.model_hf_tag
+            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+        )
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -96,7 +116,7 @@ class Miner(BaseMinerNeuron):
         if self.model_hf_tag is not None:
             with self.tracker.pause_updates():
                 self.tracker.local_progress.epoch = self.tracker.update_epoch(
-                                self.tracker.local_progress.epoch + 1
+                    self.tracker.local_progress.epoch + 1
                 )
 
         # Init State Averager
@@ -178,9 +198,11 @@ class Miner(BaseMinerNeuron):
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group, wait=False
             )
-            
+
             sleep_counter = 1
-            while (gradient_averaging_step.done() is False) and (sleep_counter <= synapse.timeout):
+            while (gradient_averaging_step.done() is False) and (
+                sleep_counter <= synapse.timeout
+            ):
                 time.sleep(1)
                 sleep_counter += 1
 
@@ -203,14 +225,16 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(new_model_weights_sample)
 
                     if new_model_weights_sample == current_model_weights_sample:
-                        bt.logging.info("Averaging Failed. Model Weights Haven't Changed.")
-                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                        bt.logging.info(
+                            "Averaging Failed. Model Weights Haven't Changed."
+                        )
+                        load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                     elif np.nan in new_model_weights_sample:
                         bt.logging.info(
                             "Averaging Failed. Model Weights Corrupted With Nans After Running The Optimizer Step."
                         )
-                        load_state_from_peer(self, epoch = self.local_progress.epoch + 1)
+                        load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
                     else:
                         self.grad_averager.reset_accumulated_grads_()  # prepare for next step
@@ -220,18 +244,18 @@ class Miner(BaseMinerNeuron):
                         self.local_progress.epoch += 1
                         self.local_progress.samples_accumulated = 0
                         synapse.completion = "True"
-                    
+
             elif gradient_averaging_step.cancelled():
                 raise asyncio.CancelledError("Gradient averaging step was cancelled.")
-                
+
             else:
                 raise TimeoutError("Gradient averaging step timed out.")
-            
+
             return synapse
         except Exception as e:
             bt.logging.info(f"Gradient averaging step failed with error {e}")
             update_global_tracker_state(self)
-            load_state_from_peer(self, epoch= self.local_progress.epoch + 1)
+            load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
             synapse.completion = "False"
 
             return synapse
@@ -278,7 +302,7 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
-        
+
         total_loss = 0
         index = 0
         # Train data for one epoch
@@ -286,7 +310,9 @@ class Miner(BaseMinerNeuron):
             inputs = batch.to(self.device)
 
             # Zero Gradients
-            self.opt.zero_grad(set_to_none=True)  # Potential memory save setting to None
+            self.opt.zero_grad(
+                set_to_none=True
+            )  # Potential memory save setting to None
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=inputs)
@@ -313,7 +339,7 @@ class Miner(BaseMinerNeuron):
 
             # Log accumulation status
             bt.logging.info(
-                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}" # TODO Should this be self.global_progress instead?
+                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"  # TODO Should this be self.global_progress instead?
             )
 
             if not self.config.neuron.dont_wandb_log:
@@ -334,7 +360,7 @@ class Miner(BaseMinerNeuron):
             )
             for param in self.model.parameters()
         )
-        
+
         synapse.gradients = float(
             torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
         )

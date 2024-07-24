@@ -21,16 +21,18 @@ def get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (learning_rate - min_lr)
 
+
 def load_tokens(filename):
     npt = np.load(filename)
     ptt = torch.tensor(npt, dtype=torch.long)
     return ptt
 
+
 class DataLoaderLite:
     def __init__(self, B, T, split):
         self.B = B
         self.T = T
-        assert split in {'train', 'val'}
+        assert split in {"train", "val"}
 
         # get the shard filenames
         data_root = "edu_fineweb10B"
@@ -50,9 +52,9 @@ class DataLoaderLite:
 
     def next_batch(self):
         B, T = self.B, self.T
-        buf = self.tokens[self.current_position : self.current_position + B*T + 1]
-        x = (buf[:-1]).view(B, T) # inputs
-        y = (buf[1:]).view(B, T) # targets
+        buf = self.tokens[self.current_position : self.current_position + B * T + 1]
+        x = (buf[:-1]).view(B, T)  # inputs
+        y = (buf[1:]).view(B, T)  # targets
         # advance the position in the tensor
         self.current_position += B * T
         # if loading the next batch would be out of bounds, advance to next shard
@@ -62,17 +64,28 @@ class DataLoaderLite:
             self.current_position = 0
         return x, y
 
+
 # Function to run training with specified optimizer and learning rate
-def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288, num_epochs=1, warmup_proportion=0.1, min_lr=1e-6):
+def train_model(
+    optimizer_name,
+    learning_rate,
+    global_target_batch_size=524_288,
+    num_epochs=1,
+    warmup_proportion=0.1,
+    min_lr=1e-6,
+):
     # Initialize wandb with configuration details
-    wandb.init(project="optimizer_ablation_study", config={
-        "optimizer": optimizer_name,
-        "learning_rate": learning_rate,
-        "target_batch_size": global_target_batch_size,
-        "num_epochs": num_epochs,
-        "warmup_proportion": warmup_proportion,
-        "min_lr": min_lr
-    })
+    wandb.init(
+        project="optimizer_ablation_study",
+        config={
+            "optimizer": optimizer_name,
+            "learning_rate": learning_rate,
+            "target_batch_size": global_target_batch_size,
+            "num_epochs": num_epochs,
+            "warmup_proportion": warmup_proportion,
+            "min_lr": min_lr,
+        },
+    )
 
     config = wandb.config
 
@@ -88,7 +101,7 @@ def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288,
     else:
         raise ValueError("Unsupported optimizer")
 
-    BATCH_SIZE = 1    
+    BATCH_SIZE = 1
     SEQ_LENGTH = 1024
     grad_accum_steps = global_target_batch_size // (BATCH_SIZE * SEQ_LENGTH)
 
@@ -101,19 +114,18 @@ def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288,
     current_step = 0
     lr = get_lr(step, warmup_steps, lr_decay_iters, learning_rate, min_lr)
     for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-        
-    #train_loader = DataLoaderLite(B=B, T=T, process_rank=0, num_processes=1, split="train")
+        param_group["lr"] = lr
+
+    # train_loader = DataLoaderLite(B=B, T=T, process_rank=0, num_processes=1, split="train")
 
     for current_step in range(total_steps):
         dataloader = SubsetFalconLoader(
-        batch_size=BATCH_SIZE,
-        sequence_length=SEQ_LENGTH,
-        rows=random.choices(range(0, 519_000_000), k=1000),
+            batch_size=BATCH_SIZE,
+            sequence_length=SEQ_LENGTH,
+            rows=random.choices(range(0, 519_000_000), k=1000),
         )
 
         for i, batch in enumerate(dataloader):
-    
             inputs = batch.to("cuda")
 
             # Forward pass
@@ -127,34 +139,34 @@ def train_model(optimizer_name, learning_rate, global_target_batch_size=524_288,
             local_samples += BATCH_SIZE
             step += BATCH_SIZE
             current_step += BATCH_SIZE
-                
-            if current_step % grad_accum_steps == 0:
 
+            if current_step % grad_accum_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-                lr = get_lr(step, warmup_steps, 
-                            lr_decay_iters, learning_rate, min_lr)
+                lr = get_lr(step, warmup_steps, lr_decay_iters, learning_rate, min_lr)
                 for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
+                    param_group["lr"] = lr
 
                 optimizer.step()
                 optimizer.zero_grad()  # Reset gradients after each step
                 local_samples = 0
-        
+
         # TODO - implement on chain
         # tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
         # tokens_per_sec = tokens_processed / dt
 
         # Log metrics to wandb
-        wandb.log({
-            "loss": loss.item(),
-            "current step": current_step+1,
-            "batch": i+1,
-            "learning_rate": lr,
-            "optimizer": optimizer_name,
-            "learning_rate_config": learning_rate
-        })
-        
+        wandb.log(
+            {
+                "loss": loss.item(),
+                "current step": current_step + 1,
+                "batch": i + 1,
+                "learning_rate": lr,
+                "optimizer": optimizer_name,
+                "learning_rate_config": learning_rate,
+            }
+        )
+
     # Finish the wandb run
     wandb.finish()
 
@@ -169,4 +181,4 @@ learning_rates = [5e-3, 5e-2, 5e-4]
 # Run the grid search
 for optimizer_name in optimizers:
     for lr in learning_rates:
-        train_model(optimizer_name, lr, min_lr=lr*0.1)
+        train_model(optimizer_name, lr, min_lr=lr * 0.1)

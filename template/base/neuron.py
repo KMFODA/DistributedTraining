@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 import bittensor as bt
 
 from template import __spec_version__ as spec_version
+
 # Sync calls set weights and also resyncs the metagraph.
 from template.utils.config import add_args, check_config, config
 from template.utils.misc import load_wandb, ttl_get_block

@@ -42,6 +42,7 @@ from loguru import logger as bt_logger
 from template.protocol import Train
 from template.data.dataset import SubsetFalconLoader
 
+
 # LRU Cache with TTL
 def ttl_cache(maxsize: int = 128, typed: bool = False, ttl: int = -1):
     """
