@@ -99,7 +99,7 @@ async def forward(self):
             or any(
                 peer_id is None
                 for index, peer_id in zip(blacklist_scores, group_peerids.values())
-                if index != 0.0
+                if index != self.uid
             )
         ):
             group_peerids = await self.map_uid_to_peerid(self.miner_uids.tolist())
