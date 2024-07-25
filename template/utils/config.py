@@ -260,12 +260,6 @@ def add_args(cls, parser):
             help="The number of miners to query in a single step.",
             default=20,
         )
-        parser.add_argument(
-            "--neuron.sample_size_allreduce",
-            type=int,
-            help="The number of miners to query in a single step.",
-            default=2,
-        )
 
         parser.add_argument(
             "--neuron.disable_set_weights",

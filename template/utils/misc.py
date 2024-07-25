@@ -355,7 +355,7 @@ def warmup(self):
     self.local_epoch, self.local_samples = 0, 0
     # Load dataset
     self.dataset_loader = ()
-    dataset_length = 22_700_000_000
+    dataset_length = SubsetFalconLoader.max_pages
     self.dataset_indices = bitarray(dataset_length)
 
     search_start = random.choice(

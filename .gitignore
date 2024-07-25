@@ -161,7 +161,4 @@ cython_debug/
 bittensor-subnet-template/
 wandb/
 .vscode/
-scripts/*.png
-scripts/*.csv
-logs*.txt
-template/custom_proto/*.py
+template/proto/*.py

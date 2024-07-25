@@ -70,9 +70,6 @@ class BaseValidatorNeuron(BaseNeuron):
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
 
-        # TODO TEMP
-        self.config.neuron.disable_set_weights = True
-
     def serve_axon(self):
         """Serve axon to enable external connections."""
 

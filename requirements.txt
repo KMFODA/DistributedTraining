@@ -11,4 +11,3 @@ flake8==7.0.0
 black==23.7.0
 isort==5.13.2
 numpy==1.24.1
-schedulefree
