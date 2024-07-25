@@ -128,11 +128,17 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.lr",
+        "--neuron.learning_rate",
         type=float,
-        help="The learning rate",
-        # default=0.001
-        default=5 / ((2) * (10**3)),
+        help="The maximum learning rate",
+        default=5e-3,
+    )
+
+    parser.add_argument(
+        "--neuron.warmup_steps",
+        type=float,
+        help="The number of warmup steps",
+        default=12,
     )
 
     parser.add_argument(
@@ -181,21 +187,14 @@ def add_args(cls, parser):
         "--neuron.wandb_project",
         type=str,
         help="The wandb project to log to",
-        default="subnet_test",
+        default="distributed_training",
     )
 
     parser.add_argument(
         "--neuron.wandb_entity",
         type=str,
         help="The wandb project to log to",
-        default="kf_ps",
-    )
-
-    parser.add_argument(
-        "--dht.use_google_dns",
-        action="store_true",
-        help="If set, we use google dns to get public IP.",
-        default=False,
+        default="kmfoda",
     )
 
     parser.add_argument(

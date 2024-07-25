@@ -1,72 +1,30 @@
 import asyncio
-import base64
-import copy
 import logging
-import random
-import re
-import threading
-import time
 from contextlib import contextmanager
-from dataclasses import dataclass
 from enum import Enum
-from itertools import chain
-from typing import (
-    Any,
-    AsyncIterator,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
+                    Sequence, Union)
 
 import bittensor as bt
 import hivemind
-import hivemind.averaging
 import hivemind.averaging.averager
 import torch
-from hivemind.averaging.allreduce import (
-    AllreduceException,
-    AllReduceRunner,
-    AveragingMode,
-)
+from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
+                                          AveragingMode)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
+from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import deserialize_torch_tensor, serialize_torch_tensor
+from hivemind.compression import deserialize_torch_tensor
 from hivemind.dht import DHT
-from hivemind.optim.progress_tracker import LocalTrainingProgress
-from hivemind.p2p import (
-    P2PContext,
-    P2PDaemonError,
-    P2PHandlerError,
-    PeerID,
-    ServicerBase,
-)
+from hivemind.p2p import (P2PContext, P2PDaemonError, P2PHandlerError, PeerID,
+                          ServicerBase)
 from hivemind.proto import averaging_pb2
-from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.utils.asyncio import (
-    aenumerate,
-    aiter_with_timeout,
-    amap_in_executor,
-    as_aiter,
-    attach_event_on_finished,
-    azip,
-    enter_asynchronously,
-)
-from hivemind.utils.streaming import combine_from_streaming
-from hivemind.utils.timed_storage import (
-    DHTExpiration,
-    ValueWithExpiration,
-    get_dht_time,
-)
-
-# from template.utils.misc import update_global_tracker_state
-from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
-from pydantic import BaseModel, conint
-from transformers import AutoModelForCausalLM
+from hivemind.utils import MPFuture, get_logger
+from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
+                                    as_aiter, attach_event_on_finished, azip,
+                                    enter_asynchronously)
+from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
 from template.proto import custom_averaging_pb2
 
@@ -88,17 +46,6 @@ class AllReduceError(DTAveragerError):
     """Exception raised for errors in the AllReduce process"""
 
 
-@dataclass(frozen=False)
-class GlobalTrainingProgress:
-    epoch: int
-    samples_accumulated: int
-
-
-class LocalTrainingProgress(BaseModel):
-    epoch: conint(ge=0, strict=True)
-    samples_accumulated: conint(ge=0, strict=True)
-
-
 class BarrierState(Enum):
     IDLE = 0
     LOOKING_FOR_GROUP = 1
@@ -112,7 +59,7 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
 
     async def _communicate_with_peer(self, peer_id: PeerID):
-        bt.logging.info(f"WE ARE HERE NOW! {peer_id}")
+        bt.logging.info(f"Communicating with peer: {peer_id}")
         bt.logging.info(
             "DTAllReduceRunner sender + reducer timeout",
             self.sender_timeout,
@@ -121,7 +68,6 @@ class DTAllReduceRunner(AllReduceRunner):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
-            bt.logging.info("self.peer_id..")
             sender_index = self.sender_peer_ids.index(peer_id)
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
@@ -170,7 +116,6 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                    # bt.logging.info("amap_in_executor..")
                 bt.logging.info(f"register_processed_part done.. {peer_id}")
                 if (
                     part_index
@@ -192,6 +137,8 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
+                logger.info(f"Failed reducer {peer_index}")
+                bt.logging.info(f"Failed reducer {peer_index}")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
 
@@ -223,7 +170,6 @@ class DTAllReduceRunner(AllReduceRunner):
             #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
             # else:
             async for message in super().rpc_aggregate_part(stream, context):
-                # bt.logging.info("rpc_aggregate_part..")
                 yield message
 
         except Exception as e:
@@ -285,6 +231,8 @@ class DTAllReduceRunner(AllReduceRunner):
 
                 self.finalize()
 
+                bt.logging.info(f"Finalise done")
+
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()
                 self.finalize()
@@ -309,19 +257,27 @@ class DTAllReduceRunner(AllReduceRunner):
     async def _generate_input_for_peer(
         self, peer_index: int
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
-        first_part = await anext(parts_aiter)
-        yield averaging_pb2.AveragingData(
-            code=averaging_pb2.PART_FOR_AVERAGING,
-            group_id=self.group_id,
-            tensor_part=first_part,
-            weight=self.weight,
-        )
-        bt.logging.info(f"_generate_input_for_peer.. {peer_index} start")
-        async for part in parts_aiter:
-            # bt.logging.info("_generate_input_for_peer for loop")
-            yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
-        bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
+        try:
+            parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
+            first_part = await anext(parts_aiter)
+            yield averaging_pb2.AveragingData(
+                code=averaging_pb2.PART_FOR_AVERAGING,
+                group_id=self.group_id,
+                tensor_part=first_part,
+                weight=self.weight,
+            )
+            bt.logging.info(f"_generate_input_for_peer.. {peer_index} start")
+            async for part in parts_aiter:
+                # bt.logging.info("_generate_input_for_peer for loop")
+                yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
+            bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
+
+        except Exception as e:
+            logger.error(
+                f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}"
+            )
+
+            raise e
 
     async def _ban_sender(self, peer_id: PeerID):
         bt.logging.info("ban sender..")
@@ -331,7 +287,10 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.tensor_part_reducer.on_sender_failed(
                     self.sender_peer_ids.index(peer_id)
                 )
-                logger.error(f"Banning peer {peer_id} due to a failure.")
+                error_message = f"Banning peer {peer_id} due to a failure."
+                logger.error(error_message)
+
+                raise Exception(error_message)
 
 
 class DTAverager(hivemind.DecentralizedAverager):
@@ -399,8 +358,10 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
+
         bt.logging.info("DTAverager.. self.next_chunk_timeout", self.next_chunk_timeout)
         bt.logging.info("DTAverager.. timeout", timeout)
+
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
 
@@ -428,13 +389,106 @@ class DTAverager(hivemind.DecentralizedAverager):
             step.allow_allreduce()
 
         if wait:
-            bt.logging.info("wait step")
+            bt.logging.info("Wait Step")
             bt.logging.info(step.result())
         else:
-            bt.logging.info("non wait step")
+            bt.logging.info("Non Wait Step")
             bt.logging.info(step)
 
         return step.result() if wait else step
+
+    async def _step(self, *, step: StepControl, future_for_init: MPFuture):
+        try:
+            trigger, cancel = MPFuture(), MPFuture()
+            step.attach(trigger, cancel)
+            future_for_init.set_result((trigger, cancel))
+
+            async def find_peers_or_notify_cancel():
+                group_info = await self._matchmaking.look_for_group(step)
+                if not step.triggered:
+                    step.stage = AveragingStage.AWAITING_TRIGGER
+                    await step.wait_for_trigger()
+                return group_info
+
+            while not step.done():
+                try:
+                    self._pending_groups_registered.clear()
+                    step.stage = AveragingStage.LOOKING_FOR_GROUP
+                    matchmaking_task = asyncio.create_task(
+                        find_peers_or_notify_cancel()
+                    )
+                    check_cancel_task = asyncio.create_task(step.wait_for_cancel())
+
+                    await asyncio.wait(
+                        {matchmaking_task, check_cancel_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if step.cancelled():
+                        matchmaking_task.cancel()
+                        raise asyncio.CancelledError()
+                    else:
+                        check_cancel_task.cancel()
+
+                    group_info = await matchmaking_task
+
+                    if group_info is None:
+                        raise AllreduceException(
+                            "Averaging step failed: could not find a group"
+                        )
+
+                    with self._register_allreduce_group(group_info):
+                        step.stage = AveragingStage.RUNNING_ALLREDUCE
+
+                        step.set_result(
+                            await asyncio.wait_for(
+                                self._aggregate_with_group(
+                                    group_info,
+                                    tensor_infos=self.tensor_infos,
+                                    weight=step.weight,
+                                    **self.allreduce_kwargs,
+                                ),
+                                timeout=self._allreduce_timeout,
+                            )
+                        )
+                        # averaging is finished, loop will now exit
+
+                except (
+                    AllreduceException,
+                    MatchmakingException,
+                    AssertionError,
+                    StopAsyncIteration,
+                    asyncio.CancelledError,
+                    asyncio.InvalidStateError,
+                    P2PHandlerError,
+                    P2PDaemonError,
+                ) as e:
+                    if (
+                        step.done()
+                        or not step.allow_retries
+                        or get_dht_time() >= step.deadline
+                    ):
+                        if not step.cancelled():
+                            logger.exception(e)
+                        if not step.done():
+                            step.set_exception(e)
+                    else:
+                        logger.warning(
+                            f"{self.__class__.__name__} caught {repr(e)}, retrying"
+                        )
+
+        except BaseException as e:
+            if not step.done():
+                step.set_exception(e)
+            raise
+        finally:
+            step.stage = AveragingStage.FINISHED
+            if not step.done():
+                step.set_exception(
+                    RuntimeError(
+                        "Internal sanity check failed: averager.step left future pending."
+                        " Please report this to hivemind issues."
+                    )
+                )
 
     async def _step_custom(
         self,
@@ -866,6 +920,11 @@ class DTGradientAverager(DTAverager):
             **kwargs,
         )
 
+    """
+    Needs this wrapper class to ensure device is set properly when averaging gradients
+    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
+    """
+
     @contextmanager
     @torch.no_grad()
     def use_averaged_gradients(self):
@@ -927,6 +986,15 @@ class DTGradientAverager(DTAverager):
     def schedule_step(
         self, scheduled_time: Optional[DHTExpiration] = None, **kwargs
     ) -> StepControl:
+        """
+        Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
+
+        :param scheduled_time: expected time when to perform all-reduce. Can be changed using control.scheduled_time
+        :param kwargs: any additional keyword args from DecentralizedAverager.step, such as gather, allow_retries, etc
+        :note: setting weight at this stage is not supported, please leave this parameter as None
+        :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
+        :note: in the current implementation, each step_control can only be used in one step.
+        """
         assert (
             kwargs.get("weight") is None
         ), "setting weight in schedule_step is not supported"
@@ -1005,290 +1073,3 @@ class DTGradientAverager(DTAverager):
     def notify_used_averaged_gradients(self):
         """Notify averager that the results of a previous averaging round are accounted for"""
         self._new_averaged_grads = False
-
-
-class DTStateAverager(hivemind.optim.state_averager.TrainingStateAverager):
-    def load_state_from_peers_with_latest_state(
-        self, global_epoch, wait: bool = True, timeout: Optional[float] = None
-    ) -> Optional[Tuple[Any, Sequence[torch.Tensor]]]:
-        """
-        Try to download the latest optimizer state one of the existing peer.
-        :returns: on success, return a 2-tuple with (metadata, tensors), where
-
-        - metadata is a small object containing metadata (e.g. hyperparameters, scalars, etc)
-        - tensors is a sequence of pytorch tensors meant to contain peer's model weights and optimizer statistics
-
-        The exact contents of both metadata and tensors are determined by get_current_state method
-        """
-        future = MPFuture()
-        self._outer_pipe.send(
-            (
-                "_load_state_from_peers_with_latest_state",
-                [],
-                dict(timeout=timeout, global_epoch=global_epoch, future=future),
-            )
-        )
-        return future.result(timeout=timeout) if wait else future
-
-    async def _load_state_from_peers_with_latest_state(
-        self, global_epoch, future: MPFuture, timeout: Optional[float] = None
-    ):
-        bt.logging.info(f"Timeout = {timeout}")
-        if timeout is not None:
-            timeout = (
-                self.next_chunk_timeout
-                if self.next_chunk_timeout is not None
-                else self.request_timeout
-            )
-        try:
-            # Extract training progress metadata
-            training_progress_metadata, _ = self.dht.get(
-                f"{re.sub('_state_averager', '_progress', self.prefix)}", latest=True
-            ) or (None, -float("inf"))
-
-            # Get only peers where local_epoch == global_epoch
-            if training_progress_metadata is None:
-                logger.info(f"Averager could not load metadata from the tracker")
-                future.set_result(None)
-                return
-            else:
-                valid_peer_entries = [
-                    PeerID(LocalTrainingProgress.parse_obj(peer_state.value).peer_id)
-                    for peer_state in training_progress_metadata.values()
-                    if (peer_state.value is not None)
-                    and (
-                        LocalTrainingProgress.parse_obj(peer_state.value).epoch
-                        == global_epoch
-                    )
-                ]
-
-            key_manager = self._matchmaking.group_key_manager
-            # prefix = self.state_averager.matchmaking_kwargs['prefix']
-            peer_priority, _ = self.dht.get(
-                f"{key_manager.prefix}.all_averagers", latest=True
-            ) or ({}, None)
-            peer_priority = {
-                PeerID(peer_id): (
-                    float(info.value),
-                    random.random(),
-                )  # using randomness as a tie breaker
-                for peer_id, info in peer_priority.items()
-                if isinstance(info, ValueWithExpiration)
-                and isinstance(info.value, (float, int))
-                and (PeerID(peer_id) in valid_peer_entries)
-            }
-
-            if not isinstance(peer_priority, dict) or len(peer_priority) == 0:
-                logger.info(
-                    f"Averager could not load state from peers: peer dict empty or corrupted {peer_priority}"
-                )
-                future.set_result(None)
-                return
-
-            metadata = None
-            for peer in sorted(
-                peer_priority.keys(), key=peer_priority.get, reverse=True
-            ):
-                if peer != self.peer_id:
-                    logger.info(f"Downloading parameters from peer {peer}")
-                    try:
-                        stub = self.get_stub(
-                            self._p2p, peer, namespace=key_manager.prefix
-                        )
-                        stream = await stub.rpc_download_state(
-                            averaging_pb2.DownloadRequest()
-                        )
-                        current_tensor_parts, tensors = [], []
-
-                        # TODO merge this with hivemind.compression.deserialize_tensor_stream
-                        async for message in aiter_with_timeout(
-                            stream, timeout=timeout
-                        ):
-                            if message.metadata:
-                                metadata = self.serializer.loads(message.metadata)
-                            if message.tensor_part.dtype and current_tensor_parts:
-                                # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
-                                tensors.append(
-                                    deserialize_torch_tensor(
-                                        combine_from_streaming(current_tensor_parts)
-                                    )
-                                )
-                                current_tensor_parts = []
-                            current_tensor_parts.append(message.tensor_part)
-                        if current_tensor_parts:
-                            tensors.append(
-                                deserialize_torch_tensor(
-                                    combine_from_streaming(current_tensor_parts)
-                                )
-                            )
-
-                        if not metadata:
-                            logger.debug(f"Peer {peer} did not send its state")
-                            continue
-
-                        logger.info(f"Finished downloading state from {peer}")
-                        future.set_result((metadata, tensors))
-                        return
-                    except Exception as e:
-                        logger.exception(
-                            f"Failed to download state from {peer} - {repr(e)}"
-                        )
-
-        finally:
-            if not future.done():
-                future.set_result(None)
-
-    def load_final_state_from_peers(self, global_epoch, **kwargs):
-        """
-        Attempt to download the latest optimizer state from peers and update trainer parameters/statistics.
-        :returns: whether or the averager succeeded in loading parameters
-        """
-        opt_parameters = tuple(
-            param
-            for param_group in self.optimizer.param_groups
-            for param in param_group["params"]
-        )
-        main_parameters_and_extras = tuple(chain(opt_parameters, self.extra_tensors))
-        num_parameters_and_extras = len(main_parameters_and_extras)
-
-        loaded_state = self.load_state_from_peers_with_latest_state(
-            global_epoch, **kwargs
-        )
-        if loaded_state is None:
-            return False
-
-        metadata, flat_tensors = loaded_state
-        if (not isinstance(metadata.get("epoch"), int)) or metadata[
-            "epoch"
-        ] < self.local_epoch:
-            logger.warning(
-                "Cowardly refusing to load state from peer: peer's epoch is behind our local epoch"
-            )
-            return False
-
-        loaded_parameters_and_extras = flat_tensors[:num_parameters_and_extras]
-        loaded_opt_tensors = flat_tensors[num_parameters_and_extras:]
-        if num_parameters_and_extras != len(loaded_parameters_and_extras):
-            logger.error(
-                "Failed to load state from peer, received parameters, extras or metadata"
-            )
-            return False
-
-        with torch.no_grad(), self.lock_averaged_tensors:
-            try:
-                load_optimizer_state(
-                    self.optimizer, metadata["optimizer_metadata"], loaded_opt_tensors
-                )
-            except StopIteration:
-                logger.warning(
-                    "Failed to load state from peer, received inconsistent number of optimizer statistics"
-                )
-                return False
-
-            for local_param, loaded_param in zip(
-                main_parameters_and_extras, loaded_parameters_and_extras
-            ):
-                local_param.copy_(loaded_param, non_blocking=True)
-
-        if self.offload_optimizer:
-            self._apply_optimizer_parameters_()
-        if not self.reuse_tensors:
-            self._load_local_tensors_into_averager_()
-
-        self.local_epoch = metadata["epoch"]
-        self._update_scheduler()
-        return True
-
-
-def load_optimizer_state(
-    optimizer: torch.optim.Optimizer,
-    flat_metadata: Dict,
-    flat_tensors: Sequence[torch.Tensor],
-):
-    """Load a state obtained by dump_optimizer_state back into the optimizer"""
-    flat_optimizer_state = []
-    for elem in flat_metadata:
-        if elem.get("type") == "tensor" and isinstance(elem.get("index"), int):
-            flat_optimizer_state.append(flat_tensors[elem["index"]])
-        elif elem.get("type") == "value" and "value" in elem:
-            flat_optimizer_state.append(elem["value"])
-    return optimizer.load_state_dict(
-        nested_pack(flat_optimizer_state, structure=optimizer.state_dict())
-    )
-
-
-def load_state_from_peer(self, epoch=None):
-    if epoch == None:
-        update_global_tracker_state(self)
-        epoch = self.global_progress.epoch
-    loaded_state = False
-
-    bt.logging.info("Model Weights Before Loading State")
-    current_model_weights_sample = copy.copy(
-        [layer for layer in self.model.parameters()][-1][-10:].tolist()
-    )
-    bt.logging.info(current_model_weights_sample)
-
-    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-    tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-    bt.logging.info(f"Old Model Tag {self.model_hf_tag}")
-    if tag_name and (tag_name >= epoch):
-        bt.logging.info(
-            f"Latest model state found on HF Hub with tag epoch = {tag_name}. Loading state using HF."
-        )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name,
-            revision=str(tag_name),
-        )
-        self.model.to(self.device)
-        loaded_state = True
-
-        # Delete one model from the chace to maintain disk space
-        try:
-            for repo in scan_cache_dir().repos:
-                if repo == self.config.neuron.model_name:
-                    for r in repo.revisions:
-                        scan_cache_dir().delete_revisions(r.commit_hash).execute()
-                        break
-                else:
-                    continue
-        except:
-            bt.logging.warning(
-                "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
-            )
-    else:
-        try:
-            loaded_state = self.state_averager.load_final_state_from_peers(epoch)
-        except:
-            bt.logging.warning(
-                "Failed to load latest state using DHT. Local model is most likely out of sync with global model"
-            )
-
-    if loaded_state:
-        bt.logging.info("Model Weights After Loading State")
-        new_model_weights_sample = copy.copy(
-            [layer for layer in self.model.parameters()][-1][-10:].tolist()
-        )
-        bt.logging.info(new_model_weights_sample)
-        self.local_epoch = self.local_progress.epoch
-        self.local_progress.epoch = self.global_progress.epoch
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        tag_name = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        bt.logging.info(f"New Model Tag {tag_name}")
-        if tag_name and (tag_name < self.global_progress.epoch):
-            bt.logging.info("Pushing New Model Weights To HF Hub")
-            self.model.push_to_hub(self.config.neuron.model_name)
-            create_tag(
-                self.config.neuron.model_name,
-                repo_type="model",
-                tag=str(self.local_progress.epoch),
-                tag_message="Bump release version.",
-            )
-            refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            tag_name = (
-                max([int(tag.name) for tag in refs.tags])
-                if refs.tags
-                else self.model_hf_tag
-            )
-            self.model_hf_tag = tag_name
-            bt.logging.info(f"New Model Tag {tag_name}")

@@ -19,20 +19,16 @@
 
 import asyncio
 import datetime as dt
-import threading
+import math
 import time
 import traceback
 from typing import Optional
-
 
 import bittensor as bt
 import hivemind
 import torch
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
-from hivemind.optim.progress_tracker import ProgressTracker
-from hivemind.optim.state_averager import TrainingStateAverager
-from template.data.dataset import SubsetFalconLoader
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
@@ -40,24 +36,19 @@ from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import list_repo_refs
+from torch_optimizer import Lamb
 from transformers import AutoModelForCausalLM
 
+from template import __spec_version__, __version__
 from template.base.validator import BaseValidatorNeuron
-from template.utils.hivemind import (
-    DTGradientAverager,
-    DTStateAverager,
-    load_state_from_peer,
-    GlobalTrainingProgress,
-    LocalTrainingProgress,
-)
-from template.utils.misc import (
-    AsyncDendritePool,
-    init_dht,
-    load_wandb,
-    setup_logging,
-    warmup,
-    update_global_tracker_state,
-)
+from template.data.dataset import SubsetFalconLoader
+from template.utils.gradient_averager import DTGradientAverager
+from template.utils.misc import (AsyncDendritePool, init_dht, load_wandb,
+                                 setup_logging, warmup)
+from template.utils.progress_tracker import (GlobalTrainingProgress,
+                                             LocalTrainingProgress,
+                                             update_global_tracker_state)
+from template.utils.state_loader import DTStateAverager, load_state_from_peer
 from template.validator import forward
 
 logger = get_logger(__name__)
@@ -66,6 +57,22 @@ logger = get_logger(__name__)
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
+
+        # Init Logging
+        setup_logging(
+            network=self.config.subtensor.network,
+            netuid=self.config.netuid,
+            hotkey=self.wallet.hotkey.ss58_address,
+            version=__version__,
+            spec_version=__spec_version__,
+            run_id=None,
+            ip=self.config.axon.ip
+            if self.config.axon.ip != "[::]"
+            else bt.utils.networking.get_external_ip(),
+            port=self.config.axon.port,
+            uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
+            neuron_type="validator",
+        )
 
         bt.logging.info("load_state()")
         self.load_state()
@@ -78,17 +85,17 @@ class Validator(BaseValidatorNeuron):
         # Init DHT
         init_dht(self)
 
-        # Init Tracker
-        self.tracker = ProgressTracker(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}",
-            target_batch_size=self.config.neuron.global_batch_size_train,
-            start=True,
+        # Init Local & Global Progress
+        self.local_progress = LocalTrainingProgress(
+            peer_id=self.dht.peer_id.to_bytes(),
+            epoch=0,
+            samples_accumulated=0,
+            samples_per_second=0.0,
+            time=0.0,
+            client_mode=False,
         )
-
-        bt.logging.info(
-            f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }"
-        )
+        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
+        update_global_tracker_state(self)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -100,19 +107,21 @@ class Validator(BaseValidatorNeuron):
         dataset_length = SubsetFalconLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
-        # Init Device, Model & Tokenizer
+        # Init Device & Model
         self.device = self.config.neuron.device
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        self.model_hf_tag = (
-            max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-        )
+        if self.global_progress.epoch is None:
+            bt.logging.error(
+                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.model_hf_tag)
+                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
             )
-            if self.model_hf_tag
+            if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
         )
+
+        # Move the model to the appropriate device
         self.model.to(self.device)
 
         # For simplicity only pick layers with a dim of 1
@@ -126,7 +135,7 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.config.neuron.lr)
+        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -134,32 +143,10 @@ class Validator(BaseValidatorNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            # reuse_grad_buffers=True,
             accumulate_grads_on=torch.device("cuda"),
             start=True,
             next_chunk_timeout=30.0,  # TODO Might be cause of timeouterror
         )
-
-        # Init State Averager
-        self.state_averager = DTStateAverager(
-            optimizer=self.opt,
-            initialize_optimizer=False,
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
-            next_chunk_timeout=30.0,
-        )
-
-        self.step_scheduled = False
-        self.local_progress = LocalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.local_progress.epoch, self.local_progress.samples_accumulated = (
-            self.model_hf_tag if self.model_hf_tag is not None else 0,
-            0,
-        )
-        self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch, self.global_progress.samples_accumulated = 0, 0
-        update_global_tracker_state(self)
 
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
@@ -185,24 +172,16 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
 
+        # Init All Reduce Variables
         self.all_reduce_timeout = 300
-        # self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
-        # self.stop_event = threading.Event()
-        # self.update_thread = threading.Thread(target=self.map_uids_to_peerids, daemon=True)
-        # self.update_thread.start()
+        self.step_scheduled = False
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+        self.maximum_steps = 306 * 4
 
-        # Warmup DHT
-        if self.tracker.global_progress.num_peers == 0:
-            bt.logging.info(
-                f"Number of connected peers after initialising the DHT is {self.tracker.global_progress.num_peers }. Initialising a warmup cycle."
-            )
-            self.warmup()
-
-        # Load State From Peer If Out Of Sync
-        # if (
-        #     self.tracker.local_progress.epoch < self.tracker.global_progress.epoch
-        # ) and (self.model_hf_tag < self.tracker.global_progress.epoch):
-        #     load_state_from_peer(self, epoch=self.tracker.global_progress.epoch)
+        # Load state from peers if validator is not on latest global epoch
+        if self.local_progress.epoch < self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
@@ -272,6 +251,29 @@ class Validator(BaseValidatorNeuron):
                 )
 
         bt.logging.info("Exiting update models loop.")
+
+    def get_learning_rate(self):
+        learning_rate_minimum = self.config.neuron.learning_rate * 0.1
+        # 1) linear warmup for warmup_steps
+        if self.global_progress.epoch < self.config.neuron.warmup_steps:
+            return (
+                self.config.neuron.learning_rate
+                * (self.global_progress.epoch + 1)
+                / self.config.neuron.warmup_steps
+            )
+        # 2) if epoch > lr_decay_iters, return learning_rate_minimum
+        if self.global_progress.epoch > self.maximum_steps:
+            return learning_rate_minimum
+        # 3) if in between, use cosine decay down to min learning rate
+        decay_ratio = (self.global_progress.epoch - self.config.neuron.warmup_steps) / (
+            self.maximum_steps - self.config.neuron.warmup_steps
+        )
+        assert 0 <= decay_ratio <= 1
+        # coeff starts at 1 and goes to 0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return (learning_rate_minimum + coeff) * (
+            self.config.neuron.learning_rate - learning_rate_minimum
+        )
 
     def get_validator_info(self):
         return {
@@ -376,7 +378,6 @@ class Validator(BaseValidatorNeuron):
                 return
 
             logger.info(f"Finished downloading state from {peer}")
-            # future.set_result((metadata, tensors))
             return metadata, tensors
         except Exception as e:
             logger.exception(f"Failed to download state from {peer} - {repr(e)}")
@@ -391,9 +392,8 @@ class Validator(BaseValidatorNeuron):
         warmup(self)
 
 
-# # The main function parses the configuration and runs the validator.
+# The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
-    setup_logging()
     with Validator() as validator:
         while True:
             time.sleep(5)

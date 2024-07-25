@@ -17,30 +17,36 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import json
 import logging
+import os
 import random
 import re
+import shutil
 import time
-from datetime import datetime
 from functools import lru_cache, update_wrapper
 from ipaddress import ip_address
+from logging.handlers import QueueHandler, QueueListener
 from math import floor
+from multiprocessing import Queue
 from typing import Any, Callable, List
 
 import bittensor as bt
 import hivemind
-import pandas as pd
-import requests
+import logging_loki
 import speedtest
-import torch
-import wandb
 from bitarray import bitarray
+from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
+from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
-from template.protocol import Train
+import wandb
 from template.data.dataset import SubsetFalconLoader
+from template.protocol import Train
+
+load_dotenv()
 
 
 # LRU Cache with TTL
@@ -154,10 +160,7 @@ class AsyncDendritePool:
 
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-    # signature = wallet.hotkey.sign(config.neuron.run_id).hex() #Extra for verification if needed
-    run_name = (
-        f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"  # + signature
-    )
+    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"
     wandb_run = wandb.init(
         id=run_name,
         name=run_name,
@@ -192,19 +195,193 @@ class BittensorLogHandler(logging.Handler):
             bt_logger.trace(log_entry)
 
 
+class IpFilter(logging.Filter):
+    """
+    This is a filter which injects contextual information into the log.
+    """
+
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+
+    def filter(self, record):
+        record.host = f"{self.ip}:{self.port}"
+        return True
+
+
+class JSONFormatter(logging.Formatter):
+    def __init__(
+        self,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    ):
+        self.network = network
+        self.netuid = netuid
+        self.hotkey = hotkey
+        self.version = version
+        self.spec_version = spec_version
+        self.run_id = run_id
+        self.ip = ip
+        self.port = port
+        self.uid = uid
+        self.neuron_type = neuron_type
+
+    def format(self, record):
+        try:
+            # TODO Cleanup
+            # Extract real message from the noisy msg line emitted by bittensor
+            msg = "".join(record.getMessage().split(" - ")[1:])
+        except Exception:
+            msg = record.getMessage()
+
+        log_record = {
+            "level": record.levelname.lower(),
+            "module": record.module,
+            "func_name": record.funcName,
+            "thread": record.threadName,
+            "netuid": self.netuid,
+            "network": self.network,
+            "neuron_type": self.neuron_type,
+            "hotkey": self.hotkey,
+            "uid": self.uid,
+            "ip": self.ip,
+            "port": self.port,
+            "message": msg,
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "version": self.version,
+            "spec_version": self.spec_version,
+        }
+        return json.dumps(log_record)
+
+
+class LogHandler(logging_loki.LokiHandler):
+    def handleError(self, record):
+        self.emitter.close()
+        # When Loki endpoint gives error for some reason,
+        # parent .handleError starts spamming error trace for each failure
+        # so we are disabling this default behaviour
+        # super().handleError(record)
+
+
+class CustomLokiLoggingHandler(QueueHandler):
+    def __init__(self, queue: Queue, **kwargs):
+        super().__init__(queue)
+        self.handler = LogHandler(**kwargs)  # noqa: WPS110
+        self.listener = QueueListener(self.queue, self.handler)
+        self.listener.start()
+
+
+class LogHandler(logging_loki.LokiHandler):
+    def handleError(self, record):
+        self.emitter.close()
+        # When Loki endpoints gives error for unexplained reasons,
+        # parent .handleError starts spamming error trace for each failure
+        # so we are disabling this default behaviour for now
+        # super().handleError(record)
+
+
 def logging_filter(record):
-    if record.name != "hivemind.dht.protocol":
+    if (record.name != "hivemind.dht.protocol") and (
+        record.name != "hivemind.optim.progress_tracker"
+    ):
         return True
     else:
         return False
 
 
-def setup_logging(level=logging.INFO):
+def add_loki_logger_handler(
+    logger,
+    network,
+    netuid,
+    hotkey,
+    version,
+    spec_version,
+    run_id,
+    ip,
+    port,
+    uid,
+    neuron_type,
+):
+    """Configure sending logs to loki server"""
+
+    # Use LokiQueueHandler to upload logs in background
+    loki_handler = CustomLokiLoggingHandler(
+        Queue(-1),
+        url="https://logs-prod-006.grafana.net/loki/api/v1/push",
+        tags={"application": "distributed_training"},
+        auth=(
+            "944477",
+            os.environ["LOKI_KEY"],
+        ),
+        version="1",
+    )
+
+    # Send logs to loki as JSON
+    loki_handler.setFormatter(
+        JSONFormatter(
+            network,
+            netuid,
+            hotkey,
+            version,
+            spec_version,
+            run_id,
+            ip,
+            port,
+            uid,
+            neuron_type,
+        )
+    )
+
+    logger.addHandler(loki_handler)
+
+
+def setup_logging(
+    network,
+    netuid,
+    hotkey,
+    version,
+    spec_version,
+    run_id,
+    uid,
+    neuron_type,
+    level=logging.INFO,
+    ip=None,
+    port=None,
+    local_logfile="/root/logs_mylogfile.txt",
+):
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
+    logtail_handler = LogtailHandler(source_token=os.getenv("LOGTAIL_KEY"))
+    formatter = logging.Formatter("%(host)s%(message)s")
+    logtail_handler.setFormatter(formatter)
+    logtail_handler.addFilter(IpFilter(ip=ip, port=port))
+
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
+    bt_logger_.addHandler(logtail_handler)
+    add_loki_logger_handler(
+        bt_logger_,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    )
 
     use_hivemind_log_handler("nowhere")
 
@@ -217,11 +394,29 @@ def setup_logging(level=logging.INFO):
     formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
+    root_logger.addHandler(logtail_handler)
+
+    add_loki_logger_handler(
+        root_logger,
+        network,
+        netuid,
+        hotkey,
+        version,
+        spec_version,
+        run_id,
+        ip,
+        port,
+        uid,
+        neuron_type,
+    )
 
     # Create a file handler that logs debug and higher level messages
-    hivemind_log_file = (
-        f"/root/logs_{datetime.now().strftime('mylogfile_%d_%m_%Y_%H_%M')}.txt"
-    )
+    if os.path.exists(local_logfile):
+        # Archive any existing logfile
+        shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
+        os.remove(local_logfile)
+
+    hivemind_log_file = f"/root/logs_mylogfile.txt"
     hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
@@ -232,6 +427,7 @@ def setup_logging(level=logging.INFO):
     file_handler.setFormatter(formatter)
     file_handler.addFilter(logging_filter)
     hivemind_logger.addHandler(file_handler)
+    # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (
         False  # Stop hivemind logs from propagating to the root logger
     )
@@ -257,17 +453,14 @@ def get_bandwidth():
 
 def init_dht(self):
     # Init DHT and model
-    if self.config.dht.use_google_dns:
-        request = requests.get("https://api.ipify.org")
-        request.raise_for_status()
-
-        address = request.text
-        bt.logging.info(f"Received public IP address of this machine: {address}")
-        version = ip_address(address).version
+    if self.config.dht.ip:
+        version = "4"
+        address = self.config.dht.ip
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
     else:
-        version = "4"
-        address = self.config.dht.announce_ip
+        address = bt.utils.networking.get_external_ip()
+        bt.logging.info(f"Received public IP address of this machine: {address}")
+        version = ip_address(address).version
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
 
     # Init list of available DHT addresses from wandb
@@ -352,7 +545,6 @@ def warmup(self):
         template.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
 
-    self.local_epoch, self.local_samples = 0, 0
     # Load dataset
     self.dataset_loader = ()
     dataset_length = SubsetFalconLoader.max_pages
@@ -416,79 +608,15 @@ def warmup(self):
 
         # Update Tracker
         self.local_progress.samples_accumulated += 1
-        self.tracker.report_local_progress(self.local_epoch, self.local_samples)
 
         # Log accumulation status
-        bt.logging.info(
-            f"Index: {index} | Loss: {outputs.loss.detach().item():.2f} | Number of Peers: {self.tracker.global_progress.num_peers}"
-        )
+        bt.logging.info(f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}")
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(
                 {
                     "loss": outputs.loss.detach().item(),
-                    "local_epoch": self.local_epoch,
-                    "global_epoch": self.tracker.global_progress.epoch,
+                    "local_epoch": self.local_progress.local_epoch,
+                    "global_epoch": self.global_progress.epoch,
                 }
             )
-
-
-def update_global_tracker_state(self):
-    runs = wandb.Api().runs(
-        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-    )
-    global_progress = 0
-    global_epoch = 0
-
-    for run in runs:
-        if (
-            ("validator" in run.name)
-            and (run.state == "running")
-            and (f"UID{self.uid}" not in run.name.split("_"))
-        ):
-            history = run.history()
-            if (
-                ("local_samples_accumulated" in history.columns)
-                and ("global_samples_accumulated" in history.columns)
-                and (
-                    not history.loc[
-                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
-                    ].empty
-                )
-            ):
-                max_epoch = max(
-                    history.loc[
-                        pd.isna(history.loc[:, "local_epoch"]) == False, "local_epoch"
-                    ]
-                )
-                filtered_history = history.loc[
-                    (history.loc[:, "local_epoch"] == max_epoch), :
-                ]
-                filtered_history = filtered_history.loc[
-                    (pd.isna(history.loc[:, "local_samples_accumulated"]) == False), :
-                ]
-                if max_epoch > global_epoch:
-                    global_epoch = max(global_epoch, max_epoch)
-                    global_progress = 0
-                elif max_epoch < global_epoch:
-                    continue
-
-                global_progress += max(
-                    filtered_history.loc[:, "local_samples_accumulated"]
-                )
-
-        else:
-            continue
-
-    # Add local samples
-    global_progress += self.local_progress.samples_accumulated
-    global_epoch = max(global_epoch, self.local_progress.epoch)
-
-    self.global_progress.samples_accumulated = global_progress
-    self.global_progress.epoch = global_epoch
-    bt.logging.info(
-        f"Local samples: {self.local_progress.samples_accumulated} | Local epoch: {self.local_progress.epoch}"
-    )
-    bt.logging.info(
-        f"Global samples: {self.global_progress.samples_accumulated} | Global epoch: {self.global_progress.epoch}"
-    )
