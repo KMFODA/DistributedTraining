@@ -166,7 +166,8 @@ class Miner(BaseMinerNeuron):
         try:
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(
-                custom_group_info=custom_group, timeout=(synapse.timeout - 20)
+                custom_group_info=custom_group,
+                timeout=(synapse.timeout - 20),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
@@ -319,6 +320,15 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             scaled_loss.backward()
 
+            # Copy gradients
+            gradients = tuple(
+                (
+                    param.grad.detach().cpu().clone()
+                    if param.grad is not None
+                    else torch.zeros_like(param)
+                )
+                for param in self.model.parameters()
+            )
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
