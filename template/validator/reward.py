@@ -25,6 +25,7 @@ import bittensor as bt
 import torch
 
 from template.data.dataset import SubsetFalconLoader
+from template.utils.uids import get_random_uids
 
 
 def score_gradients(self, response, uid):
@@ -202,7 +203,7 @@ async def get_rewards(
             if (response.dendrite.status_code == 200)
             and (response.gradients is not None)
         ]
-        != []
+        == []
     ):
         scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
 

@@ -36,15 +36,17 @@ from transformers import AutoModelForCausalLM
 # Bittensor Miner Template:
 import template
 from template import __spec_version__, __version__
+
 # import base miner class which takes care of most of the boilerplate
 from template.base.miner import BaseMinerNeuron
 from template.data.dataset import SubsetFalconLoader
 from template.utils.gradient_averager import DTGradientAverager
-from template.utils.misc import (get_bandwidth, init_dht, load_wandb,
-                                 setup_logging)
-from template.utils.progress_tracker import (GlobalTrainingProgress,
-                                             LocalTrainingProgress,
-                                             update_global_tracker_state)
+from template.utils.misc import get_bandwidth, init_dht, load_wandb, setup_logging
+from template.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
 from template.utils.state_loader import DTStateAverager, load_state_from_peer
 
 

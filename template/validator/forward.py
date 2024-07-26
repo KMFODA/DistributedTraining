@@ -96,36 +96,31 @@ async def forward(self):
         if all_reduce:
             group_peerids = None
             blacklist_scores = None
+            new_group_peerids = {}
+            new_miner_uids = []
 
             # Map UIDs to PeerIds
             while (
                 (group_peerids is None)
                 or (blacklist_scores is None)
+                or (blacklist_scores.sum().item() == 0)
                 or any(
-                    peer_id is None
-                    for index, peer_id in zip(blacklist_scores, group_peerids.values())
-                    if index != self.uid
+                    scores_ids_tuple[1] is None
+                    for index, scores_ids_tuple in enumerate(
+                        zip(blacklist_scores, group_peerids.values())
+                    )
+                    if (index != self.uid) and (scores_ids_tuple[0] != 0)
                 )
             ):
                 group_peerids = await self.map_uid_to_peerid(self.miner_uids.tolist())
                 blacklist_scores = await score_blacklist(self, group_peerids.keys())
+                bt.logging.info(f"group_peerids: {group_peerids}")
+                bt.logging.info(f"blacklist_scores: {blacklist_scores}")
 
-            # Filter any UIDs not connected to the DHT
-            new_group_peerids = {}
-            new_miner_uids = []
-            for i, key in enumerate(group_peerids.keys()):
-                if blacklist_scores[i] == 0.0:
-                    continue
-                else:
-                    new_group_peerids[key] = group_peerids[key]
-                    new_miner_uids.append(key)
-
-            group_peerids = new_group_peerids
-            self.miner_uids = torch.tensor(new_miner_uids).to(self.device)
             group_id = DHTID.generate().to_bytes()
 
             bt.logging.info("DHT ID:", self.dht.peer_id)
-            bt.logging.info("Peer ID:", list(group_peerids.values()))
+            bt.logging.info("Group Peer IDs:", list(group_peerids.values()))
 
             ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values())
 
@@ -134,13 +129,6 @@ async def forward(self):
                 peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
                 group_id=base64.b64encode(group_id),
             )
-
-            queries = [
-                template.protocol.AllReduce(
-                    group=group, timeout=self.all_reduce_timeout
-                )
-                for _ in self.miner_uids
-            ]
 
             # Define a custom group for all-reduce
             custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
@@ -153,7 +141,11 @@ async def forward(self):
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
             queries = [
-                template.protocol.AllReduce(learning_rate=learning_rate)
+                template.protocol.AllReduce(
+                    group=group,
+                    timeout=self.all_reduce_timeout,
+                    learning_rate=learning_rate,
+                )
                 for _ in self.miner_uids
             ]
         # Train synapse
@@ -180,7 +172,8 @@ async def forward(self):
         bt.logging.info("Query Responses Received")
 
         # Process the AllReduce query responses
-        if all_reduce and responses != [[]]:
+        # if all_reduce and responses != [[]]:
+        if all_reduce:
             failed_gradient_all_reduce = False
             # Wait for gradient averaging to finish
             while (gradient_averaging_step.done() is False) and (
@@ -340,10 +333,9 @@ async def forward(self):
             ).mean()
             bt.logging.info(f"Current Average Miner Loss: {average_loss}")
 
-    if rewards is None:
-        return responses
-
-    rewards = await get_rewards(self, uids=self.miner_uids, responses=responses)
+    rewards = await get_rewards(
+        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce
+    )
 
     # Normalise Rewards
     if rewards.sum() != 0:

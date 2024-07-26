@@ -43,11 +43,18 @@ from template import __spec_version__, __version__
 from template.base.validator import BaseValidatorNeuron
 from template.data.dataset import SubsetFalconLoader
 from template.utils.gradient_averager import DTGradientAverager
-from template.utils.misc import (AsyncDendritePool, init_dht, load_wandb,
-                                 setup_logging, warmup)
-from template.utils.progress_tracker import (GlobalTrainingProgress,
-                                             LocalTrainingProgress,
-                                             update_global_tracker_state)
+from template.utils.misc import (
+    AsyncDendritePool,
+    init_dht,
+    load_wandb,
+    setup_logging,
+    warmup,
+)
+from template.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
 from template.utils.state_loader import DTStateAverager, load_state_from_peer
 from template.validator import forward
 
