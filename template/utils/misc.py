@@ -43,11 +43,14 @@ import os
 import shutil
 import random
 from template.data.dataset import SubsetFalconLoader
+from hivemind.utils.timed_storage import ValueWithExpiration
+from hivemind.p2p import PeerID
 from bitarray import bitarray
 import wandb
 from logtail import LogtailHandler
 import os
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -625,3 +628,52 @@ def warmup(self):
                     "global_epoch": self.global_progress.epoch,
                 }
             )
+
+
+async def map_uid_to_peerid(self, uids):
+    uids_to_peerids = {}
+    for uid in uids:
+        miner_ip = self.metagraph.axons[uid].ip
+
+        # Get all peers connected to our DHT and their ips
+        peer_list_dht = await self._p2p.list_peers()
+        peer_list_dht_addrs = [
+            str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
+        ]
+
+        # Get only peers connected to the current run id
+        prefix = self.grad_averager.matchmaking_kwargs["prefix"]
+        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
+            {},
+            None,
+        )
+
+        if metadata is None:
+            # return None
+            uids_to_peerids[uid] = None
+            continue
+        peer_list_run = [
+            str(PeerID(peer_id))
+            for peer_id, info in metadata.items()
+            if isinstance(info, ValueWithExpiration)
+            and isinstance(info.value, (float, int))
+        ]
+
+        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
+        if miner_ip not in peer_list_dht_addrs:
+            # return None
+            uids_to_peerids[uid] = None
+            continue
+        else:
+            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
+
+        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
+        if str(peer_id) not in peer_list_run:
+            # return None
+            uids_to_peerids[uid] = None
+            continue
+        else:
+            # return peer_id
+            uids_to_peerids[uid] = peer_id
+            continue
+    return uids_to_peerids

@@ -50,6 +50,7 @@ from template.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
+    map_uid_to_peerid,
 )
 from torch_optimizer import Lamb
 from template import __version__, __spec_version__
@@ -107,6 +108,9 @@ class Miner(BaseMinerNeuron):
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
 
+        # Init UID
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+
         # Set up a decentralized optimizer that will average with peers in background
         self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
@@ -121,8 +125,28 @@ class Miner(BaseMinerNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init UID
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        self.loop = asyncio.new_event_loop()
+        self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
+        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+        self.peer_id = self.dht.peer_id
+        self.get_stub = self.grad_averager.get_stub
+        self.serializer = self.grad_averager.serializer
+
+        # Create mapping between uids to peerids
+        self.uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(range(0, self.metagraph.n))
+        )
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (
+            retries >= max_retries
+        ):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    map_uid_to_peerid(range(0, self.metagraph.n))
+                )
+                time.sleep(1)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
 
         # Load dataset
         self.dataset_loader = ()
@@ -162,8 +186,14 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
+
+        # Update mapping of uids to peerids
+        self.uids_to_peerids = await map_uid_to_peerid(range(0, self.metagraph.n))
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
         try:
-            self.grad_averager.step(timeout=(synapse.timeout - 20))
+            self.grad_averager.step(
+                timeout=(synapse.timeout - 20), peerids_to_uids=self.peerids_to_uids
+            )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
