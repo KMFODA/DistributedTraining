@@ -234,18 +234,18 @@ class DTAllReduceRunner(AllReduceRunner):
                             asyncio.create_task(self._communicate_with_peer(peer_id))
                         )
 
-                bt.logging.info(f"Succesfully communicated with all peers")
+                bt.logging.info(f"Succesfully Communicated With All Peers")
 
                 async for (
                     averaged_tensor_delta
                 ) in self.tensor_part_container.iterate_output_tensors():
                     yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
 
-                bt.logging.info(f"Iterate output tensors")
+                bt.logging.info(f"Iterate Output Tensors Finished")
 
                 self.finalize()
 
-                bt.logging.info(f"Finalize finished")
+                bt.logging.info(f"Finalize Finished")
 
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()
