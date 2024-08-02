@@ -55,8 +55,12 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
     warmup,
+)
+
+from template.utils.uids import (
     map_uid_to_peerid,
 )
+
 from template.validator import forward
 from torch_optimizer import Lamb
 from template import __version__, __spec_version__

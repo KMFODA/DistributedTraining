@@ -21,8 +21,7 @@ from typing import List
 import bittensor as bt
 import torch
 from template.data.dataset import SubsetFalconLoader
-from template.utils.uids import get_random_uids
-from template.utils.misc import map_uid_to_peerid
+from template.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 

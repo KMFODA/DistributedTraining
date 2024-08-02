@@ -94,9 +94,12 @@ async def forward(self):
             self.peerids_to_uids = {
                 str(value): key for key, value in self.uids_to_peerids.items()
             }
-            bt.logging.info(self.peerids_to_uids)
             gradient_averaging_step = self.grad_averager.step(
-                wait=False, peerids_to_uids=self.peerids_to_uids
+                wait=False,
+                weight=(
+                    self.local_progress.samples_accumulated
+                    / self.config.neuron.global_batch_size_train
+                ),
             )
             # peerids_to_uids = self.peerids_to_uids)
             learning_rate = self.get_learning_rate()

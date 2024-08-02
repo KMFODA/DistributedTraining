@@ -62,10 +62,10 @@ class DTAllReduceRunner(AllReduceRunner):
         uid = (
             self.peerids_to_uids[str(peer_id)]
             if str(peer_id) in self.peerids_to_uids.keys()
-            else None
+            else ""
         )
         bt.logging.info(
-            f"UID:{uid} - PeerID:{peer_id} - _communicate_with_peer",
+            f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
         )
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
@@ -82,21 +82,26 @@ class DTAllReduceRunner(AllReduceRunner):
             try:
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
-                    self._generate_input_for_peer(peer_index), done_sending
+                    self._generate_input_for_peer(peer_index, uid, peer_id),
+                    done_sending,
                 )
                 await asyncio.sleep(5)
                 bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - _generate_input_for_peer"
+                    f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer started"
                 )
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
-                bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - _get_peer_stub done")
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - get_peer_stub finished"
+                )
 
                 if self.should_delay_results(self.peer_id):
                     await done_sending.wait()
 
-                bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - sending tensors done")
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - sending tensors finished"
+                )
                 part_index = 0
 
                 def _try_deserialize(msg):
@@ -116,7 +121,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     )
                     part_index += 1
                 bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - register_processed_part"
+                    f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
                 )
                 if (
                     part_index
@@ -215,7 +220,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 uid = (
                     self.peerids_to_uids[str(self.peer_id)]
                     if self.peer_id in self.peerids_to_uids.keys()
-                    else None
+                    else ""
                 )
                 bt.logging.info(
                     f"UID:{uid} - PeerID:{self.peer_id} self.peer_id in self.sender_peer_ids"
@@ -240,7 +245,7 @@ class DTAllReduceRunner(AllReduceRunner):
 
                 self.finalize()
 
-                bt.logging.info(f"Finalise done")
+                bt.logging.info(f"Finalize finished")
 
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()
@@ -264,7 +269,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
 
     async def _generate_input_for_peer(
-        self, peer_index: int
+        self, peer_index: int, uid: int, peer_id: PeerID
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
@@ -275,7 +280,9 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
-            bt.logging.info(f"_generate_input_for_peer.. {peer_index} start")
+            bt.logging.info(
+                f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
+            )
             #! Test Fault-tolerance here:
             # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
             # if peer_index == last_reducer_index:
@@ -301,7 +308,7 @@ class DTAllReduceRunner(AllReduceRunner):
         uid = (
             self.peerids_to_uids[str(peer_id)]
             if peer_id in self.peerids_to_uids.keys()
-            else None
+            else ""
         )
         bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
         async with self.banlock:
@@ -536,7 +543,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         )
 
                     with self._register_allreduce_group(group_info):
-                        bt.logging.info("Running AllReduce..")
+                        bt.logging.info("Running AllReduce")
                         step.stage = AveragingStage.RUNNING_ALLREDUCE
                     step.set_result(
                         await asyncio.wait_for(

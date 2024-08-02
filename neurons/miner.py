@@ -16,6 +16,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 import random
 import time
 import typing
@@ -50,8 +51,8 @@ from template.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
-    map_uid_to_peerid,
 )
+from template.utils.uids import map_uid_to_peerid
 from torch_optimizer import Lamb
 from template import __version__, __spec_version__
 
@@ -134,7 +135,7 @@ class Miner(BaseMinerNeuron):
 
         # Create mapping between uids to peerids
         self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(range(0, self.metagraph.n))
+            map_uid_to_peerid(self, range(0, self.metagraph.n))
         )
         max_retries = 3
         retries = 0
@@ -143,7 +144,7 @@ class Miner(BaseMinerNeuron):
         ):
             for retries in range(0, max_retries):
                 self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(range(0, self.metagraph.n))
+                    map_uid_to_peerid(self, range(0, self.metagraph.n))
                 )
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
@@ -188,11 +189,15 @@ class Miner(BaseMinerNeuron):
         failed_gradient_all_reduce = False
 
         # Update mapping of uids to peerids
-        self.uids_to_peerids = await map_uid_to_peerid(range(0, self.metagraph.n))
+        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         try:
             self.grad_averager.step(
-                timeout=(synapse.timeout - 20), peerids_to_uids=self.peerids_to_uids
+                timeout=(synapse.timeout - 20),
+                weight=(
+                    self.local_progress.samples_accumulated
+                    / self.config.neuron.global_batch_size_train
+                ),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
