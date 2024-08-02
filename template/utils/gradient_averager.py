@@ -55,7 +55,7 @@ class DTAllReduceRunner(AllReduceRunner):
         super().__init__(*args, **kwargs)
         self.count = 0
         self.peerids_to_uids = peerids_to_uids
-        bt.logging.info(self.peerids_to_uids)
+        bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
@@ -197,7 +197,7 @@ class DTAllReduceRunner(AllReduceRunner):
     async def run(self) -> AsyncIterator[torch.Tensor]:
         """Run all-reduce, return differences between averaged and original tensors as they are computed"""
         pending_tasks = set()
-        bt.logging.info("Running AllReducerRunner run()")
+        bt.logging.info("Running AllReducerRunner")
         bt.logging.info(
             f"self.tensor_part_container.num_parts_by_peer {self.tensor_part_container.num_parts_by_peer}"
         )
@@ -223,7 +223,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     else ""
                 )
                 bt.logging.info(
-                    f"UID:{uid} - PeerID:{self.peer_id} self.peer_id in self.sender_peer_ids"
+                    f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
                 )
 
                 for peer_id, parts in zip(
