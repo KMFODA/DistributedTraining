@@ -91,7 +91,17 @@ async def forward(self):
         query_tasks = []
         if all_reduce:
             bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(wait=False)
+            self.peerids_to_uids = {
+                str(value): key for key, value in self.uids_to_peerids.items()
+            }
+            gradient_averaging_step = self.grad_averager.step(
+                wait=False,
+                weight=(
+                    self.local_progress.samples_accumulated
+                    / self.config.neuron.global_batch_size_train
+                ),
+            )
+            # peerids_to_uids = self.peerids_to_uids)
             learning_rate = self.get_learning_rate()
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 

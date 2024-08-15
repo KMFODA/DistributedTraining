@@ -16,6 +16,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 import random
 import time
 import typing
@@ -51,6 +52,7 @@ from template.utils.misc import (
     load_wandb,
     setup_logging,
 )
+from template.utils.uids import map_uid_to_peerid
 from torch_optimizer import Lamb
 from template import __version__, __spec_version__
 
@@ -107,6 +109,9 @@ class Miner(BaseMinerNeuron):
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
 
+        # Init UID
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+
         # Set up a decentralized optimizer that will average with peers in background
         self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
@@ -121,8 +126,28 @@ class Miner(BaseMinerNeuron):
             next_chunk_timeout=30.0,
         )
 
-        # Init UID
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        self.loop = asyncio.new_event_loop()
+        self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
+        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+        self.peer_id = self.dht.peer_id
+        self.get_stub = self.grad_averager.get_stub
+        self.serializer = self.grad_averager.serializer
+
+        # Create mapping between uids to peerids
+        self.uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(self, range(0, self.metagraph.n))
+        )
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (
+            retries >= max_retries
+        ):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    map_uid_to_peerid(self, range(0, self.metagraph.n))
+                )
+                time.sleep(1)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
 
         # Load dataset
         self.dataset_loader = ()
@@ -136,7 +161,7 @@ class Miner(BaseMinerNeuron):
             )
 
         # Load state from peers if miner is not on latest global epoch
-        if self.local_progress.epoch < self.global_progress.epoch:
+        if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     def get_miner_info(self):
@@ -162,8 +187,18 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
+
+        # Update mapping of uids to peerids
+        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
         try:
-            self.grad_averager.step(timeout=(synapse.timeout - 20))
+            self.grad_averager.step(
+                timeout=(synapse.timeout - 20),
+                weight=(
+                    self.local_progress.samples_accumulated
+                    / self.config.neuron.global_batch_size_train
+                ),
+            )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
@@ -251,7 +286,7 @@ class Miner(BaseMinerNeuron):
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         update_global_tracker_state(self)
-        if (self.local_progress.epoch < self.global_progress.epoch) or (
+        if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
                     [layer for layer in self.model.parameters()][-1][-10:].tolist()

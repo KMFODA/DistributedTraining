@@ -37,8 +37,7 @@ import json
 from hivemind import utils
 import re
 from ipaddress import ip_address
-from template.utils.chain_storage import run_in_subprocess
-from datetime import datetime
+
 import os
 import shutil
 import random
@@ -48,6 +47,7 @@ import wandb
 from logtail import LogtailHandler
 import os
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -485,36 +485,37 @@ def init_dht(self):
 
     # Init DHT
     retries = 0
-    buffer = 2
+    buffer = 5
     max_retries = buffer * len(initial_peers_list)
     successful_connection = False
-    while (retries <= max_retries) and (successful_connection is False):
+    while successful_connection is False:
         if (retries == max_retries) and (successful_connection is False):
             raise Exception("Max retries reached, operation failed.")
-        for i in range(0, buffer):
-            try:
-                # Init DHT
-                self.dht = hivemind.DHT(
-                    host_maddrs=[
-                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                    ],
-                    initial_peers=[initial_peers_list[retries]],
-                    announce_maddrs=announce_maddrs,
-                    start=True,
-                )
-                bt.logging.info(
-                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
-                )
-                successful_connection = True
-                break
-            except Exception as e:
-                bt.logging.error(
-                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
-                )
-                retries += 1
-                time.sleep(5)
-                bt.logging.error(f"Retrying...")
+        for initiaL_peer in initial_peers_list:
+            for attempt in range(0, buffer):
+                try:
+                    # Init DHT
+                    self.dht = hivemind.DHT(
+                        host_maddrs=[
+                            f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
+                            f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
+                        ],
+                        initial_peers=[initiaL_peer],
+                        announce_maddrs=announce_maddrs,
+                        start=True,
+                    )
+                    bt.logging.info(
+                        f"Successfully initialised dht using initial_peer as {initiaL_peer}"
+                    )
+                    successful_connection = True
+                    break
+                except Exception as e:
+                    bt.logging.error(
+                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initiaL_peer} failed with error: {e}"
+                    )
+                    retries += 1
+                    time.sleep(5)
+                    bt.logging.error(f"Retrying...")
 
     utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
 
