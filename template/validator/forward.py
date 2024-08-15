@@ -34,7 +34,7 @@ import template
 from template.utils.misc import get_bandwidth
 from template.utils.progress_tracker import update_global_tracker_state
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import get_random_uids
+from template.utils.uids import get_random_uids, map_uid_to_peerid
 from template.validator.reward import get_rewards, score_blacklist
 
 
@@ -112,10 +112,23 @@ async def forward(self):
                     if (index != self.uid) and (scores_ids_tuple[0] != 0)
                 )
             ):
-                group_peerids = await self.map_uid_to_peerid(self.miner_uids.tolist())
+                group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
                 blacklist_scores = await score_blacklist(self, group_peerids.keys())
                 bt.logging.info(f"group_peerids: {group_peerids}")
                 bt.logging.info(f"blacklist_scores: {blacklist_scores}")
+
+            # Filter any UIDs not connected to the DHT
+            new_group_peerids = {}
+            new_miner_uids = []
+            for i, key in enumerate(group_peerids.keys()):
+                if blacklist_scores[i] == 0.0:
+                    continue
+                else:
+                    new_group_peerids[key] = group_peerids[key]
+                    new_miner_uids.append(key)
+
+            group_peerids = new_group_peerids
+            self.miner_uids = torch.tensor(new_miner_uids).to(self.device)
 
             group_id = DHTID.generate().to_bytes()
 
@@ -134,9 +147,9 @@ async def forward(self):
             custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
             bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, wait=False
-            )
+            self.peerids_to_uids = {
+                str(value): key for key, value in self.uids_to_peerids.items()
+            }
             learning_rate = self.get_learning_rate()
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 

@@ -2,21 +2,12 @@ from collections import defaultdict
 from typing import DefaultDict, List, Optional, Tuple, Union
 
 from torch import Tensor
-from torch.optim.optimizer import (
-    Optimizer,
-    ParamsT,
-    _capturable_doc,
-    _default_to_fused_or_foreach,
-    _differentiable_doc,
-    _dispatch_sqrt,
-    _foreach_doc,
-    _fused_doc,
-    _get_value,
-    _maximize_doc,
-    _stack_if_compiling,
-    _use_grad_for_differentiable,
-    _view_as_real,
-)
+from torch.optim.optimizer import (Optimizer, ParamsT, _capturable_doc,
+                                   _default_to_fused_or_foreach,
+                                   _differentiable_doc, _dispatch_sqrt,
+                                   _foreach_doc, _fused_doc, _get_value,
+                                   _maximize_doc, _stack_if_compiling,
+                                   _use_grad_for_differentiable, _view_as_real)
 from torch.utils._foreach_utils import _get_fused_kernels_supported_devices
 
 __all__ = ["AdamW", "adamw"]

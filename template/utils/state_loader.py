@@ -19,10 +19,8 @@ from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from torch_optimizer import Lamb
 from transformers import AutoModelForCausalLM
 
-from template.utils.progress_tracker import (
-    LocalTrainingProgress,
-    update_global_tracker_state,
-)
+from template.utils.progress_tracker import (LocalTrainingProgress,
+                                             update_global_tracker_state)
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)

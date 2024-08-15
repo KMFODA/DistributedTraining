@@ -35,6 +35,7 @@ import bittensor as bt
 import hivemind
 import logging_loki
 import speedtest
+import wandb
 from bitarray import bitarray
 from dotenv import load_dotenv
 from hivemind import utils
@@ -42,7 +43,6 @@ from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
-import wandb
 from template.data.dataset import SubsetFalconLoader
 from template.protocol import Train
 
@@ -483,35 +483,47 @@ def init_dht(self):
     buffer = 2
     max_retries = buffer * len(initial_peers_list)
     successful_connection = False
-    while (retries <= max_retries) and (successful_connection is False):
+    while successful_connection is False:
         if (retries == max_retries) and (successful_connection is False):
             raise Exception("Max retries reached, operation failed.")
-        for i in range(0, buffer):
-            try:
-                # Init DHT
-                self.dht = hivemind.DHT(
-                    host_maddrs=[
-                        f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                        f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                    ],
-                    initial_peers=[initial_peers_list[retries]],
-                    announce_maddrs=announce_maddrs,
-                    start=True,
-                )
-                bt.logging.info(
-                    f"Successfully initialised dht using initial_peer as {initial_peers_list[retries]}"
-                )
-                successful_connection = True
-                break
-            except Exception as e:
-                bt.logging.error(
-                    f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peers_list[retries]} failed with error: {e}"
-                )
-                retries += 1
-                time.sleep(5)
-                bt.logging.error(f"Retrying...")
-
-    utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
+        for initiaL_peer in initial_peers_list:
+            for attempt in range(0, buffer):
+                try:
+                    # Init DHT
+                    self.dht = hivemind.DHT(
+                        host_maddrs=[
+                            f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
+                            f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
+                        ],
+                        initial_peers=[initiaL_peer],
+                        announce_maddrs=announce_maddrs,
+                        start=True,
+                    )
+                    bt.logging.info(
+                        f"Successfully initialised dht using initial_peer as {initiaL_peer}"
+                    )
+                    successful_connection = True
+                    utils.log_visible_maddrs(
+                        self.dht.get_visible_maddrs(), only_p2p=True
+                    )
+                    # Add DHT address to wandb config
+                    self.config.neuron.dht_addresses = [
+                        re.sub(
+                            "ip4/?(.*?)/",
+                            f"ip{version}/{address}/",
+                            str(addr),
+                            flags=re.DOTALL,
+                        )
+                        for addr in self.dht.get_visible_maddrs()
+                    ]
+                    return
+                except Exception as e:
+                    bt.logging.error(
+                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initiaL_peer} failed with error: {e}"
+                    )
+                    retries += 1
+                    time.sleep(5)
+                    bt.logging.error(f"Retrying...")
 
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
@@ -526,12 +538,6 @@ def init_dht(self):
     #     run_in_subprocess(partial, 60)
     # except Exception as e:
     #     bt.logging.info(f"Error submitting Peer ID to chaing {Exception} retrying in 2 minutes")
-
-    # Add DHT address to wandb config
-    self.config.neuron.dht_addresses = [
-        re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
-        for addr in self.dht.get_visible_maddrs()
-    ]
 
 
 def warmup(self):
