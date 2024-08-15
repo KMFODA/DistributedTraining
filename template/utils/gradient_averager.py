@@ -154,7 +154,6 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
-                logger.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
                 bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
@@ -543,8 +542,8 @@ class DTAverager(hivemind.DecentralizedAverager):
         *,
         step: StepControl,
         future_for_init: MPFuture,
-        peerids_to_uids: dict,
         custom_group_info: GroupInfo,
+        peerids_to_uids: dict = {},
     ):
         self.current_group_info = custom_group_info
         self.p2p = await self.dht.replicate_p2p()
@@ -559,11 +558,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
 
-                    logger.info("Starting distributed barrier..")
+                    bt.logging.info("Starting distributed barrier.")
                     await self._run_distributed_barrier(step, custom_group_info)
-                    logger.info("Finished waiting for group to assemble.")
+                    bt.logging.info("Finished waiting for group to assemble.")
 
-                    logger.info("Running AllReduce..")
+                    bt.logging.info("Running AllReduce..")
                     await self._run_allreduce(step, custom_group_info)
                     # Averaging is finished, loop will now exit
 
@@ -645,7 +644,7 @@ class DTAverager(hivemind.DecentralizedAverager):
     ) -> custom_averaging_pb2.BarrierCompleteResponse:
         self.barrier_state = BarrierState.BARRIER_COMPLETE
         self.barrier_complete.set()
-        logger.info(f"Peer {self.peer_id} received barrier complete notification")
+        bt.logging.info(f"Peer {self.peer_id} received barrier complete notification.")
 
         return custom_averaging_pb2.BarrierCompleteResponse(
             code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED
@@ -672,16 +671,16 @@ class DTAverager(hivemind.DecentralizedAverager):
                 leader_id = custom_group_info.peer_ids[0]
 
                 if self.peer_id == leader_id:
-                    logger.info(f"Peer {self.peer_id} is the leader")
+                    bt.logging.info(f"Peer {self.peer_id} is the leader")
                     self.barrier_state = BarrierState.ASSEMBLING_GROUP
                     await self._leader_coordinate_barrier()
                 else:
-                    logger.info(f"Peer {self.peer_id} is a follower")
+                    bt.logging.info(f"Peer {self.peer_id} is a follower.")
                     await self._follower_join_barrier(leader_id)
 
-                logger.info(f"Waiting for barrier_complete for {self.peer_id}")
+                bt.logging.info(f"Waiting for barrier_complete for {self.peer_id}")
                 await asyncio.wait_for(self.barrier_complete.wait(), timeout=60)
-                logger.info(f"Barrier complete for {self.peer_id}")
+                bt.logging.info(f"Barrier complete for {self.peer_id}")
 
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
@@ -694,7 +693,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             raise BarrierError(f"Error in distributed_barrier: {str(e)}") from e
 
     async def _leader_coordinate_barrier(self):
-        logger.info(f"Leader {self.peer_id} starting barrier coordination")
+        bt.logging.info(f"Leader {self.peer_id} starting barrier coordination")
         self.ready_peers = {
             peer_id: asyncio.Event() for peer_id in self.barrier_group.peer_ids
         }
@@ -714,7 +713,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                 logger.error(f"Failed to notify follower {peer_id}: {e}")
 
         try:
-            logger.info(f"Leader waiting for peers to be ready..")
+            bt.logging.info(f"Leader waiting for peers to be ready.")
             await asyncio.gather(
                 *(
                     self._wait_for_peer_ready(peer_id)
@@ -724,7 +723,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             )
             self.barrier_state = BarrierState.BARRIER_COMPLETE
             self.barrier_complete.set()
-            logger.info(f"Leader {self.peer_id} completed barrier coordination")
+            bt.logging.info(f"Leader {self.peer_id} completed barrier coordination.")
 
             # Notify all followers
             await asyncio.gather(
@@ -735,15 +734,15 @@ class DTAverager(hivemind.DecentralizedAverager):
                 )
             )
 
-            logger.info(f"Leader {self.peer_id} notified all followers")
+            bt.logging.info(f"Leader {self.peer_id} notified all followers.")
 
         except Exception as e:
             logger.error(f"Error in leader_coordinate_barrier: {e}")
             raise
 
     async def _follower_join_barrier(self, leader_id: PeerID):
-        logger.info(
-            f"Follower {self.peer_id} attempting to join barrier led by {leader_id}"
+        bt.logging.info(
+            f"Follower {self.peer_id} attempting to join barrier led by {leader_id}."
         )
         max_retries = 3
         for attempt in range(max_retries):
@@ -763,12 +762,12 @@ class DTAverager(hivemind.DecentralizedAverager):
                 )
                 logger.debug(f"Received response from leader: {response.code}")
                 if response.code == custom_averaging_pb2.BarrierResponseCode.ACCEPTED:
-                    logger.info(
-                        f"Follower {self.peer_id} successfully joined barrier, waiting for completion"
+                    bt.logging.info(
+                        f"Follower {self.peer_id} successfully joined barrier, waiting for completion."
                     )
                     await self._wait_for_barrier_completion()
-                    logger.info(
-                        f"Follower {self.peer_id} successfully waited for completion"
+                    bt.logging.info(
+                        f"Follower {self.peer_id} successfully waited for completion."
                     )
                     return
                 elif (
@@ -798,7 +797,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         timeout = 60  # Adjust as needed
         try:
             await asyncio.wait_for(self.barrier_complete.wait(), timeout=timeout)
-            logger.info(f"Peer {self.peer_id} barrier completed")
+            bt.logging.info(f"Peer {self.peer_id} barrier completed")
         except asyncio.TimeoutError:
             logger.error(
                 f"Peer {self.peer_id} timed out waiting for barrier completion"
@@ -807,7 +806,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
     async def _wait_for_peer_ready(self, peer_id: PeerID):
         try:
-            logger.info(f"_wait_for_peer_ready {peer_id}")
+            bt.logging.info(f"_wait_for_peer_ready {peer_id}")
             await asyncio.wait_for(
                 self.ready_peers[peer_id].wait(), timeout=30
             )  # Adjust timeout as needed
@@ -829,18 +828,20 @@ class DTAverager(hivemind.DecentralizedAverager):
         )
 
         if step.cancelled():
-            logger.info("Step cancelled, aborting distributed barrier")
+            bt.logging.info("Step cancelled, aborting distributed barrier")
             matchmaking_task.cancel()
             raise asyncio.CancelledError()
         else:
-            logger.info("Distributed barrier completed, cancelling check_cancel_task")
+            bt.logging.info(
+                "Distributed barrier completed, cancelling check_cancel_task"
+            )
             check_cancel_task.cancel()
 
         await matchmaking_task
 
     async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo):
         with self._register_allreduce_group(custom_group_info):
-            logger.info("Running AllReduce..")
+            bt.logging.info("Running AllReduce.")
             assert (
                 custom_group_info.group_id in self._running_groups
             ), "Group was not properly registered"

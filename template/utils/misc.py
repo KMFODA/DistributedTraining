@@ -35,7 +35,6 @@ import bittensor as bt
 import hivemind
 import logging_loki
 import speedtest
-import wandb
 from bitarray import bitarray
 from dotenv import load_dotenv
 from hivemind import utils
@@ -43,6 +42,7 @@ from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
+import wandb
 from template.data.dataset import SubsetFalconLoader
 from template.protocol import Train
 

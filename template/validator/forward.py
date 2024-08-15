@@ -113,6 +113,7 @@ async def forward(self):
                 )
             ):
                 group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
+                self.uids_to_peerids = group_peerids
                 blacklist_scores = await score_blacklist(self, group_peerids.keys())
                 bt.logging.info(f"group_peerids: {group_peerids}")
                 bt.logging.info(f"blacklist_scores: {blacklist_scores}")
@@ -147,6 +148,9 @@ async def forward(self):
             custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
             bt.logging.info("Performing Gradient Averaging")
+            gradient_averaging_step = self.grad_averager.step(
+                custom_group_info=custom_group, wait=False
+            )
             self.peerids_to_uids = {
                 str(value): key for key, value in self.uids_to_peerids.items()
             }
