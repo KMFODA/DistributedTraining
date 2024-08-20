@@ -30,7 +30,7 @@ import torch
 from bitarray import bitarray
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.p2p import PeerID
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
@@ -103,19 +103,24 @@ class Miner(BaseMinerNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        
+        # Set weight decay of specific layers:
+        optim_groups = [
+            {'params': [p for _, p in self.model.named_parameters() if p.dim() >= 2], 'weight_decay': 0.1},
+            {'params': [p for _, p in self.model.named_parameters() if p.dim() < 2], 'weight_decay': 0.0}
+        ]
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(optim_groups, lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
+            self.model.parameters(), # TODO Set to optim_groups too?
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
-            start=True,
             next_chunk_timeout=30.0,
+            start=True,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -326,39 +331,31 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         index = 0
+        grad_accum_steps = self.config.neuron.global_batch_size_train // (self.config.neuron.local_batch_size_train * self.config.neuron.training_examples_per_miner)
+
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             inputs = batch.to(self.device)
 
             # Zero Gradients
             self.opt.zero_grad(
-                set_to_none=True
-            )  # Potential memory save setting to None
+                set_to_none=True # Potential memory save setting to None
+            )  
 
-            # Forward pass
+            # Forward pass with potential mixed precision
+            #with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             outputs = self.model(input_ids=inputs, labels=inputs)
-
-            # Normalize loss to account for batch accumulation
             loss = outputs.loss
-            scaled_loss = (
-                loss / self.config.neuron.global_batch_size_train / len(inputs)
-            )
-
-            # Accumulate Total Loss
-            total_loss += loss.detach().item()
+            
+            # Normalize loss to account for gradient accumulation
+            scaled_loss = loss / grad_accum_steps
 
             # Backward Pass
             scaled_loss.backward()
 
-            # Copy gradients
-            gradients = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
+            # Accumulate Total Loss
+            total_loss += loss.detach().item()
+
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
@@ -378,6 +375,16 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
+                
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
 
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
