@@ -49,24 +49,26 @@ async def forward(self):
 
     """
     update_global_tracker_state(self)
-    if self.local_progress.epoch < self.global_progress.epoch:
-        bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
-        load_state_from_peer(self)
+    if self.global_progress.epoch is not None:
+        if self.local_progress.epoch < self.global_progress.epoch:
+            bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
+            load_state_from_peer(self)
 
     # Evaluate wether to run an AllReduce or a Train synapse based on the global samples accumulated
-    if (
-        (
-            (
-                self.config.neuron.global_batch_size_train
-                - self.global_progress.samples_accumulated
-            )
-            <= 25
-        )
-        and (not self.step_scheduled)
-        and (self.global_progress.epoch == self.local_progress.epoch)
-    ):
+    if self.local_progress.samples_accumulated>=25:
+    # if (
+    #     (
+    #         (
+    #             self.config.neuron.global_batch_size_train
+    #             - self.global_progress.samples_accumulated
+    #         )
+    #         <= 25
+    #     )
+    #     and (not self.step_scheduled)
+        #and (self.global_progress.epoch == self.local_progress.epoch)
+    #):
         # If running an AllReduce synapse, call as many miners as possible
-        sample_size = int(self.metagraph.n)
+        sample_size = int(self.metagraph.n) #TODO Set to a fixed All-reduce size
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
@@ -103,7 +105,7 @@ async def forward(self):
             while (
                 (group_peerids is None)
                 or (blacklist_scores is None)
-                or (blacklist_scores.sum().item() == 0)
+                # or (blacklist_scores.sum().item() == 0)
                 or any(
                     scores_ids_tuple[1] is None
                     for index, scores_ids_tuple in enumerate(
@@ -117,6 +119,8 @@ async def forward(self):
                 blacklist_scores = await score_blacklist(self, group_peerids.keys())
                 bt.logging.info(f"group_peerids: {group_peerids}")
                 bt.logging.info(f"blacklist_scores: {blacklist_scores}")
+            
+            bt.logging.info(f"While loop finished...")
 
             # Filter any UIDs not connected to the DHT
             new_group_peerids = {}

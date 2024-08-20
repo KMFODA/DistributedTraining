@@ -143,6 +143,9 @@ async def map_uid_to_peerid(self, uids):
 
         # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
         if miner_ip not in peer_list_dht_addrs:
+            bt.logging.info(f"miner_ip not in peer_list_dht_addrs")
+            bt.logging.info(f"{miner_ip} not in {peer_list_dht_addrs}")
+
             # return None
             uids_to_peerids[uid] = None
             continue
@@ -151,6 +154,9 @@ async def map_uid_to_peerid(self, uids):
 
         # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
         if str(peer_id) not in peer_list_run:
+            bt.logging.info(f"str(peer_id) not in peer_list_run")
+            bt.logging.info(f"{str(peer_id)} not in {peer_list_run}")
+
             # return None
             uids_to_peerids[uid] = None
             continue

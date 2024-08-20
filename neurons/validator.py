@@ -180,8 +180,9 @@ class Validator(BaseValidatorNeuron):
         self.maximum_steps = 306 * 4
 
         # Load state from peers if validator is not on latest global epoch
-        if self.local_progress.epoch < self.global_progress.epoch:
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+        if self.global_progress.epoch is not None:
+            if self.local_progress.epoch < self.global_progress.epoch:
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
@@ -253,6 +254,9 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Exiting update models loop.")
 
     def get_learning_rate(self):
+        if self.global_progress.epoch is None:
+            return self.config.neuron.learning_rate
+        
         learning_rate_minimum = self.config.neuron.learning_rate * 0.1
         # 1) linear warmup for warmup_steps
         if self.global_progress.epoch < self.config.neuron.warmup_steps:

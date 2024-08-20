@@ -416,7 +416,7 @@ def setup_logging(
         shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
         os.remove(local_logfile)
 
-    hivemind_log_file = f"/root/logs_mylogfile.txt"
+    hivemind_log_file = f"logs_mylogfile.txt"
     hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
     file_handler = logging.FileHandler(hivemind_log_file)
@@ -486,7 +486,7 @@ def init_dht(self):
     while successful_connection is False:
         if (retries == max_retries) and (successful_connection is False):
             raise Exception("Max retries reached, operation failed.")
-        for initiaL_peer in initial_peers_list:
+        for initial_peer in initial_peers_list:
             for attempt in range(0, buffer):
                 try:
                     # Init DHT
@@ -495,12 +495,12 @@ def init_dht(self):
                             f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
                             f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
                         ],
-                        initial_peers=[initiaL_peer],
+                        initial_peers=[initial_peer],
                         announce_maddrs=announce_maddrs,
                         start=True,
                     )
                     bt.logging.info(
-                        f"Successfully initialised dht using initial_peer as {initiaL_peer}"
+                        f"Successfully initialised dht using initial_peer as {initial_peer}"
                     )
                     successful_connection = True
                     utils.log_visible_maddrs(
@@ -519,7 +519,7 @@ def init_dht(self):
                     return
                 except Exception as e:
                     bt.logging.error(
-                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initiaL_peer} failed with error: {e}"
+                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initial_peer} failed with error: {e}"
                     )
                     retries += 1
                     time.sleep(5)
