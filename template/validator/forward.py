@@ -65,6 +65,12 @@ async def perform_all_reduce(self, start_time):
 
         # Check if there are other peers besides the local peer
         if len(ordered_peer_ids) > 1:
+            
+            # Map uids to peerids
+            self.peerids_to_uids = {
+                str(value): key for key, value in self.uids_to_peerids.items()
+            }
+            
             group = template.protocol.Group(
                 peer_count=len(new_group_peerids) + 1,  # Including the local peer
                 peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
@@ -76,12 +82,9 @@ async def perform_all_reduce(self, start_time):
 
             bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, wait=False
+                custom_group_info=custom_group, wait=False, peerids_to_uids=self.peerids_to_uids
             )
 
-            self.peerids_to_uids = {
-                str(value): key for key, value in self.uids_to_peerids.items()
-            }
             learning_rate = self.get_learning_rate()
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 

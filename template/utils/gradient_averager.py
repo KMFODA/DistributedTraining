@@ -55,23 +55,22 @@ class BarrierState(Enum):
 
 
 class DTAllReduceRunner(AllReduceRunner):
-    # def __init__(self, peerids_to_uids, *args, **kwargs):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, peerids_to_uids, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.count = 0
-        #self.peerids_to_uids = peerids_to_uids
-        # bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
+        self.peerids_to_uids = peerids_to_uids
+        bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
-        # uid = (
-        #     self.peerids_to_uids[str(peer_id)]
-        #     if str(peer_id) in self.peerids_to_uids.keys()
-        #     else ""
-        # )
-        # bt.logging.info(
-        #     f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
-        # )
+        uid = (
+            self.peerids_to_uids[str(peer_id)]
+            if str(peer_id) in self.peerids_to_uids.keys()
+            else ""
+        )
+        bt.logging.info(
+            f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
+        )
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
@@ -230,14 +229,14 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.finalize()
 
             elif self.peer_id in self.sender_peer_ids:
-                # uid = (
-                #     self.peerids_to_uids[str(self.peer_id)]
-                #     if self.peer_id in self.peerids_to_uids.keys()
-                #     else ""
-                # )
-                # bt.logging.info(
-                #     f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
-                # )
+                uid = (
+                    self.peerids_to_uids[str(self.peer_id)]
+                    if self.peer_id in self.peerids_to_uids.keys()
+                    else ""
+                )
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
+                )
 
                 for peer_id, parts in zip(
                     self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer
@@ -319,12 +318,12 @@ class DTAllReduceRunner(AllReduceRunner):
             raise e
 
     async def _ban_sender(self, peer_id: PeerID):
-        # uid = (
-        #     self.peerids_to_uids[str(peer_id)]
-        #     if peer_id in self.peerids_to_uids.keys()
-        #     else ""
-        # )
-        # bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
+        uid = (
+            self.peerids_to_uids[str(peer_id)]
+            if peer_id in self.peerids_to_uids.keys()
+            else ""
+        )
+        bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
@@ -351,7 +350,6 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
-        #peerids_to_uids: dict = {},
         **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         """
@@ -407,6 +405,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
+        peerids_to_uids = kwargs.get("peerids_to_uids", None)
 
         if custom_group_info is not None:
             self._outer_pipe.send(
@@ -417,6 +416,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         step=step,
                         future_for_init=future_for_init,
                         custom_group_info=custom_group_info,
+                        peerids_to_uids=peerids_to_uids
                     ),
                 )
             )
@@ -445,7 +445,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         *,
         step: StepControl,
         future_for_init: MPFuture,
-        #peerids_to_uids: dict = {},
+        peerids_to_uids: dict = {},
     ):
         try:
             trigger, cancel = MPFuture(), MPFuture()
@@ -493,7 +493,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                     group_info,
                                     tensor_infos=self.tensor_infos,
                                     weight=step.weight,
-                                    #peerids_to_uids=peerids_to_uids,
+                                    peerids_to_uids=peerids_to_uids,
                                     **self.allreduce_kwargs,
                                 ),
                                 timeout=self._allreduce_timeout,
@@ -545,7 +545,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         step: StepControl,
         future_for_init: MPFuture,
         custom_group_info: GroupInfo,
-       #peerids_to_uids: dict = {},
+        peerids_to_uids: dict = {},
     ):
         self.current_group_info = custom_group_info
         self.p2p = await self.dht.replicate_p2p()
@@ -865,7 +865,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         self,
         group_info: GroupInfo,
         min_vector_size: int,
-        #peerids_to_uids: dict,
+        peerids_to_uids: dict,
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata"""
@@ -876,7 +876,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
-                    #peerids_to_uids=peerids_to_uids,
+                    peerids_to_uids=peerids_to_uids,
                     p2p=self._p2p,
                     servicer_type=type(self),
                     prefix=self.prefix,
