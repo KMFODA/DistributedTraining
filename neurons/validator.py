@@ -47,7 +47,7 @@ from template.utils.progress_tracker import (GlobalTrainingProgress,
                                              LocalTrainingProgress,
                                              update_global_tracker_state)
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import map_uid_to_peerid, initialize_uid_mapping
+from template.utils.uids import initialize_uid_mapping
 from template.validator import forward
 
 logger = get_logger(__name__)

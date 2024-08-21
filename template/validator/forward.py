@@ -34,34 +34,40 @@ import template
 from template.utils.misc import get_bandwidth
 from template.utils.progress_tracker import update_global_tracker_state
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import get_random_uids, update_group_peerids
+from template.utils.uids import get_random_uids, map_uid_to_peerid
 from template.validator.reward import get_rewards, score_blacklist
 
 async def perform_all_reduce(self, start_time):
     
     while time.perf_counter() - start_time < self.all_reduce_timeout:
-        group_peerids, blacklist_scores = await update_group_peerids(self, score_blacklist)
 
-        # Filter any UIDs not connected to the DHT
-        new_group_peerids = {
-            key: value for key, value in group_peerids.items()
-            if blacklist_scores[list(group_peerids.keys()).index(key)] != 0.0
-        }
-        new_miner_uids = list(new_group_peerids.keys())
-
-        if not new_group_peerids:
-            bt.logging.warning(f"No valid peer IDs found. Retrying...")
-            await asyncio.sleep(1)
+        # Map UIDs to peer IDs
+        group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
+        if not group_peerids:
+            await asyncio.sleep(0.2)
             continue
 
-        self.miner_uids = torch.tensor(new_miner_uids).to(self.device)
+        # Calculate blacklist scores
+        blacklist_scores = await self.score_blacklist(list(group_peerids.keys()))
+
+        # Validate peers
+        if not self.validate_peers(group_peerids, blacklist_scores):
+            bt.logging.warning("Invalid peer mapping or scores. Retrying...")
+            await asyncio.sleep(0.2)
+            continue
+
+        # Filter out blacklisted peers
+        valid_group_peerids = {uid: peer_id for uid, peer_id in group_peerids.items() 
+                               if blacklist_scores[list(group_peerids.keys()).index(uid)] != 0.0}
+
+        self.miner_uids = torch.tensor(list(valid_group_peerids.keys())).to(self.device)
 
         group_id = DHTID.generate().to_bytes()
 
         bt.logging.info(f"DHT ID: {self.dht.peer_id}")
-        bt.logging.info(f"Group Peer IDs: {list(new_group_peerids.values())}")
+        bt.logging.info(f"Group Peer IDs: {list(valid_group_peerids.values())}")
 
-        ordered_peer_ids = [self.dht.peer_id] + list(new_group_peerids.values())
+        ordered_peer_ids = [self.dht.peer_id] + list(valid_group_peerids.values())
 
         # Check if there are other peers besides the local peer
         if len(ordered_peer_ids) > 1:
@@ -72,7 +78,7 @@ async def perform_all_reduce(self, start_time):
             }
             
             group = template.protocol.Group(
-                peer_count=len(new_group_peerids) + 1,  # Including the local peer
+                peer_count=len(valid_group_peerids) + 1,  # Including the local peer
                 peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
                 group_id=base64.b64encode(group_id),
             )
@@ -166,7 +172,7 @@ async def forward(self):
         ## AllReduce synapse
         if all_reduce:
             start_time = time.perf_counter()
-            gradient_averaging_step, queries = await perform_all_reduce(start_time)
+            gradient_averaging_step, queries = await perform_all_reduce(self, start_time)
 
         ## Train synapse
         else:

@@ -142,19 +142,6 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
-    
-    def _initialize_uid_mapping(self):
-        max_retries = 3
-        for attempt in range(max_retries):
-            uids_to_peerids = self.loop.run_until_complete(
-                map_uid_to_peerid(self, range(self.metagraph.n))
-            )
-            if any(value is not None for value in uids_to_peerids.values()):
-                return uids_to_peerids
-            time.sleep(1)  # Sleep for 1 second between retries
-
-        bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
-        return {uid: None for uid in range(self.metagraph.n)}
 
     def get_miner_info(self):
         return {
@@ -179,10 +166,6 @@ class Miner(BaseMinerNeuron):
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         
-        # Map uids to peerids
-        self.peerids_to_uids = {
-            str(value): key for key, value in self.uids_to_peerids.items()
-        }
 
         custom_group = GroupInfo(
             base64.b64decode(synapse.group.group_id),
@@ -194,6 +177,11 @@ class Miner(BaseMinerNeuron):
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        
+        # Map uids to peerids
+        self.peerids_to_uids = {
+            str(value): key for key, value in self.uids_to_peerids.items()
+        }
         try:
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(

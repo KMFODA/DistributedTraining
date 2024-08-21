@@ -2,7 +2,7 @@ import time
 import asyncio
 import random
 import traceback
-from typing import Tuple, Dict, Optional, Callable, List
+from typing import Tuple, Dict, Optional, Callable, List, Union
 
 import bittensor as bt
 import torch
@@ -177,32 +177,3 @@ def initialize_uid_mapping(self):
 
     bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
     return {uid: None for uid in range(self.metagraph.n)}
-
-# Usage in the second context
-async def update_group_peerids(
-    self,
-    score_blacklist: Callable[[List[int]], List[float]]
-) -> Tuple[Optional[Dict[int, str]], Optional[List[float]]]:
-    max_attempts = 10 
-    for attempt in range(max_attempts):
-        group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
-        blacklist_scores = await score_blacklist(self, group_peerids.keys())
-        
-        if group_peerids and blacklist_scores is not None:
-            valid_mapping = all(
-                scores_ids_tuple[1] is not None
-                for index, scores_ids_tuple in enumerate(zip(blacklist_scores, group_peerids.values()))
-                if (index != self.uid) and (scores_ids_tuple[0] != 0)
-            )
-            
-            if valid_mapping:
-                self.uids_to_peerids = group_peerids
-                bt.logging.info(f"Updated group_peerids: {group_peerids}")
-                bt.logging.info(f"Updated blacklist_scores: {blacklist_scores}")
-                return group_peerids, blacklist_scores
-        
-        bt.logging.warning(f"Attempt {attempt + 1}: Invalid or incomplete mapping. Retrying...")
-        await asyncio.sleep(1)
-    
-    bt.logging.error("Failed to update group_peerids and blacklist_scores after maximum attempts")
-    return None, None
