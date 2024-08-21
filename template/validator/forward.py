@@ -21,6 +21,7 @@ import base64
 import copy
 import random
 import time
+from typing import List, Dict
 
 import bittensor as bt
 import numpy as np
@@ -37,6 +38,15 @@ from template.utils.state_loader import load_state_from_peer
 from template.utils.uids import get_random_uids, map_uid_to_peerid
 from template.validator.reward import get_rewards, score_blacklist
 
+def validate_peers(self, group_peerids: Dict[int, str], blacklist_scores: List[float]) -> bool:
+    if not group_peerids or blacklist_scores is None:
+        return False
+    return all(
+        peer_id is not None and score != 0
+        for (uid, peer_id), score in zip(group_peerids.items(), blacklist_scores)
+        if uid != self.uid
+    )
+
 async def perform_all_reduce(self, start_time):
     
     while time.perf_counter() - start_time < self.all_reduce_timeout:
@@ -48,10 +58,10 @@ async def perform_all_reduce(self, start_time):
             continue
 
         # Calculate blacklist scores
-        blacklist_scores = await self.score_blacklist(list(group_peerids.keys()))
+        blacklist_scores = await score_blacklist(self, list(group_peerids.keys()))
 
         # Validate peers
-        if not self.validate_peers(group_peerids, blacklist_scores):
+        if not validate_peers(self, group_peerids, blacklist_scores):
             bt.logging.warning("Invalid peer mapping or scores. Retrying...")
             await asyncio.sleep(0.2)
             continue

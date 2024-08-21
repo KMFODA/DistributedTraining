@@ -572,7 +572,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                     bt.logging.info("Finished waiting for group to assemble.")
 
                     bt.logging.info("Running AllReduce..")
-                    await self._run_allreduce(step, custom_group_info)
+                    await self._run_allreduce(step, custom_group_info, peerids_to_uids)
                     # Averaging is finished, loop will now exit
                 
                 except ConnectionResetError as e:
@@ -878,7 +878,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         await matchmaking_task
 
-    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo):
+    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict):
         with self._register_allreduce_group(custom_group_info):
             bt.logging.info("Running AllReduce.")
             assert (
@@ -892,6 +892,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         custom_group_info,
                         tensor_infos=self.tensor_infos,
                         weight=step.weight,
+                        peerids_to_uids=peerids_to_uids,
                         **self.allreduce_kwargs,
                     ),
                     timeout=self._allreduce_timeout,
