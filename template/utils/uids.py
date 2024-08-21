@@ -1,7 +1,7 @@
 import asyncio
 import random
 import traceback
-from typing import List
+from typing import Tuple, Dict, Optional, Callable, List
 
 import bittensor as bt
 import torch
@@ -9,7 +9,6 @@ from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 
 import template
-
 
 async def check_uid(dendrite, axon, uid, epoch=None):
     try:
@@ -112,56 +111,95 @@ async def get_random_uids(
     return uids
 
 
-async def map_uid_to_peerid(self, uids):
-    uids_to_peerids = {}
-    for uid in uids:
-        miner_ip = self.metagraph.axons[uid].ip
-
+async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_delay: float = 1.0) -> Dict[int, Optional[str]]:
+    bt.logging.info(f"Starting map_uid_to_peerid for UIDs: {uids}")
+    uids_to_peerids = {uid: None for uid in uids}
+    
+    for attempt in range(max_retries):
+        bt.logging.info(f"Attempt {attempt + 1} of {max_retries}")
+        
         # Get all peers connected to our DHT and their ips
         peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [
-            str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
-        ]
-
+        peer_list_dht_addrs = [str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht]
+        
         # Get only peers connected to the current run id
         prefix = self.grad_averager.matchmaking_kwargs["prefix"]
-        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
-            {},
-            None,
-        )
-
+        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
+        
         if metadata is None:
-            # return None
-            uids_to_peerids[uid] = None
+            bt.logging.warning(f"No metadata found in DHT for prefix {prefix}")
+            await asyncio.sleep(retry_delay)
             continue
+        
         peer_list_run = [
             str(PeerID(peer_id))
             for peer_id, info in metadata.items()
-            if isinstance(info, ValueWithExpiration)
-            and isinstance(info.value, (float, int))
+            if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))
         ]
-
-        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
-        if miner_ip not in peer_list_dht_addrs:
-            bt.logging.info(f"miner_ip not in peer_list_dht_addrs")
-            bt.logging.info(f"{miner_ip} not in {peer_list_dht_addrs}")
-
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
+        
+        for uid in uids:
+            if uids_to_peerids[uid] is not None:
+                continue  # Skip if we already have a valid peer_id for this uid
+            
+            miner_ip = self.metagraph.axons[uid].ip
+            
+            if miner_ip not in peer_list_dht_addrs:
+                bt.logging.warning(f"Miner IP {miner_ip} for UID {uid} not in peer_list_dht_addrs")
+                continue
+            
             peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-
-        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in peer_list_run:
-            bt.logging.info(f"str(peer_id) not in peer_list_run")
-            bt.logging.info(f"{str(peer_id)} not in {peer_list_run}")
-
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
-            # return peer_id
+            
+            if str(peer_id) not in peer_list_run:
+                bt.logging.warning(f"peer_id {peer_id} for UID {uid} not in peer_list_run")
+                continue
+            
             uids_to_peerids[uid] = peer_id
-            continue
+            bt.logging.info(f"Successfully mapped UID {uid} to peer_id {peer_id}")
+        
+        if all(peer_id is not None for peer_id in uids_to_peerids.values()):
+            break  # Exit the retry loop if all UIDs are mapped
+        
+        await asyncio.sleep(retry_delay)
+    
+    bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
+
+async def initialize_uid_mapping(self):
+    max_retries = 3
+    for attempt in range(max_retries):
+        self.uids_to_peerids = await map_uid_to_peerid(self, range(self.metagraph.n))
+        if any(value is not None for value in self.uids_to_peerids.values()):
+            break
+        await asyncio.sleep(1)
+    
+    if all(value is None for value in self.uids_to_peerids.values()):
+        bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
+
+# Usage in the second context
+async def update_group_peerids(
+    self,
+    score_blacklist: Callable[[List[int]], List[float]]
+) -> Tuple[Optional[Dict[int, str]], Optional[List[float]]]:
+    max_attempts = 10 
+    for attempt in range(max_attempts):
+        group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
+        blacklist_scores = await score_blacklist(self, group_peerids.keys())
+        
+        if group_peerids and blacklist_scores is not None:
+            valid_mapping = all(
+                scores_ids_tuple[1] is not None
+                for index, scores_ids_tuple in enumerate(zip(blacklist_scores, group_peerids.values()))
+                if (index != self.uid) and (scores_ids_tuple[0] != 0)
+            )
+            
+            if valid_mapping:
+                self.uids_to_peerids = group_peerids
+                bt.logging.info(f"Updated group_peerids: {group_peerids}")
+                bt.logging.info(f"Updated blacklist_scores: {blacklist_scores}")
+                return group_peerids, blacklist_scores
+        
+        bt.logging.warning(f"Attempt {attempt + 1}: Invalid or incomplete mapping. Retrying...")
+        await asyncio.sleep(1)
+    
+    bt.logging.error("Failed to update group_peerids and blacklist_scores after maximum attempts")
+    return None, None

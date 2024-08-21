@@ -326,22 +326,22 @@ def add_loki_logger_handler(
     )
 
     # Send logs to loki as JSON
-    loki_handler.setFormatter(
-        JSONFormatter(
-            network,
-            netuid,
-            hotkey,
-            version,
-            spec_version,
-            run_id,
-            ip,
-            port,
-            uid,
-            neuron_type,
-        )
-    )
+    # loki_handler.setFormatter(
+    #     JSONFormatter(
+    #         network,
+    #         netuid,
+    #         hotkey,
+    #         version,
+    #         spec_version,
+    #         run_id,
+    #         ip,
+    #         port,
+    #         uid,
+    #         neuron_type,
+    #     )
+    # )
 
-    logger.addHandler(loki_handler)
+    # logger.addHandler(loki_handler)
 
 
 def setup_logging(
@@ -369,19 +369,19 @@ def setup_logging(
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
     bt_logger_.addHandler(logtail_handler)
-    add_loki_logger_handler(
-        bt_logger_,
-        network,
-        netuid,
-        hotkey,
-        version,
-        spec_version,
-        run_id,
-        ip,
-        port,
-        uid,
-        neuron_type,
-    )
+    # add_loki_logger_handler(
+    #     bt_logger_,
+    #     network,
+    #     netuid,
+    #     hotkey,
+    #     version,
+    #     spec_version,
+    #     run_id,
+    #     ip,
+    #     port,
+    #     uid,
+    #     neuron_type,
+    # )
 
     use_hivemind_log_handler("nowhere")
 
@@ -396,19 +396,19 @@ def setup_logging(
     root_logger.addHandler(bt_handler)
     root_logger.addHandler(logtail_handler)
 
-    add_loki_logger_handler(
-        root_logger,
-        network,
-        netuid,
-        hotkey,
-        version,
-        spec_version,
-        run_id,
-        ip,
-        port,
-        uid,
-        neuron_type,
-    )
+    # add_loki_logger_handler(
+    #     root_logger,
+    #     network,
+    #     netuid,
+    #     hotkey,
+    #     version,
+    #     spec_version,
+    #     run_id,
+    #     ip,
+    #     port,
+    #     uid,
+    #     neuron_type,
+    # )
 
     # Create a file handler that logs debug and higher level messages
     if os.path.exists(local_logfile):

@@ -55,22 +55,23 @@ class BarrierState(Enum):
 
 
 class DTAllReduceRunner(AllReduceRunner):
-    def __init__(self, peerids_to_uids, *args, **kwargs):
+    # def __init__(self, peerids_to_uids, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.count = 0
-        self.peerids_to_uids = peerids_to_uids
-        bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
+        #self.peerids_to_uids = peerids_to_uids
+        # bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
-        uid = (
-            self.peerids_to_uids[str(peer_id)]
-            if str(peer_id) in self.peerids_to_uids.keys()
-            else ""
-        )
-        bt.logging.info(
-            f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
-        )
+        # uid = (
+        #     self.peerids_to_uids[str(peer_id)]
+        #     if str(peer_id) in self.peerids_to_uids.keys()
+        #     else ""
+        # )
+        # bt.logging.info(
+        #     f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
+        # )
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         if peer_id == self.peer_id:
@@ -88,19 +89,18 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info("DTAllReduceRunner..")
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
-                    self._generate_input_for_peer(peer_index, uid, peer_id),
-                    done_sending,
+                    self._generate_input_for_peer(peer_index), done_sending,
                 )
 
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer started"
-                )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer started"
+                # )
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - get_peer_stub finished"
-                )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{peer_id} - get_peer_stub finished"
+                # )
 
                 if self.should_delay_results(self.peer_id):
                     bt.logging.info(
@@ -108,9 +108,9 @@ class DTAllReduceRunner(AllReduceRunner):
                     )
                     await done_sending.wait()
 
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - sending tensors finished"
-                )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{peer_id} - sending tensors finished"
+                # )
                 part_index = 0
 
                 def _try_deserialize(msg):
@@ -131,9 +131,9 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
-                )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
+                # )
                 if (
                     part_index
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
@@ -154,43 +154,43 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
-                bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
+                # bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
 
-    #! Test fault-tolerance here:
-    async def rpc_aggregate_part(
-        self, stream, context
-    ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        """
-        Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
-        or failure in communication, it directly raises an exception.
-        """
-        try:
-            #
-            # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])
-            # test_fault = True
-            # if test_fault:
-            #     condition = "FAIL_SENDING"
+    # #! Test fault-tolerance here:
+    # async def rpc_aggregate_part(
+    #     self, stream, context
+    # ) -> AsyncIterator[averaging_pb2.AveragingData]:
+    #     """
+    #     Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
+    #     or failure in communication, it directly raises an exception.
+    #     """
+    #     try:
+    #         #
+    #         # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])
+    #         # test_fault = True
+    #         # if test_fault:
+    #         #     condition = "FAIL_SENDING"
 
-            #     async for message in super().rpc_aggregate_part(stream, context):
-            #         self.count+=1
-            #         yield message
-            #         if self.count == 2:
-            #             if condition == "FAIL_SENDING":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-            #                 break
-            #             elif condition == "SLOW_REDUCE":
-            #                 await asyncio.sleep(10)
-            #             elif condition == "CANCEL":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-            # else:
-            async for message in super().rpc_aggregate_part(stream, context):
-                yield message
+    #         #     async for message in super().rpc_aggregate_part(stream, context):
+    #         #         self.count+=1
+    #         #         yield message
+    #         #         if self.count == 2:
+    #         #             if condition == "FAIL_SENDING":
+    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
+    #         #                 break
+    #         #             elif condition == "SLOW_REDUCE":
+    #         #                 await asyncio.sleep(10)
+    #         #             elif condition == "CANCEL":
+    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
+    #         # else:
+    #         async for message in super().rpc_aggregate_part(stream, context):
+    #             yield message
 
-        except Exception as e:
-            logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
-            raise e
+    #     except Exception as e:
+    #         logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
+    #         raise e
 
     def __aiter__(self):
         return self.run()
@@ -230,14 +230,14 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.finalize()
 
             elif self.peer_id in self.sender_peer_ids:
-                uid = (
-                    self.peerids_to_uids[str(self.peer_id)]
-                    if self.peer_id in self.peerids_to_uids.keys()
-                    else ""
-                )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
-                )
+                # uid = (
+                #     self.peerids_to_uids[str(self.peer_id)]
+                #     if self.peer_id in self.peerids_to_uids.keys()
+                #     else ""
+                # )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
+                # )
 
                 for peer_id, parts in zip(
                     self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer
@@ -280,7 +280,8 @@ class DTAllReduceRunner(AllReduceRunner):
                     logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
 
     async def _generate_input_for_peer(
-        self, peer_index: int, uid: int, peer_id: PeerID
+        # self, peer_index: int, uid: int, peer_id: PeerID
+        self, peer_index: int
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
@@ -291,9 +292,9 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
-            bt.logging.info(
-                f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
-            )
+            # bt.logging.info(
+            #     f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
+            # )
             #! Test Fault-tolerance here:
             # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
             # if peer_index == last_reducer_index:
@@ -318,19 +319,20 @@ class DTAllReduceRunner(AllReduceRunner):
             raise e
 
     async def _ban_sender(self, peer_id: PeerID):
-        uid = (
-            self.peerids_to_uids[str(peer_id)]
-            if peer_id in self.peerids_to_uids.keys()
-            else ""
-        )
-        bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
+        # uid = (
+        #     self.peerids_to_uids[str(peer_id)]
+        #     if peer_id in self.peerids_to_uids.keys()
+        #     else ""
+        # )
+        # bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
                 self.tensor_part_reducer.on_sender_failed(
                     self.sender_peer_ids.index(peer_id)
                 )
-                error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
+                # error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
+                error_message = f"- PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
 
                 raise Exception(error_message)
@@ -349,7 +351,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
-        peerids_to_uids: dict = {},
+        #peerids_to_uids: dict = {},
         **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         """
@@ -443,7 +445,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         *,
         step: StepControl,
         future_for_init: MPFuture,
-        peerids_to_uids: dict = {},
+        #peerids_to_uids: dict = {},
     ):
         try:
             trigger, cancel = MPFuture(), MPFuture()
@@ -491,7 +493,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                                     group_info,
                                     tensor_infos=self.tensor_infos,
                                     weight=step.weight,
-                                    peerids_to_uids=peerids_to_uids,
+                                    #peerids_to_uids=peerids_to_uids,
                                     **self.allreduce_kwargs,
                                 ),
                                 timeout=self._allreduce_timeout,
@@ -543,7 +545,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         step: StepControl,
         future_for_init: MPFuture,
         custom_group_info: GroupInfo,
-        peerids_to_uids: dict = {},
+       #peerids_to_uids: dict = {},
     ):
         self.current_group_info = custom_group_info
         self.p2p = await self.dht.replicate_p2p()
@@ -863,7 +865,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         self,
         group_info: GroupInfo,
         min_vector_size: int,
-        peerids_to_uids: dict,
+        #peerids_to_uids: dict,
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata"""
@@ -874,7 +876,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
-                    peerids_to_uids=peerids_to_uids,
+                    #peerids_to_uids=peerids_to_uids,
                     p2p=self._p2p,
                     servicer_type=type(self),
                     prefix=self.prefix,

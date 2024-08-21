@@ -25,7 +25,7 @@ import bittensor as bt
 import torch
 
 from template.data.dataset import SubsetFalconLoader
-from template.utils.uids import get_random_uids, map_uid_to_peerid
+from template.utils.uids import get_random_uids, update_group_peerids
 
 
 def score_gradients(self, response, uid):
@@ -171,11 +171,8 @@ async def get_rewards(
         scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
         # Update mapping of uids to peerids
-        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+        _, blacklist_scores = await update_group_peerids(self, score_blacklist) # Passing method to avoid circular import error
+        
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
             {
@@ -223,13 +220,8 @@ async def get_rewards(
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if (self.step % 10) == 0:
             # Update mapping of uids to peerids
-            self.uids_to_peerids = await map_uid_to_peerid(
-                self, range(0, self.metagraph.n)
-            )
-            self.uids_to_peerids[self.uid] = self.dht.peer_id
+            _, blacklist_scores = await update_group_peerids(self, score_blacklist) # Passing method to avoid circular import error
 
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, uids.tolist())
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
                 {

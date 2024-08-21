@@ -162,3 +162,5 @@ bittensor-subnet-template/
 wandb/
 .vscode/
 template/proto/*.py
+bittensor/
+logs_mylogfile.txt
