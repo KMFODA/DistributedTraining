@@ -91,15 +91,15 @@ class DTAllReduceRunner(AllReduceRunner):
                     self._generate_input_for_peer(peer_index), done_sending,
                 )
 
-                # bt.logging.info(
-                #     f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer started"
-                # )
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer started"
+                )
                 stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
                     inputs_aiter
                 )
-                # bt.logging.info(
-                #     f"UID:{uid} - PeerID:{peer_id} - get_peer_stub finished"
-                # )
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - get_peer_stub finished"
+                )
 
                 if self.should_delay_results(self.peer_id):
                     bt.logging.info(
@@ -107,9 +107,9 @@ class DTAllReduceRunner(AllReduceRunner):
                     )
                     await done_sending.wait()
 
-                # bt.logging.info(
-                #     f"UID:{uid} - PeerID:{peer_id} - sending tensors finished"
-                # )
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - sending tensors finished"
+                )
                 part_index = 0
 
                 def _try_deserialize(msg):
@@ -130,9 +130,9 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                # bt.logging.info(
-                #     f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
-                # )
+                bt.logging.info(
+                    f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
+                )
                 if (
                     part_index
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
@@ -163,40 +163,6 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
-
-    # #! Test fault-tolerance here:
-    # async def rpc_aggregate_part(
-    #     self, stream, context
-    # ) -> AsyncIterator[averaging_pb2.AveragingData]:
-    #     """
-    #     Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
-    #     or failure in communication, it directly raises an exception.
-    #     """
-    #     try:
-    #         #
-    #         # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])
-    #         # test_fault = True
-    #         # if test_fault:
-    #         #     condition = "FAIL_SENDING"
-
-    #         #     async for message in super().rpc_aggregate_part(stream, context):
-    #         #         self.count+=1
-    #         #         yield message
-    #         #         if self.count == 2:
-    #         #             if condition == "FAIL_SENDING":
-    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-    #         #                 break
-    #         #             elif condition == "SLOW_REDUCE":
-    #         #                 await asyncio.sleep(10)
-    #         #             elif condition == "CANCEL":
-    #         #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-    #         # else:
-    #         async for message in super().rpc_aggregate_part(stream, context):
-    #             yield message
-
-    #     except Exception as e:
-    #         logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
-    #         raise e
 
     def __aiter__(self):
         return self.run()
@@ -256,7 +222,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info(f"Succesfully Communicated With All Peers")
 
                 async for averaged_tensor_delta in self.tensor_part_container.iterate_output_tensors():
-                    yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
+                    yield averaged_tensor_delta
 
                 bt.logging.info(f"Iterate Output Tensors Finished")
 

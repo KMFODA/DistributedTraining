@@ -21,7 +21,7 @@ import base64
 import copy
 import random
 import time
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import bittensor as bt
 import numpy as np
@@ -38,14 +38,30 @@ from template.utils.state_loader import load_state_from_peer
 from template.utils.uids import get_random_uids, map_uid_to_peerid
 from template.validator.reward import get_rewards, score_blacklist
 
-def validate_peers(self, group_peerids: Dict[int, str], blacklist_scores: List[float]) -> bool:
-    if not group_peerids or blacklist_scores is None:
-        return False
-    return all(
-        peer_id is not None and score != 0
-        for (uid, peer_id), score in zip(group_peerids.items(), blacklist_scores)
-        if uid != self.uid
-    )
+def validate_peers(self, group_peerids: Dict[int, str], blacklist_scores: List[float]) -> Tuple[bool, str]:
+    if not group_peerids:
+        return False, "Empty group_peerids"
+    if blacklist_scores is None:
+        return False, "Blacklist scores are None"
+    if len(group_peerids) != len(blacklist_scores):
+        return False, f"Mismatch in lengths: group_peerids ({len(group_peerids)}) vs blacklist_scores ({len(blacklist_scores)})"
+
+    invalid_peers = []
+    blacklisted_peers = []
+
+    for (uid, peer_id), score in zip(group_peerids.items(), blacklist_scores):
+        if uid != self.uid:
+            if peer_id is None:
+                invalid_peers.append(uid)
+            elif score == 0:
+                blacklisted_peers.append(uid)
+
+    if invalid_peers:
+        return False, f"Invalid peer IDs for UIDs: {invalid_peers}"
+    if blacklisted_peers:
+        return False, f"Blacklisted peers (score 0) for UIDs: {blacklisted_peers}"
+
+    return True, "All peers valid"
 
 async def perform_all_reduce(self, start_time):
     
@@ -61,8 +77,9 @@ async def perform_all_reduce(self, start_time):
         blacklist_scores = await score_blacklist(self, list(group_peerids.keys()))
 
         # Validate peers
-        if not validate_peers(self, group_peerids, blacklist_scores):
-            bt.logging.warning("Invalid peer mapping or scores. Retrying...")
+        is_valid, error_message = validate_peers(self, group_peerids, blacklist_scores)
+        if not is_valid:
+            bt.logging.warning(f"Peer validation failed: {error_message}. Retrying...")
             await asyncio.sleep(0.2)
             continue
 
