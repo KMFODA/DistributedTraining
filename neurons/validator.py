@@ -47,7 +47,7 @@ from template.utils.progress_tracker import (GlobalTrainingProgress,
                                              LocalTrainingProgress,
                                              update_global_tracker_state)
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import map_uid_to_peerid
+from template.utils.uids import map_uid_to_peerid, initialize_uid_mapping
 from template.validator import forward
 
 logger = get_logger(__name__)
@@ -156,7 +156,7 @@ class Validator(BaseValidatorNeuron):
         self.serializer = self.grad_averager.serializer
 
         # Create mapping between uids to peerids       
-        self.uids_to_peerids = self._initialize_uid_mapping()
+        self.uids_to_peerids = initialize_uid_mapping(self)
 
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
@@ -172,19 +172,6 @@ class Validator(BaseValidatorNeuron):
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
-        
-    def _initialize_uid_mapping(self):
-        max_retries = 3
-        for attempt in range(max_retries):
-            uids_to_peerids = self.loop.run_until_complete(
-                map_uid_to_peerid(self, range(self.metagraph.n))
-            )
-            if any(value is not None for value in uids_to_peerids.values()):
-                return uids_to_peerids
-            time.sleep(1)  # Sleep for 1 second between retries
-
-        bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
-        return {uid: None for uid in range(self.metagraph.n)}
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
@@ -192,65 +179,6 @@ class Validator(BaseValidatorNeuron):
                 self.local_progress.samples_accumulated += len(response.dataset_indices)
             else:
                 continue
-
-    def map_uids_to_peerids(self):
-        # Track how recently we updated each uid
-        uid_last_checked = dict()
-
-        # The below loop iterates across all miner uids and checks to see
-        # if they should be updated.
-        while not self.stop_event.is_set():
-            try:
-                # Get the next uid to check
-                next_uid = next(self.miner_iterator)
-
-                # Confirm that we haven't checked it in the last 5 minutes.
-                time_diff = (
-                    dt.datetime.now() - uid_last_checked[next_uid]
-                    if next_uid in uid_last_checked
-                    else None
-                )
-
-                if time_diff and time_diff < dt.timedelta(minutes=5):
-                    # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
-                    time_to_sleep = (
-                        dt.timedelta(minutes=5) - time_diff
-                    ).total_seconds()
-                    bt.logging.trace(
-                        f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
-                    )
-                    time.sleep(time_to_sleep)
-
-                uid_last_checked[next_uid] = dt.datetime.now()
-
-                # Get their hotkey from the metagraph.
-                hotkey = self.metagraph.hotkeys[next_uid]
-
-                # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-                metadata = bt.extrinsics.serving.get_metadata(
-                    self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
-                )
-
-                if not metadata:
-                    updated = None
-                else:
-                    commitment = metadata["info"]["fields"][0]
-                    hex_data = commitment[list(commitment.keys())[0]][2:]
-                    chain_str = bytes.fromhex(hex_data).decode()
-                    updated = PeerID(chain_str)
-
-                if self.uids_to_peerids[next_uid] != updated:
-                    bt.logging.trace(
-                        f"Updated peerID for UID={next_uid}. Was new = {updated}"
-                    )
-                    self.uids_to_peerids[next_uid] = updated
-
-            except Exception as e:
-                bt.logging.error(
-                    f"Error in update loop: {e} \n {traceback.format_exc()}"
-                )
-
-        bt.logging.info("Exiting update models loop.")
 
     def get_learning_rate(self):
         if self.global_progress.epoch is None:

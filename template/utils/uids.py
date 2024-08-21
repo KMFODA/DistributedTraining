@@ -1,3 +1,4 @@
+import time
 import asyncio
 import random
 import traceback
@@ -164,16 +165,18 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
     bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
 
-async def initialize_uid_mapping(self):
+def initialize_uid_mapping(self):
     max_retries = 3
     for attempt in range(max_retries):
-        self.uids_to_peerids = await map_uid_to_peerid(self, range(self.metagraph.n))
-        if any(value is not None for value in self.uids_to_peerids.values()):
-            break
-        await asyncio.sleep(1)
-    
-    if all(value is None for value in self.uids_to_peerids.values()):
-        bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
+        uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(self, range(self.metagraph.n))
+        )
+        if any(value is not None for value in uids_to_peerids.values()):
+            return uids_to_peerids
+        time.sleep(1)  # Sleep for 1 second between retries
+
+    bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
+    return {uid: None for uid in range(self.metagraph.n)}
 
 # Usage in the second context
 async def update_group_peerids(
