@@ -267,7 +267,7 @@ class DTAllReduceRunner(AllReduceRunner):
             )
 
             async for part in parts_aiter:
-                # bt.logging.info("_generate_input_for_peer for loop")
+                bt.logging.info("_generate_input_for_peers for loop")
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
             bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
 

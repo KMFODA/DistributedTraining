@@ -82,7 +82,7 @@ class Validator(BaseValidatorNeuron):
         )
 
         # Init DHT
-        init_dht(self)
+        self.dht = init_dht(self)
 
         # Init Local & Global Progress
         self.local_progress = LocalTrainingProgress(
