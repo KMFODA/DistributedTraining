@@ -121,7 +121,8 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
         
         # Get all peers connected to our DHT and their ips
         peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht]
+        peer_list_dht_addrs = [str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] 
+                               for peer in peer_list_dht]
         
         # Get only peers connected to the current run id
         prefix = self.grad_averager.matchmaking_kwargs["prefix"]
@@ -166,7 +167,7 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
     return uids_to_peerids
 
 def initialize_uid_mapping(self):
-    max_retries = 3
+    max_retries = 3 # TODO Make config
     for attempt in range(max_retries):
         uids_to_peerids = self.loop.run_until_complete(
             map_uid_to_peerid(self, range(self.metagraph.n))

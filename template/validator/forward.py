@@ -88,7 +88,7 @@ async def perform_all_reduce(self, start_time):
                                if blacklist_scores[list(group_peerids.keys()).index(uid)] != 0.0}
 
         self.miner_uids = torch.tensor(list(valid_group_peerids.keys())).to(self.device)
-
+        
         group_id = DHTID.generate().to_bytes()
 
         bt.logging.info(f"DHT ID: {self.dht.peer_id}")
@@ -101,7 +101,7 @@ async def perform_all_reduce(self, start_time):
             
             # Map uids to peerids
             self.peerids_to_uids = {
-                str(value): key for key, value in self.uids_to_peerids.items()
+                str(value): key for key, value in valid_group_peerids.items()
             }
             
             group = template.protocol.Group(

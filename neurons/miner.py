@@ -127,6 +127,7 @@ class Miner(BaseMinerNeuron):
 
         # Create mapping between uids to peerids
         self.uids_to_peerids = initialize_uid_mapping(self)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
 
         # Load dataset
         self.dataset_loader = ()

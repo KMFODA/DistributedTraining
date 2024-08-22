@@ -157,6 +157,7 @@ class Validator(BaseValidatorNeuron):
 
         # Create mapping between uids to peerids       
         self.uids_to_peerids = initialize_uid_mapping(self)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
 
         # Init All Reduce Variables
         self.all_reduce_timeout = 300

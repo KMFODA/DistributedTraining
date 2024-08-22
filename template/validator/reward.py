@@ -101,8 +101,10 @@ async def score_blacklist(self, uids):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         if self.uids_to_peerids[uid] == None:
+            bt.logging.info(f"- Scoring {uid} 0.0")
             scores[i] = 0.0
         else:
+            bt.logging.info(f"- Scoring {uid} 1.0")
             scores[i] = 1.0
 
     return scores

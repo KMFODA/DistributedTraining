@@ -303,8 +303,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.tensor_part_reducer.on_sender_failed(
                     self.sender_peer_ids.index(peer_id)
                 )
-                # error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
-                error_message = f"- PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
+                error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
 
                 raise Exception(error_message)
