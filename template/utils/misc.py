@@ -508,7 +508,20 @@ def init_dht(self):
                         f"Successfully initialised dht using initial_peer as {initiaL_peer}"
                     )
                     successful_connection = True
-                    break
+                    utils.log_visible_maddrs(
+                        self.dht.get_visible_maddrs(), only_p2p=True
+                    )
+                    # Add DHT address to wandb config
+                    self.config.neuron.dht_addresses = [
+                        re.sub(
+                            "ip4/?(.*?)/",
+                            f"ip{version}/{address}/",
+                            str(addr),
+                            flags=re.DOTALL,
+                        )
+                        for addr in self.dht.get_visible_maddrs()
+                    ]
+                    return
                 except Exception as e:
                     bt.logging.error(
                         f"Attempt {attempt + 1} to init DHT using initial_peer as {initiaL_peer} failed with error: {e}"
@@ -516,28 +529,6 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error(f"Retrying...")
-
-    utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
-
-    # Commit Peer Id to Subtensor
-    # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
-    # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.
-    # partial = functools.partial(
-    #     self.subtensor.commit,
-    #     self.wallet,
-    #     self.config.netuid,
-    #    self.dht.peer_id.to_base58(),
-    # )
-    # try:
-    #     run_in_subprocess(partial, 60)
-    # except Exception as e:
-    #     bt.logging.info(f"Error submitting Peer ID to chaing {Exception} retrying in 2 minutes")
-
-    # Add DHT address to wandb config
-    self.config.neuron.dht_addresses = [
-        re.sub("ip4/?(.*?)/", f"ip{version}/{address}/", str(addr), flags=re.DOTALL)
-        for addr in self.dht.get_visible_maddrs()
-    ]
 
 
 def warmup(self):
