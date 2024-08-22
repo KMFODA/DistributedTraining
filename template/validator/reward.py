@@ -172,10 +172,11 @@ async def get_rewards(
 
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
+        self.uids_to_peerids[self.uid] = self.dht.peer_id   
+        
+        # Check if peer is connected to DHT & run_id and blacklist them if they are not  
         blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
             {
@@ -222,14 +223,14 @@ async def get_rewards(
 
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if (self.step % 10) == 0:
-            # Update mapping of uids to peerids
-            self.uids_to_peerids = await map_uid_to_peerid(
-                self, range(0, self.metagraph.n)
-            )
-            self.uids_to_peerids[self.uid] = self.dht.peer_id
 
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, uids.tolist())
+            # Update mapping of uids to peerids
+            self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
+            self.uids_to_peerids[self.uid] = self.dht.peer_id   
+            
+            # Check if peer is connected to DHT & run_id and blacklist them if they are not  
+            blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+            
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
                 {

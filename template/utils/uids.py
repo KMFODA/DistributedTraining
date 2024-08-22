@@ -1,7 +1,8 @@
+import time
 import asyncio
 import random
 import traceback
-from typing import List
+from typing import Tuple, Dict, Optional, Callable, List, Union
 
 import bittensor as bt
 import torch
@@ -9,7 +10,6 @@ from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 
 import template
-
 
 async def check_uid(dendrite, axon, uid, epoch=None):
     try:
@@ -112,50 +112,68 @@ async def get_random_uids(
     return uids
 
 
-async def map_uid_to_peerid(self, uids):
-    uids_to_peerids = {}
-    for uid in uids:
-        miner_ip = self.metagraph.axons[uid].ip
-
+async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_delay: float = 1.0) -> Dict[int, Optional[str]]:
+    bt.logging.info(f"Starting map_uid_to_peerid for UIDs: {uids}")
+    uids_to_peerids = {uid: None for uid in uids}
+    
+    for attempt in range(max_retries):
+        bt.logging.info(f"Attempt {attempt + 1} of {max_retries}")
+        
         # Get all peers connected to our DHT and their ips
         peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [
-            str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
-        ]
-
+        peer_list_dht_addrs = [str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht]
+        
         # Get only peers connected to the current run id
         prefix = self.grad_averager.matchmaking_kwargs["prefix"]
-        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
-            {},
-            None,
-        )
-
+        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
+        
         if metadata is None:
-            # return None
-            uids_to_peerids[uid] = None
+            bt.logging.warning(f"No metadata found in DHT for prefix {prefix}")
+            await asyncio.sleep(retry_delay)
             continue
+        
         peer_list_run = [
             str(PeerID(peer_id))
             for peer_id, info in metadata.items()
-            if isinstance(info, ValueWithExpiration)
-            and isinstance(info.value, (float, int))
+            if isinstance(info, ValueWithExpiration) and isinstance(info.value, (float, int))
         ]
-
-        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
-        if miner_ip not in peer_list_dht_addrs:
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
+        
+        for uid in uids:
+            if uids_to_peerids[uid] is not None:
+                continue  # Skip if we already have a valid peer_id for this uid
+            
+            miner_ip = self.metagraph.axons[uid].ip
+            
+            if miner_ip not in peer_list_dht_addrs:
+                bt.logging.warning(f"Miner IP {miner_ip} for UID {uid} not in peer_list_dht_addrs")
+                continue
+            
             peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-
-        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in peer_list_run:
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
-            # return peer_id
+            
+            if str(peer_id) not in peer_list_run:
+                bt.logging.warning(f"peer_id {peer_id} for UID {uid} not in peer_list_run")
+                continue
+            
             uids_to_peerids[uid] = peer_id
-            continue
+            bt.logging.info(f"Successfully mapped UID {uid} to peer_id {peer_id}")
+        
+        if all(peer_id is not None for peer_id in uids_to_peerids.values()):
+            break  # Exit the retry loop if all UIDs are mapped
+        
+        await asyncio.sleep(retry_delay)
+    
+    bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
+
+def initialize_uid_mapping(self):
+    max_retries = 3
+    for attempt in range(max_retries):
+        uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(self, range(self.metagraph.n))
+        )
+        if any(value is not None for value in uids_to_peerids.values()):
+            return uids_to_peerids
+        time.sleep(1)  # Sleep for 1 second between retries
+
+    bt.logging.warning("Failed to map any UIDs to peer IDs after maximum retries")
+    return {uid: None for uid in range(self.metagraph.n)}

@@ -88,8 +88,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info("DTAllReduceRunner..")
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
-                    self._generate_input_for_peer(peer_index, uid, peer_id),
-                    done_sending,
+                    self._generate_input_for_peer(peer_index), done_sending,
                 )
 
                 bt.logging.info(
@@ -145,11 +144,18 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"peer {peer_id} sent {part_index} parts, but we expected "
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
+            
+            except ConnectionResetError:
+                logger.error(f"Connection reset by peer: {peer_id}")
+                if peer_id == self.ordered_peer_ids[0]:
+                    bt.logging.error("Validator connection faulting")
+                self.tensor_part_container.register_failed_reducer(peer_index)                    
+                raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
 
             except BaseException as e:
                 if isinstance(
                     e, Exception
-                ):  # TODO Here we need to catch if peers disconnect ("Connection Reset By Peer")
+                ):  
                     logger.debug(
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
@@ -157,40 +163,6 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
-
-    #! Test fault-tolerance here:
-    async def rpc_aggregate_part(
-        self, stream, context
-    ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        """
-        Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
-        or failure in communication, it directly raises an exception.
-        """
-        try:
-            #
-            # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])
-            # test_fault = True
-            # if test_fault:
-            #     condition = "FAIL_SENDING"
-
-            #     async for message in super().rpc_aggregate_part(stream, context):
-            #         self.count+=1
-            #         yield message
-            #         if self.count == 2:
-            #             if condition == "FAIL_SENDING":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-            #                 break
-            #             elif condition == "SLOW_REDUCE":
-            #                 await asyncio.sleep(10)
-            #             elif condition == "CANCEL":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-            # else:
-            async for message in super().rpc_aggregate_part(stream, context):
-                yield message
-
-        except Exception as e:
-            logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
-            raise e
 
     def __aiter__(self):
         return self.run()
@@ -250,7 +222,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info(f"Succesfully Communicated With All Peers")
 
                 async for averaged_tensor_delta in self.tensor_part_container.iterate_output_tensors():
-                    yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
+                    yield averaged_tensor_delta
 
                 bt.logging.info(f"Iterate Output Tensors Finished")
 
@@ -280,7 +252,8 @@ class DTAllReduceRunner(AllReduceRunner):
                     logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
 
     async def _generate_input_for_peer(
-        self, peer_index: int, uid: int, peer_id: PeerID
+        # self, peer_index: int, uid: int, peer_id: PeerID
+        self, peer_index: int
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
@@ -291,9 +264,9 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
-            bt.logging.info(
-                f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
-            )
+            # bt.logging.info(
+            #     f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
+            # )
             #! Test Fault-tolerance here:
             # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
             # if peer_index == last_reducer_index:
@@ -330,7 +303,8 @@ class DTAllReduceRunner(AllReduceRunner):
                 self.tensor_part_reducer.on_sender_failed(
                     self.sender_peer_ids.index(peer_id)
                 )
-                error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
+                # error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
+                error_message = f"- PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
 
                 raise Exception(error_message)
@@ -349,7 +323,6 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
-        peerids_to_uids: dict = {},
         **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         """
@@ -405,6 +378,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
+        peerids_to_uids = kwargs.get("peerids_to_uids", None)
 
         if custom_group_info is not None:
             self._outer_pipe.send(
@@ -415,6 +389,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         step=step,
                         future_for_init=future_for_init,
                         custom_group_info=custom_group_info,
+                        peerids_to_uids=peerids_to_uids
                     ),
                 )
             )
@@ -438,104 +413,104 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         return step.result() if wait else step
 
-    async def _step(
-        self,
-        *,
-        step: StepControl,
-        future_for_init: MPFuture,
-        peerids_to_uids: dict = {},
-    ):
-        try:
-            trigger, cancel = MPFuture(), MPFuture()
-            step.attach(trigger, cancel)
-            future_for_init.set_result((trigger, cancel))
+    # async def _step(
+    #     self,
+    #     *,
+    #     step: StepControl,
+    #     future_for_init: MPFuture,
+    #     peerids_to_uids: dict = {},
+    # ):
+    #     try:
+    #         trigger, cancel = MPFuture(), MPFuture()
+    #         step.attach(trigger, cancel)
+    #         future_for_init.set_result((trigger, cancel))
 
-            async def find_peers_or_notify_cancel():
-                group_info = await self._matchmaking.look_for_group(step)
-                if not step.triggered:
-                    step.stage = AveragingStage.AWAITING_TRIGGER
-                    await step.wait_for_trigger()
-                return group_info
+    #         async def find_peers_or_notify_cancel():
+    #             group_info = await self._matchmaking.look_for_group(step)
+    #             if not step.triggered:
+    #                 step.stage = AveragingStage.AWAITING_TRIGGER
+    #                 await step.wait_for_trigger()
+    #             return group_info
 
-            while not step.done():
-                try:
-                    self._pending_groups_registered.clear()
-                    step.stage = AveragingStage.LOOKING_FOR_GROUP
-                    matchmaking_task = asyncio.create_task(
-                        find_peers_or_notify_cancel()
-                    )
-                    check_cancel_task = asyncio.create_task(step.wait_for_cancel())
+    #         while not step.done():
+    #             try:
+    #                 self._pending_groups_registered.clear()
+    #                 step.stage = AveragingStage.LOOKING_FOR_GROUP
+    #                 matchmaking_task = asyncio.create_task(
+    #                     find_peers_or_notify_cancel()
+    #                 )
+    #                 check_cancel_task = asyncio.create_task(step.wait_for_cancel())
 
-                    await asyncio.wait(
-                        {matchmaking_task, check_cancel_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if step.cancelled():
-                        matchmaking_task.cancel()
-                        raise asyncio.CancelledError()
-                    else:
-                        check_cancel_task.cancel()
+    #                 await asyncio.wait(
+    #                     {matchmaking_task, check_cancel_task},
+    #                     return_when=asyncio.FIRST_COMPLETED,
+    #                 )
+    #                 if step.cancelled():
+    #                     matchmaking_task.cancel()
+    #                     raise asyncio.CancelledError()
+    #                 else:
+    #                     check_cancel_task.cancel()
 
-                    group_info = await matchmaking_task
+    #                 group_info = await matchmaking_task
 
-                    if group_info is None:
-                        raise AllreduceException(
-                            "Averaging step failed: could not find a group"
-                        )
+    #                 if group_info is None:
+    #                     raise AllreduceException(
+    #                         "Averaging step failed: could not find a group"
+    #                     )
 
-                    with self._register_allreduce_group(group_info):
-                        step.stage = AveragingStage.RUNNING_ALLREDUCE
-                        step.set_result(
-                            await asyncio.wait_for(
-                                self._aggregate_with_group(
-                                    group_info,
-                                    tensor_infos=self.tensor_infos,
-                                    weight=step.weight,
-                                    peerids_to_uids=peerids_to_uids,
-                                    **self.allreduce_kwargs,
-                                ),
-                                timeout=self._allreduce_timeout,
-                            )
-                        )
-                        # averaging is finished, loop will now exit
+    #                 with self._register_allreduce_group(group_info):
+    #                     step.stage = AveragingStage.RUNNING_ALLREDUCE
+    #                     step.set_result(
+    #                         await asyncio.wait_for(
+    #                             self._aggregate_with_group(
+    #                                 group_info,
+    #                                 tensor_infos=self.tensor_infos,
+    #                                 weight=step.weight,
+    #                                 peerids_to_uids=peerids_to_uids,
+    #                                 **self.allreduce_kwargs,
+    #                             ),
+    #                             timeout=self._allreduce_timeout,
+    #                         )
+    #                     )
+    #                     # averaging is finished, loop will now exit
 
-                except (
-                    AllreduceException,
-                    MatchmakingException,
-                    AssertionError,
-                    StopAsyncIteration,
-                    asyncio.CancelledError,
-                    asyncio.InvalidStateError,
-                    P2PHandlerError,
-                    P2PDaemonError,
-                ) as e:
-                    if (
-                        step.done()
-                        or not step.allow_retries
-                        or get_dht_time() >= step.deadline
-                    ):
-                        if not step.cancelled():
-                            logger.exception(e)
-                        if not step.done():
-                            step.set_exception(e)
-                    else:
-                        logger.warning(
-                            f"{self.__class__.__name__} caught {repr(e)}, retrying"
-                        )
+    #             except (
+    #                 AllreduceException,
+    #                 MatchmakingException,
+    #                 AssertionError,
+    #                 StopAsyncIteration,
+    #                 asyncio.CancelledError,
+    #                 asyncio.InvalidStateError,
+    #                 P2PHandlerError,
+    #                 P2PDaemonError,
+    #             ) as e:
+    #                 if (
+    #                     step.done()
+    #                     or not step.allow_retries
+    #                     or get_dht_time() >= step.deadline
+    #                 ):
+    #                     if not step.cancelled():
+    #                         logger.exception(e)
+    #                     if not step.done():
+    #                         step.set_exception(e)
+    #                 else:
+    #                     logger.warning(
+    #                         f"{self.__class__.__name__} caught {repr(e)}, retrying"
+    #                     )
 
-        except BaseException as e:
-            if not step.done():
-                step.set_exception(e)
-            raise
-        finally:
-            step.stage = AveragingStage.FINISHED
-            if not step.done():
-                step.set_exception(
-                    RuntimeError(
-                        "Internal sanity check failed: averager.step left future pending."
-                        " Please report this to hivemind issues."
-                    )
-                )
+    #     except BaseException as e:
+    #         if not step.done():
+    #             step.set_exception(e)
+    #         raise
+    #     finally:
+    #         step.stage = AveragingStage.FINISHED
+    #         if not step.done():
+    #             step.set_exception(
+    #                 RuntimeError(
+    #                     "Internal sanity check failed: averager.step left future pending."
+    #                     " Please report this to hivemind issues."
+    #                 )
+    #             )
 
     async def _step_custom(
         self,
@@ -563,9 +538,24 @@ class DTAverager(hivemind.DecentralizedAverager):
                     bt.logging.info("Finished waiting for group to assemble.")
 
                     bt.logging.info("Running AllReduce..")
-                    await self._run_allreduce(step, custom_group_info)
+                    await self._run_allreduce(step, custom_group_info, peerids_to_uids)
                     # Averaging is finished, loop will now exit
-
+                
+                except ConnectionResetError as e:
+                    logger.error(f"Connection reset error: {e}")
+                    if (
+                        step.done()
+                        or not step.allow_retries
+                        or get_dht_time() >= step.deadline
+                    ):
+                        if not step.cancelled():
+                            logger.exception(e)
+                        if not step.done():
+                            step.set_exception(e)
+                    else:
+                        logger.warning(f"ConnectionResetError occurred, retrying...")
+                        await asyncio.sleep(0.5)
+                        
                 except (
                     AllreduceException,
                     MatchmakingException,
@@ -679,9 +669,14 @@ class DTAverager(hivemind.DecentralizedAverager):
                     await self._follower_join_barrier(leader_id)
 
                 bt.logging.info(f"Waiting for barrier_complete for {self.peer_id}")
-                await asyncio.wait_for(self.barrier_complete.wait(), timeout=60)
+                await asyncio.wait_for(self.barrier_complete.wait(), timeout=60) # TODO set to a config param
                 bt.logging.info(f"Barrier complete for {self.peer_id}")
-
+        
+        except ConnectionResetError as e:
+            logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
+            if self.peer_id == leader_id:
+                bt.logging.error("Validator connection faulting")
+            raise BarrierError("Connection reset during barrier") from e
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
             raise BarrierError("Barrier timeout") from None
@@ -735,7 +730,11 @@ class DTAverager(hivemind.DecentralizedAverager):
             )
 
             bt.logging.info(f"Leader {self.peer_id} notified all followers.")
-
+        
+        except ConnectionResetError as e:
+            logger.error(f"Connection reset during leader coordination: {e}")
+            bt.logging.error("Validator connection faulting")
+            raise
         except Exception as e:
             logger.error(f"Error in leader_coordinate_barrier: {e}")
             raise
@@ -744,7 +743,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         bt.logging.info(
             f"Follower {self.peer_id} attempting to join barrier led by {leader_id}."
         )
-        max_retries = 3
+        max_retries = 3 # TODO set this to reasonable value/config param
         for attempt in range(max_retries):
             try:
                 self.barrier_state = BarrierState.JOINED_GROUP
@@ -786,6 +785,12 @@ class DTAverager(hivemind.DecentralizedAverager):
                             f"Failed to join barrier after {max_retries} attempts"
                         )
                     await asyncio.sleep(1)  # Wait before retrying
+            
+            except ConnectionResetError as e:
+                logger.error(f"Connection reset while joining barrier: {e}")
+                if attempt == max_retries - 1:
+                    raise MatchmakingException(f"Failed to join barrier due to connection reset")
+                await asyncio.sleep(0.2)  # Wait before retrying
             except Exception as e:
                 logger.error(
                     f"Error in follower_join_barrier attempt {attempt + 1}: {e}"
@@ -839,7 +844,7 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         await matchmaking_task
 
-    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo):
+    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict):
         with self._register_allreduce_group(custom_group_info):
             bt.logging.info("Running AllReduce.")
             assert (
@@ -853,6 +858,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         custom_group_info,
                         tensor_infos=self.tensor_infos,
                         weight=step.weight,
+                        peerids_to_uids=peerids_to_uids,
                         **self.allreduce_kwargs,
                     ),
                     timeout=self._allreduce_timeout,

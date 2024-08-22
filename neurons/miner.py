@@ -46,7 +46,7 @@ from template.utils.progress_tracker import (GlobalTrainingProgress,
                                              LocalTrainingProgress,
                                              update_global_tracker_state)
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import map_uid_to_peerid
+from template.utils.uids import map_uid_to_peerid, initialize_uid_mapping
 
 
 class Miner(BaseMinerNeuron):
@@ -131,20 +131,7 @@ class Miner(BaseMinerNeuron):
         self.serializer = self.grad_averager.serializer
 
         # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
+        self.uids_to_peerids = initialize_uid_mapping(self)
 
         # Load dataset
         self.dataset_loader = ()
@@ -183,6 +170,7 @@ class Miner(BaseMinerNeuron):
         self, synapse: template.protocol.AllReduce
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+        
 
         custom_group = GroupInfo(
             base64.b64decode(synapse.group.group_id),
@@ -194,11 +182,17 @@ class Miner(BaseMinerNeuron):
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        
+        # Map uids to peerids
+        self.peerids_to_uids = {
+            str(value): key for key, value in self.uids_to_peerids.items()
+        }
         try:
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(
                 custom_group_info=custom_group,
                 timeout=(synapse.timeout - 20),
+                peerids_to_uids=self.peerids_to_uids,
                 weight=(
                     self.local_progress.samples_accumulated
                     / self.config.neuron.global_batch_size_train

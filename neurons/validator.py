@@ -47,7 +47,7 @@ from template.utils.progress_tracker import (GlobalTrainingProgress,
                                              LocalTrainingProgress,
                                              update_global_tracker_state)
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import map_uid_to_peerid
+from template.utils.uids import initialize_uid_mapping
 from template.validator import forward
 
 logger = get_logger(__name__)
@@ -155,22 +155,8 @@ class Validator(BaseValidatorNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
+        # Create mapping between uids to peerids       
+        self.uids_to_peerids = initialize_uid_mapping(self)
 
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
@@ -180,8 +166,9 @@ class Validator(BaseValidatorNeuron):
         self.maximum_steps = 306 * 4
 
         # Load state from peers if validator is not on latest global epoch
-        if self.local_progress.epoch < self.global_progress.epoch:
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+        if self.global_progress.epoch is not None:
+            if self.local_progress.epoch < self.global_progress.epoch:
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
@@ -193,66 +180,10 @@ class Validator(BaseValidatorNeuron):
             else:
                 continue
 
-    def map_uids_to_peerids(self):
-        # Track how recently we updated each uid
-        uid_last_checked = dict()
-
-        # The below loop iterates across all miner uids and checks to see
-        # if they should be updated.
-        while not self.stop_event.is_set():
-            try:
-                # Get the next uid to check
-                next_uid = next(self.miner_iterator)
-
-                # Confirm that we haven't checked it in the last 5 minutes.
-                time_diff = (
-                    dt.datetime.now() - uid_last_checked[next_uid]
-                    if next_uid in uid_last_checked
-                    else None
-                )
-
-                if time_diff and time_diff < dt.timedelta(minutes=5):
-                    # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
-                    time_to_sleep = (
-                        dt.timedelta(minutes=5) - time_diff
-                    ).total_seconds()
-                    bt.logging.trace(
-                        f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
-                    )
-                    time.sleep(time_to_sleep)
-
-                uid_last_checked[next_uid] = dt.datetime.now()
-
-                # Get their hotkey from the metagraph.
-                hotkey = self.metagraph.hotkeys[next_uid]
-
-                # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-                metadata = bt.extrinsics.serving.get_metadata(
-                    self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
-                )
-
-                if not metadata:
-                    updated = None
-                else:
-                    commitment = metadata["info"]["fields"][0]
-                    hex_data = commitment[list(commitment.keys())[0]][2:]
-                    chain_str = bytes.fromhex(hex_data).decode()
-                    updated = PeerID(chain_str)
-
-                if self.uids_to_peerids[next_uid] != updated:
-                    bt.logging.trace(
-                        f"Updated peerID for UID={next_uid}. Was new = {updated}"
-                    )
-                    self.uids_to_peerids[next_uid] = updated
-
-            except Exception as e:
-                bt.logging.error(
-                    f"Error in update loop: {e} \n {traceback.format_exc()}"
-                )
-
-        bt.logging.info("Exiting update models loop.")
-
     def get_learning_rate(self):
+        if self.global_progress.epoch is None:
+            return self.config.neuron.learning_rate
+        
         learning_rate_minimum = self.config.neuron.learning_rate * 0.1
         # 1) linear warmup for warmup_steps
         if self.global_progress.epoch < self.config.neuron.warmup_steps:
