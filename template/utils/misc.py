@@ -425,7 +425,7 @@ def setup_logging(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     file_handler.setFormatter(formatter)
-    file_handler.addFilter(logging_filter)
+    #file_handler.addFilter(logging_filter)
     hivemind_logger.addHandler(file_handler)
     # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (

@@ -111,6 +111,7 @@ async def get_random_uids(
 
     return uids
 
+import json
 
 async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_delay: float = 1.0) -> Dict[int, Optional[str]]:
     bt.logging.info(f"Starting map_uid_to_peerid for UIDs: {uids}")
@@ -162,6 +163,9 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
             break  # Exit the retry loop if all UIDs are mapped
         
         await asyncio.sleep(retry_delay)
+        
+    with open('uid_to_peerid_mapping.txt', 'w') as f:
+        json.dump(str(uids_to_peerids), f, indent=4)
     
     bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
@@ -173,6 +177,8 @@ def initialize_uid_mapping(self):
             map_uid_to_peerid(self, range(self.metagraph.n))
         )
         if any(value is not None for value in uids_to_peerids.values()):
+            with open('uid_mapping.txt', 'w') as f:
+                json.dump(str(uids_to_peerids), f, indent=4)
             return uids_to_peerids
         time.sleep(1)  # Sleep for 1 second between retries
 

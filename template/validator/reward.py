@@ -54,10 +54,18 @@ def score_gradients(self, response, uid):
     outputs = self.model(input_ids=inputs, labels=inputs)
 
     loss = outputs.loss
+    
+    scaled_loss = ( # TODO Consider dividing by world_size too
+                   # TODO set to response.local_batch_size instead of self.config.neuron.local_batch_size_train to ensure we divide by same as miner
+                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
+            )
 
     # Backward Pass
-    loss.backward()
+    scaled_loss.backward()
 
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+    
     # Copy gradients
     gradients = tuple(
         (
@@ -67,12 +75,6 @@ def score_gradients(self, response, uid):
         )
         for param in self.model.parameters()
     )
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Zero Gradients
-    self.opt.zero_grad()
 
     if response.gradient_test_index > len(gradients):
         bt.logging.info(

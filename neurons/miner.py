@@ -189,10 +189,6 @@ class Miner(BaseMinerNeuron):
                 custom_group_info=custom_group,
                 timeout=(synapse.timeout - 20),
                 peerids_to_uids=self.peerids_to_uids,
-                weight=(
-                    self.local_progress.samples_accumulated
-                    / self.config.neuron.global_batch_size_train
-                ),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
@@ -335,8 +331,8 @@ class Miner(BaseMinerNeuron):
 
             # Normalize loss to account for batch accumulation
             loss = outputs.loss
-            scaled_loss = (
-                loss / self.config.neuron.global_batch_size_train / len(inputs)
+            scaled_loss = ( # TODO Consider dividing by world_size too
+                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
             )
 
             # Accumulate Total Loss
@@ -345,15 +341,6 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             scaled_loss.backward()
 
-            # Copy gradients
-            gradients = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
@@ -373,7 +360,16 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
-
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
+        
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
