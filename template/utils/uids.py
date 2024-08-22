@@ -158,8 +158,14 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
             
             uids_to_peerids[uid] = peer_id
             bt.logging.info(f"Successfully mapped UID {uid} to peer_id {peer_id}")
+            
         
         if all(peer_id is not None for peer_id in uids_to_peerids.values()):
+            bt.logging.info(f"Self UID: {self.uid} with peer_id: {self.dht.peer_id}")
+            bt.logging.info(f"Is connected to uids: {uids}")
+            bt.logging.info(f"Is connected to peer_list: {peer_list_dht_addrs}")
+            bt.logging.info(f"Is connected to peer_run: {peer_list_run}")
+            asyncio.sleep(5)
             break  # Exit the retry loop if all UIDs are mapped
         
         await asyncio.sleep(retry_delay)

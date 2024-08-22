@@ -77,26 +77,28 @@ async def perform_all_reduce(self, start_time):
     while time.perf_counter() - start_time < self.all_reduce_timeout:
 
         # Map UIDs to peer IDs
-        group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
-        if not group_peerids:
+        self.uids_to_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
+        self.uids_to_peerids[self.uid] = self.dht.peer_id        
+
+        if not self.uids_to_peerids:
             await asyncio.sleep(0.2)
             continue
 
         # Calculate blacklist scores
-        blacklist_scores = await score_blacklist(self, list(group_peerids.keys()))
+        blacklist_scores = await score_blacklist(self, list(self.uids_to_peerids.keys()))
 
         # Validate peers
-        # is_valid, error_message = validate_peers(self, group_peerids, blacklist_scores)
+        # is_valid, error_message = validate_peers(self, self.uids_to_peerids, blacklist_scores)
         # if not is_valid:
         #     bt.logging.warning(f"Peer validation failed: {error_message}. Retrying...")
-        if not validate_peers(self, group_peerids, blacklist_scores):
+        if not validate_peers(self, self.uids_to_peerids, blacklist_scores):
             bt.logging.warning("Invalid peer mapping or scores. Retrying...")
             await asyncio.sleep(0.2)
             continue
 
         # Filter out blacklisted peers
-        valid_group_peerids = {uid: peer_id for uid, peer_id in group_peerids.items() 
-                               if blacklist_scores[list(group_peerids.keys()).index(uid)] != 0.0}
+        valid_group_peerids = {uid: peer_id for uid, peer_id in self.uids_to_peerids.items() 
+                               if blacklist_scores[list(self.uids_to_peerids.keys()).index(uid)] != 0.0}
 
         self.miner_uids = torch.tensor(list(valid_group_peerids.keys())).to(self.device)
         
