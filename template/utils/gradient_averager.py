@@ -87,7 +87,8 @@ class DTAllReduceRunner(AllReduceRunner):
                 bt.logging.info("DTAllReduceRunner..")
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
-                    self._generate_input_for_peer(peer_index), done_sending,
+                    self._generate_input_for_peer(peer_index, uid, peer_id),
+                    done_sending,
                 )
 
                 bt.logging.info(
