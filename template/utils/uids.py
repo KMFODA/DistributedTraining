@@ -5,7 +5,8 @@ import traceback
 from typing import Dict, Optional, List
 
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
+import mpld3
+from collections import defaultdict
 import numpy as np
 import bittensor as bt
 import torch
@@ -203,36 +204,63 @@ def save_status_history(self):
         json.dump(self.status_history, f, indent=4)
 
 def generate_uptime_graph(self):
-    plt.figure(figsize=(20, 10))
+    fig, ax = plt.subplots(figsize=(20, 10))
     
     # Generate a color map with distinct colors
     num_uids = len(self.status_history)
     colors = plt.cm.rainbow(np.linspace(0, 1, num_uids))
     
-    for idx, (uid, history) in enumerate(self.status_history.items()):
-        times, statuses = zip(*history)
-        status_values = [1 if status == 'connected' else 0 for status in statuses]
-        
-        # Plot the line with a unique color and add some transparency
-        plt.plot(times, status_values, color=colors[idx], alpha=0.7, linewidth=2)
-        
-        # Add points to show actual data points
-        plt.scatter(times, status_values, color=colors[idx], s=20)
-
-    plt.title('Peer Connection Status Over Time', fontsize=16)
-    plt.xlabel('Time (seconds)', fontsize=12)
-    plt.ylabel('Connection Status', fontsize=12)
-    plt.yticks([0, 1], ['Disconnected', 'Connected'])
+    # Prepare data
+    all_times = sorted(set(time for history in self.status_history.values() for time, _ in history))
+    status_matrix = defaultdict(lambda: [None] * len(all_times))
     
-    # Improve the legend
-    legend_elements = [Line2D([0], [0], color=colors[i], label=f'UID {uid}') 
-                        for i, uid in enumerate(self.status_history.keys())]
-    plt.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1, 0.5), 
-                ncol=max(1, num_uids // 20))  # Adjust number of columns based on UIDs
+    for uid, history in self.status_history.items():
+        for time, status in history:
+            status_matrix[uid][all_times.index(time)] = 1 if status == 'connected' else 0
+    
+    # Plot lines
+    for idx, (uid, statuses) in enumerate(status_matrix.items()):
+        y_values = []
+        current_status = None
+        for status in statuses:
+            if status is not None:
+                current_status = status
+            if current_status == 1:
+                y_values.append(0.5 + np.random.uniform(0, 0.4))  # Connected bucket
+            else:
+                y_values.append(0.1 + np.random.uniform(0, 0.3))  # Disconnected bucket
+        
+        line, = ax.plot(all_times, y_values, color=colors[idx], alpha=0.7, linewidth=2)
+        
+        # Add invisible points for labels
+        scatter = ax.scatter(all_times, y_values, color=colors[idx], s=1, alpha=0)
+        
+        # Create tooltip
+        labels = [f"UID: {uid}\nTime: {time:.2f}\nStatus: {'Connected' if status == 1 else 'Disconnected'}" 
+                    for time, status in zip(all_times, y_values)]
+        tooltip = mpld3.plugins.PointLabelTooltip(scatter, labels=labels)
+        mpld3.plugins.connect(fig, tooltip)
+
+    # Customize the plot
+    ax.set_title('Peer Connection Status Over Time', fontsize=16)
+    ax.set_xlabel('Time (seconds)', fontsize=12)
+    ax.set_yticks([0.25, 0.75])
+    ax.set_yticklabels(['Disconnected', 'Connected'])
+    ax.set_ylim(0, 1)
+    
+    # Add shaded areas for connected and disconnected buckets
+    ax.axhspan(0, 0.5, facecolor='red', alpha=0.1)
+    ax.axhspan(0.5, 1, facecolor='green', alpha=0.1)
     
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.tight_layout()
+    
+    # Save static PNG
     plt.savefig("peer_uptime_graph.png", dpi=300, bbox_inches='tight')
+    
+    # Save interactive HTML
+    mpld3.save_html(fig, "interactive_peer_uptime_graph.html")
+    
     plt.close()
 
 # async def run_uptime_tracking(self, uids: List[int], interval: int):
