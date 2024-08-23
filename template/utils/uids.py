@@ -147,18 +147,18 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
             
             if miner_ip not in peer_list_dht_addrs:
                 bt.logging.warning(f"Miner IP {miner_ip} for UID {uid} not in peer_list_dht_addrs")
-                self.update_peer_status(uid, 'disconnected')
+                update_peer_status(self, uid, 'disconnected')
                 continue
             
             peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
             
             if str(peer_id) not in peer_list_run:
                 bt.logging.warning(f"peer_id {peer_id} for UID {uid} not in peer_list_run")
-                self.update_peer_status(uid, 'disconnected')
+                update_peer_status(self, uid, 'disconnected')
                 continue
             
             uids_to_peerids[uid] = peer_id
-            self.update_peer_status(uid, 'connected')
+            update_peer_status(self, uid, 'connected')
             bt.logging.info(f"Successfully mapped UID {uid} to peer_id {peer_id}")
         
         if all(peer_id is not None for peer_id in uids_to_peerids.values()):
@@ -172,7 +172,8 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
         await asyncio.sleep(retry_delay)
     
     save_mapping(uids_to_peerids)
-    save_status_history()
+    save_status_history(self)
+    generate_uptime_graph(self)
     
     bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
@@ -205,12 +206,12 @@ def generate_uptime_graph(self):
     plt.savefig("peer_uptime_graph.png")
     plt.close()
 
-async def run_uptime_tracking(self, uids: List[int], interval: int):
-    while True:
-        await self.map_uid_to_peerid(uids)
-        self.save_status_history()
-        self.generate_uptime_graph()
-        await asyncio.sleep(interval)
+# async def run_uptime_tracking(self, uids: List[int], interval: int):
+#     while True:
+#         await map_uid_to_peerid(self, uids)
+#         save_status_history(self)
+#         generate_uptime_graph(self)
+#         await asyncio.sleep(interval)
 
 def initialize_uid_mapping(self):
     max_retries = 3 # TODO Make config
