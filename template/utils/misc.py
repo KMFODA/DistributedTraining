@@ -505,6 +505,19 @@ def init_dht(self):
             try:
                 dht = _connect_to_peer(self, initial_peer, announce_maddrs)
                 bt.logging.info(f"Successfully initialized DHT using initial_peer: {initial_peer}")
+                utils.log_visible_maddrs(
+                    self.dht.get_visible_maddrs(), only_p2p=True
+                )
+                # Add DHT address to wandb config
+                self.config.neuron.dht_addresses = [
+                    re.sub(
+                        "ip4/?(.*?)/",
+                        f"ip{version}/{address}/",
+                        str(addr),
+                        flags=re.DOTALL,
+                    )
+                    for addr in self.dht.get_visible_maddrs()
+                ]
                 return dht
             except Exception as e:
                 bt.logging.error(f"Failed to initialize DHT using initial_peer {initial_peer}: {e}")
