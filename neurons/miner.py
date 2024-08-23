@@ -70,7 +70,7 @@ class Miner(BaseMinerNeuron):
         )
 
         # Init DHT
-        self.dht = init_dht(self)
+        init_dht(self)
 
         # Init Local & Global Progress
         self.local_progress = LocalTrainingProgress(
@@ -125,6 +125,10 @@ class Miner(BaseMinerNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
+        # Used for tracking peers
+        self.peer_status = {}
+        self.status_history = {}
+        self.start_time = time.time()
         # Create mapping between uids to peerids
         self.uids_to_peerids = initialize_uid_mapping(self)
         self.uids_to_peerids[self.uid] = self.dht.peer_id

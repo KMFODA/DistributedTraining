@@ -503,7 +503,7 @@ def init_dht(self):
     for retry in range(max_retries):
         for initial_peer in initial_peers_list:
             try:
-                dht = _connect_to_peer(self, initial_peer, announce_maddrs)
+                self.dht = _connect_to_peer(self, initial_peer, announce_maddrs)
                 bt.logging.info(f"Successfully initialized DHT using initial_peer: {initial_peer}")
                 utils.log_visible_maddrs(
                     self.dht.get_visible_maddrs(), only_p2p=True
@@ -518,7 +518,7 @@ def init_dht(self):
                     )
                     for addr in self.dht.get_visible_maddrs()
                 ]
-                return dht
+                return
             except Exception as e:
                 bt.logging.error(f"Failed to initialize DHT using initial_peer {initial_peer}: {e}")
         

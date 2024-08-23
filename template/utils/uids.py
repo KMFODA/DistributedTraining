@@ -2,8 +2,9 @@ import time
 import asyncio
 import random
 import traceback
-from typing import Tuple, Dict, Optional, Callable, List, Union
+from typing import Dict, Optional, List
 
+import matplotlib.pyplot as plt
 import bittensor as bt
 import torch
 from hivemind.p2p import PeerID
@@ -120,12 +121,10 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
     for attempt in range(max_retries):
         bt.logging.info(f"Attempt {attempt + 1} of {max_retries}")
         
-        # Get all peers connected to our DHT and their ips
         peer_list_dht = await self._p2p.list_peers()
         peer_list_dht_addrs = [str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] 
-                               for peer in peer_list_dht]
+                                for peer in peer_list_dht]
         
-        # Get only peers connected to the current run id
         prefix = self.grad_averager.matchmaking_kwargs["prefix"]
         metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or ({}, None)
         
@@ -142,39 +141,76 @@ async def map_uid_to_peerid(self, uids: List[int], max_retries: int = 3, retry_d
         
         for uid in uids:
             if uids_to_peerids[uid] is not None:
-                continue  # Skip if we already have a valid peer_id for this uid
+                continue
             
             miner_ip = self.metagraph.axons[uid].ip
             
             if miner_ip not in peer_list_dht_addrs:
                 bt.logging.warning(f"Miner IP {miner_ip} for UID {uid} not in peer_list_dht_addrs")
+                self.update_peer_status(uid, 'disconnected')
                 continue
             
             peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
             
             if str(peer_id) not in peer_list_run:
                 bt.logging.warning(f"peer_id {peer_id} for UID {uid} not in peer_list_run")
+                self.update_peer_status(uid, 'disconnected')
                 continue
             
             uids_to_peerids[uid] = peer_id
+            self.update_peer_status(uid, 'connected')
             bt.logging.info(f"Successfully mapped UID {uid} to peer_id {peer_id}")
-            
         
         if all(peer_id is not None for peer_id in uids_to_peerids.values()):
             bt.logging.info(f"Self UID: {self.uid} with peer_id: {self.dht.peer_id}")
             bt.logging.info(f"Is connected to uids: {uids}")
             bt.logging.info(f"Is connected to peer_list: {peer_list_dht_addrs}")
             bt.logging.info(f"Is connected to peer_run: {peer_list_run}")
-            asyncio.sleep(5)
-            break  # Exit the retry loop if all UIDs are mapped
+            await asyncio.sleep(5)
+            break
         
         await asyncio.sleep(retry_delay)
-        
-    with open('uid_to_peerid_mapping.txt', 'w') as f:
-        json.dump(str(uids_to_peerids), f, indent=4)
+    
+    save_mapping(uids_to_peerids)
+    save_status_history()
     
     bt.logging.info(f"Final mapping of UIDs to peer IDs: {uids_to_peerids}")
     return uids_to_peerids
+
+def update_peer_status(self, uid: int, status: str):
+    current_time = time.time() - self.start_time
+    self.peer_status[uid] = status
+    if uid not in self.status_history:
+        self.status_history[uid] = []
+    self.status_history[uid].append((current_time, status))
+
+def save_mapping(uids_to_peerids: Dict[int, Optional[str]]):
+    with open('uid_to_peerid_mapping.json', 'w') as f:
+        json.dump(uids_to_peerids, f, indent=4)
+
+def save_status_history(self):
+    with open('peer_status_history.json', 'w') as f:
+        json.dump(self.status_history, f, indent=4)
+
+def generate_uptime_graph(self):
+    plt.figure(figsize=(12, 8))
+    for uid, history in self.status_history.items():
+        times, statuses = zip(*history)
+        plt.plot(times, [1 if status == 'connected' else 0 for status in statuses], label=f'UID {uid}')
+    
+    plt.xlabel('Time (seconds)')
+    plt.ylabel('Connection Status')
+    plt.title('Peer Connection Status Over Time')
+    plt.legend()
+    plt.savefig("peer_uptime_graph.png")
+    plt.close()
+
+async def run_uptime_tracking(self, uids: List[int], interval: int):
+    while True:
+        await self.map_uid_to_peerid(uids)
+        self.save_status_history()
+        self.generate_uptime_graph()
+        await asyncio.sleep(interval)
 
 def initialize_uid_mapping(self):
     max_retries = 3 # TODO Make config
@@ -183,7 +219,7 @@ def initialize_uid_mapping(self):
             map_uid_to_peerid(self, range(self.metagraph.n))
         )
         if any(value is not None for value in uids_to_peerids.values()):
-            with open('uid_mapping.txt', 'w') as f:
+            with open('init_uid_mapping.txt', 'w') as f:
                 json.dump(str(uids_to_peerids), f, indent=4)
             return uids_to_peerids
         time.sleep(1)  # Sleep for 1 second between retries
