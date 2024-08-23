@@ -5,6 +5,8 @@ import traceback
 from typing import Dict, Optional, List
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import numpy as np
 import bittensor as bt
 import torch
 from hivemind.p2p import PeerID
@@ -201,16 +203,36 @@ def save_status_history(self):
         json.dump(self.status_history, f, indent=4)
 
 def generate_uptime_graph(self):
-    plt.figure(figsize=(12, 8))
-    for uid, history in self.status_history.items():
-        times, statuses = zip(*history)
-        plt.plot(times, [1 if status == 'connected' else 0 for status in statuses], label=f'UID {uid}')
+    plt.figure(figsize=(20, 10))
     
-    plt.xlabel('Time (seconds)')
-    plt.ylabel('Connection Status')
-    plt.title('Peer Connection Status Over Time')
-    plt.legend()
-    plt.savefig("peer_uptime_graph.png")
+    # Generate a color map with distinct colors
+    num_uids = len(self.status_history)
+    colors = plt.cm.rainbow(np.linspace(0, 1, num_uids))
+    
+    for idx, (uid, history) in enumerate(self.status_history.items()):
+        times, statuses = zip(*history)
+        status_values = [1 if status == 'connected' else 0 for status in statuses]
+        
+        # Plot the line with a unique color and add some transparency
+        plt.plot(times, status_values, color=colors[idx], alpha=0.7, linewidth=2)
+        
+        # Add points to show actual data points
+        plt.scatter(times, status_values, color=colors[idx], s=20)
+
+    plt.title('Peer Connection Status Over Time', fontsize=16)
+    plt.xlabel('Time (seconds)', fontsize=12)
+    plt.ylabel('Connection Status', fontsize=12)
+    plt.yticks([0, 1], ['Disconnected', 'Connected'])
+    
+    # Improve the legend
+    legend_elements = [Line2D([0], [0], color=colors[i], label=f'UID {uid}') 
+                        for i, uid in enumerate(self.status_history.keys())]
+    plt.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1, 0.5), 
+                ncol=max(1, num_uids // 20))  # Adjust number of columns based on UIDs
+    
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.savefig("peer_uptime_graph.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 # async def run_uptime_tracking(self, uids: List[int], interval: int):

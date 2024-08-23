@@ -178,77 +178,77 @@ class DTAllReduceRunner(AllReduceRunner):
                 ):
                     await self._ban_sender(peer_id)
 
-    async def run(self) -> AsyncIterator[torch.Tensor]:
-        """Run all-reduce, return differences between averaged and original tensors as they are computed"""
-        pending_tasks = set()
-        bt.logging.info("Running AllReducerRunner")
-        bt.logging.info(
-            f"self.tensor_part_container.num_parts_by_peer {self.tensor_part_container.num_parts_by_peer}"
-        )
-        if (
-            self.tensor_part_container.num_parts_by_peer[
-                self.ordered_peer_ids.index(self.peer_id)
-            ]
-            != 0
-        ):
-            pending_tasks.add(asyncio.create_task(self._handle_missing_senders()))
+    # async def run(self) -> AsyncIterator[torch.Tensor]:
+    #     """Run all-reduce, return differences between averaged and original tensors as they are computed"""
+    #     pending_tasks = set()
+    #     bt.logging.info("Running AllReducerRunner")
+    #     bt.logging.info(
+    #         f"self.tensor_part_container.num_parts_by_peer {self.tensor_part_container.num_parts_by_peer}"
+    #     )
+    #     if (
+    #         self.tensor_part_container.num_parts_by_peer[
+    #             self.ordered_peer_ids.index(self.peer_id)
+    #         ]
+    #         != 0
+    #     ):
+    #         pending_tasks.add(asyncio.create_task(self._handle_missing_senders()))
 
-        try:
-            if len(self.sender_peer_ids) == 0:
-                logger.debug(
-                    f"{self} - finished all-reduce early: all peers are auxiliaries ({self.modes})"
-                )
-                self.finalize()
+    #     try:
+    #         if len(self.sender_peer_ids) == 0:
+    #             logger.debug(
+    #                 f"{self} - finished all-reduce early: all peers are auxiliaries ({self.modes})"
+    #             )
+    #             self.finalize()
 
-            elif self.peer_id in self.sender_peer_ids:
-                uid = (
-                    self.peerids_to_uids[str(self.peer_id)]
-                    if self.peer_id in self.peerids_to_uids.keys()
-                    else ""
-                )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
-                )
+    #         elif self.peer_id in self.sender_peer_ids:
+    #             uid = (
+    #                 self.peerids_to_uids[str(self.peer_id)]
+    #                 if self.peer_id in self.peerids_to_uids.keys()
+    #                 else ""
+    #             )
+    #             bt.logging.info(
+    #                 f"UID:{uid} - PeerID:{self.peer_id} peer_id in sender_peer_ids"
+    #             )
 
-                for peer_id, parts in zip(
-                    self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer
-                ):
-                    if parts != 0:
-                        pending_tasks.add(
-                            asyncio.create_task(self._communicate_with_peer(peer_id))
-                        )
+    #             for peer_id, parts in zip(
+    #                 self.ordered_peer_ids, self.tensor_part_container.num_parts_by_peer
+    #             ):
+    #                 if parts != 0:
+    #                     pending_tasks.add(
+    #                         asyncio.create_task(self._communicate_with_peer(peer_id))
+    #                     )
 
-                bt.logging.info(f"Succesfully Communicated With All Peers")
+    #             bt.logging.info(f"Succesfully Communicated With All Peers")
 
-                async for averaged_tensor_delta in self.tensor_part_container.iterate_output_tensors():
-                    yield averaged_tensor_delta
+    #             async for averaged_tensor_delta in self.tensor_part_container.iterate_output_tensors():
+    #                 yield averaged_tensor_delta
 
-                bt.logging.info(f"Iterate Output Tensors Finished")
+    #             bt.logging.info(f"Iterate Output Tensors Finished")
 
-                self.finalize()
+    #             self.finalize()
 
-                bt.logging.info(f"Finalize Finished")
+    #             bt.logging.info(f"Finalize Finished")
 
-            else:  # auxiliary peer
-                await self.tensor_part_reducer.finished.wait()
-                self.finalize()
+    #         else:  # auxiliary peer
+    #             await self.tensor_part_reducer.finished.wait()
+    #             self.finalize()
 
-        except BaseException as e:
-            bt.logging.info(f"All Reduce Runner failed with error {e}")
+    #     except BaseException as e:
+    #         bt.logging.info(f"All Reduce Runner failed with error {e}")
 
-            self.finalize(exception=e)
-            for task in pending_tasks:
-                task.cancel()
-            raise
+    #         self.finalize(exception=e)
+    #         for task in pending_tasks:
+    #             task.cancel()
+    #         raise
 
-        finally:
-            for task in pending_tasks:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as inner_exc:
-                    logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
+    #     finally:
+    #         for task in pending_tasks:
+    #             try:
+    #                 await task
+    #             except asyncio.CancelledError:
+    #                 pass
+    #             except Exception as inner_exc:
+    #                 logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
 
     async def _generate_input_for_peer(
         self, peer_index: int, uid: int, peer_id: PeerID
