@@ -185,13 +185,13 @@ def update_peer_status(self, uid: int, status: str):
         self.status_history[uid] = []
     self.status_history[uid].append((current_time, status))
 
-def save_mapping(self, uids_to_peerids: Dict[int, Optional[Union[str, PeerID]]]):
+def save_mapping(uids_to_peerids):
         serializable_mapping = {}
         for uid, peer_id in uids_to_peerids.items():
             if isinstance(peer_id, PeerID):
                 serializable_mapping[uid] = peer_id.to_string()
             else:
-                serializable_mapping[uid] = peer_id  # This handles None or if it's already a string
+                serializable_mapping[uid] = peer_id
 
         with open('uid_to_peerid_mapping.json', 'w') as f:
             json.dump(serializable_mapping, f, indent=4)
