@@ -5,7 +5,6 @@ import traceback
 from typing import Dict, Optional, List
 
 import matplotlib.pyplot as plt
-import mpld3
 from collections import defaultdict
 import numpy as np
 import bittensor as bt
@@ -203,12 +202,23 @@ def save_status_history(self):
     with open('peer_status_history.json', 'w') as f:
         json.dump(self.status_history, f, indent=4)
 
+def generate_random_color():
+    return (random.random(), random.random(), random.random())
+
 def generate_uptime_graph(self):
-    fig, ax = plt.subplots(figsize=(20, 10))
+    fig, ax = plt.subplots(figsize=(20, 15))  # Increased figure height
     
-    # Generate a color map with distinct colors
+    # Generate a set of random colors
     num_uids = len(self.status_history)
-    colors = plt.cm.rainbow(np.linspace(0, 1, num_uids))
+    base_colors = plt.cm.tab20.colors + plt.cm.Set2.colors + plt.cm.Set3.colors
+    colors = random.sample(base_colors, min(num_uids, len(base_colors)))
+    
+    # If we need more colors, generate them randomly
+    while len(colors) < num_uids:
+        colors.append(self.generate_random_color())
+    
+    # Shuffle the colors to ensure randomness
+    random.shuffle(colors)
     
     # Prepare data
     all_times = sorted(set(time for history in self.status_history.values() for time, _ in history))
@@ -218,37 +228,42 @@ def generate_uptime_graph(self):
         for time, status in history:
             status_matrix[uid][all_times.index(time)] = 1 if status == 'connected' else 0
     
+    # Calculate positions for each UID in the lanes with increased spacing
+    uid_positions = {uid: idx for idx, uid in enumerate(sorted(status_matrix.keys()))}
+    
     # Plot lines
-    for idx, (uid, statuses) in enumerate(status_matrix.items()):
+    for uid, statuses in status_matrix.items():
         y_values = []
         current_status = None
         for status in statuses:
             if status is not None:
                 current_status = status
             if current_status == 1:
-                y_values.append(0.5 + np.random.uniform(0, 0.4))  # Connected bucket
+                y_values.append(0.75 + (uid_positions[uid] / (num_uids - 1)) * 0.4)  # Connected lane
             else:
-                y_values.append(0.1 + np.random.uniform(0, 0.3))  # Disconnected bucket
+                y_values.append(0.25 - (uid_positions[uid] / (num_uids - 1)) * 0.4)  # Disconnected lane
         
-        line, = ax.plot(all_times, y_values, color=colors[idx], alpha=0.7, linewidth=2)
+        line, = ax.plot(all_times, y_values, color=colors[uid_positions[uid]], alpha=0.7, linewidth=2)
         
-        # Add invisible points for labels
-        scatter = ax.scatter(all_times, y_values, color=colors[idx], s=1, alpha=0)
-        
-        # Create tooltip
-        labels = [f"UID: {uid}\nTime: {time:.2f}\nStatus: {'Connected' if status == 1 else 'Disconnected'}" 
-                    for time, status in zip(all_times, y_values)]
-        tooltip = mpld3.plugins.PointLabelTooltip(scatter, labels=labels)
-        mpld3.plugins.connect(fig, tooltip)
+        # Add label at the end of the line
+        last_valid_index = next((i for i in reversed(range(len(y_values))) if y_values[i] is not None), None)
+        if last_valid_index is not None:
+            ax.annotate(f'UID {uid}', 
+                        xy=(all_times[-1], y_values[last_valid_index]),
+                        xytext=(5, 0), 
+                        textcoords='offset points',
+                        va='center',
+                        fontsize=8,
+                        color=colors[uid_positions[uid]])
 
     # Customize the plot
     ax.set_title('Peer Connection Status Over Time', fontsize=16)
     ax.set_xlabel('Time (seconds)', fontsize=12)
     ax.set_yticks([0.25, 0.75])
     ax.set_yticklabels(['Disconnected', 'Connected'])
-    ax.set_ylim(0, 1)
+    ax.set_ylim(-0.1, 1.1)  # Expanded y-axis limits
     
-    # Add shaded areas for connected and disconnected buckets
+    # Add shaded areas for connected and disconnected lanes
     ax.axhspan(0, 0.5, facecolor='red', alpha=0.1)
     ax.axhspan(0.5, 1, facecolor='green', alpha=0.1)
     
@@ -257,10 +272,6 @@ def generate_uptime_graph(self):
     
     # Save static PNG
     plt.savefig("peer_uptime_graph.png", dpi=300, bbox_inches='tight')
-    
-    # Save interactive HTML
-    mpld3.save_html(fig, "interactive_peer_uptime_graph.html")
-    
     plt.close()
 
 # async def run_uptime_tracking(self, uids: List[int], interval: int):
