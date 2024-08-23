@@ -144,12 +144,12 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
             
-            except ConnectionResetError:
-                logger.error(f"Connection reset by peer: {peer_id}")
-                if peer_id == self.ordered_peer_ids[0]:
-                    bt.logging.error("Validator connection faulting")
-                self.tensor_part_container.register_failed_reducer(peer_index)                    
-                raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
+            # except ConnectionResetError:
+            #     logger.error(f"Connection reset by peer: {peer_id}")
+            #     if peer_id == self.ordered_peer_ids[0]:
+            #         bt.logging.error("Validator connection faulting")
+            #     self.tensor_part_container.register_failed_reducer(peer_index)                    
+            #     raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
 
             except BaseException as e:
                 if isinstance(
@@ -429,20 +429,20 @@ class DTAverager(hivemind.DecentralizedAverager):
                     await self._run_allreduce(step, custom_group_info, peerids_to_uids)
                     # Averaging is finished, loop will now exit
                 
-                except ConnectionResetError as e:
-                    logger.error(f"Connection reset error: {e}")
-                    if (
-                        step.done()
-                        or not step.allow_retries
-                        or get_dht_time() >= step.deadline
-                    ):
-                        if not step.cancelled():
-                            logger.exception(e)
-                        if not step.done():
-                            step.set_exception(e)
-                    else:
-                        logger.warning(f"ConnectionResetError occurred, retrying...")
-                        await asyncio.sleep(0.5)
+                # except ConnectionResetError as e:
+                #     logger.error(f"Connection reset error: {e}")
+                #     if (
+                #         step.done()
+                #         or not step.allow_retries
+                #         or get_dht_time() >= step.deadline
+                #     ):
+                #         if not step.cancelled():
+                #             logger.exception(e)
+                #         if not step.done():
+                #             step.set_exception(e)
+                #     else:
+                #         logger.warning(f"ConnectionResetError occurred, retrying...")
+                #         await asyncio.sleep(0.5)
                         
                 except (
                     AllreduceException,
@@ -560,11 +560,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                 await asyncio.wait_for(self.barrier_complete.wait(), timeout=60) # TODO set to a config param
                 bt.logging.info(f"Barrier complete for {self.peer_id}")
         
-        except ConnectionResetError as e:
-            logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
-            if self.peer_id == leader_id:
-                bt.logging.error("Validator connection faulting")
-            raise BarrierError("Connection reset during barrier") from e
+        # except ConnectionResetError as e:
+        #     logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
+        #     if self.peer_id == leader_id:
+        #         bt.logging.error("Validator connection faulting")
+        #     raise BarrierError("Connection reset during barrier") from e
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
             raise BarrierError("Barrier timeout") from None
@@ -619,10 +619,10 @@ class DTAverager(hivemind.DecentralizedAverager):
 
             bt.logging.info(f"Leader {self.peer_id} notified all followers.")
         
-        except ConnectionResetError as e:
-            logger.error(f"Connection reset during leader coordination: {e}")
-            bt.logging.error("Validator connection faulting")
-            raise
+        # except ConnectionResetError as e:
+        #     logger.error(f"Connection reset during leader coordination: {e}")
+        #     bt.logging.error("Validator connection faulting")
+        #     raise
         except Exception as e:
             logger.error(f"Error in leader_coordinate_barrier: {e}")
             raise
@@ -674,11 +674,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                         )
                     await asyncio.sleep(1)  # Wait before retrying
             
-            except ConnectionResetError as e:
-                logger.error(f"Connection reset while joining barrier: {e}")
-                if attempt == max_retries - 1:
-                    raise MatchmakingException(f"Failed to join barrier due to connection reset")
-                await asyncio.sleep(0.2)  # Wait before retrying
+            # except ConnectionResetError as e:
+            #     logger.error(f"Connection reset while joining barrier: {e}")
+            #     if attempt == max_retries - 1:
+            #         raise MatchmakingException(f"Failed to join barrier due to connection reset")
+            #     await asyncio.sleep(0.2)  # Wait before retrying
             except Exception as e:
                 logger.error(
                     f"Error in follower_join_barrier attempt {attempt + 1}: {e}"
