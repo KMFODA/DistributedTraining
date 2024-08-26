@@ -267,8 +267,8 @@ class Miner(BaseMinerNeuron):
             synapse.completion = "False"
 
         if failed_gradient_all_reduce:
-            with self.grad_averager.use_averaged_gradients():
-                self.opt.zero_grad()
+            #with self.grad_averager.use_averaged_gradients():
+            self.opt.zero_grad(set_to_none=True)
             bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
