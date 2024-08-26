@@ -127,16 +127,16 @@ class DTAllReduceRunner(AllReduceRunner):
                         peer_index, part_index, delta
                     )
                     part_index += 1
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
-                )
+                # bt.logging.info(
+                #     f"UID:{uid} - PeerID:{peer_id} - register_processed_part finished"
+                # )
                 if (
                     part_index
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
-                    bt.logging.info(
-                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
-                    )
+                    # bt.logging.info(
+                    #     f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
+                    # )
                     raise AllreduceException(
                         f"peer {peer_id} sent {part_index} parts, but we expected "
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
@@ -188,14 +188,14 @@ class DTAllReduceRunner(AllReduceRunner):
                 tensor_part=first_part,
                 weight=self.weight,
             )
-            bt.logging.info(
-                f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
-            )
+            # bt.logging.info(
+            #     f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
+            # )
 
             async for part in parts_aiter:
-                bt.logging.info("_generate_input_for_peers for loop")
+                # bt.logging.info("_generate_input_for_peers for loop")
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
-            bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
+            #bt.logging.info(f"_generate_input_for_peer.. {peer_index} done")
 
         except Exception as e:
             logger.error(
@@ -344,9 +344,9 @@ class DTAverager(hivemind.DecentralizedAverager):
                     self._pending_groups_registered.clear()
                     step.stage = AveragingStage.LOOKING_FOR_GROUP
 
-                    bt.logging.info("Starting distributed barrier.")
+                    #bt.logging.info("Starting distributed barrier.")
                     await self._run_distributed_barrier(step, custom_group_info)
-                    bt.logging.info("Finished waiting for group to assemble.")
+                    #bt.logging.info("Finished waiting for group to assemble.")
 
                     bt.logging.info("Running AllReduce..")
                     await self._run_allreduce(step, custom_group_info, peerids_to_uids)
@@ -445,7 +445,7 @@ class DTAverager(hivemind.DecentralizedAverager):
     ) -> custom_averaging_pb2.BarrierCompleteResponse:
         self.barrier_state = BarrierState.BARRIER_COMPLETE
         self.barrier_complete.set()
-        bt.logging.info(f"Peer {self.peer_id} received barrier complete notification.")
+       # bt.logging.info(f"Peer {self.peer_id} received barrier complete notification.")
 
         return custom_averaging_pb2.BarrierCompleteResponse(
             code=custom_averaging_pb2.BarrierResponseCode.ACCEPTED
