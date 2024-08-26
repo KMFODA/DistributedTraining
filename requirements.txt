@@ -3,7 +3,7 @@ bitarray==2.9.2
 datasets==2.18.0
 transformers==4.39.3
 hivemind==1.1.10.post2
-wandb==0.16.6
+wandb==0.17.7
 python-dotenv==1.0.1
 python-logging-loki==0.3.1
 speedtest-cli==2.1.3
