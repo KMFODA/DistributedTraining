@@ -101,6 +101,9 @@ class Validator(BaseValidatorNeuron):
             self.wandb = load_wandb(
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
+            
+        # Track AllReduce operation
+        self.allreduce_history = []
 
         # Init Dataset
         dataset_length = SubsetFalconLoader.max_pages

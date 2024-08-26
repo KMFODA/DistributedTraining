@@ -9,6 +9,7 @@ from collections import defaultdict
 import numpy as np
 import bittensor as bt
 import torch
+import io
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 
@@ -203,75 +204,111 @@ def save_status_history(self):
         json.dump(self.status_history, f, indent=4)
 
 def generate_random_color():
-    return (random.random(), random.random(), random.random())
+    return tuple(random.random() for _ in range(3))
+
+def get_uid_color(self, uid):
+    if uid not in self.uid_colors:
+        self.uid_colors[uid] = generate_random_color()
+    return self.uid_colors[uid]
+
+# def update_peer_status(self, uid, status, timestamp):
+#     self.status_history[uid].append((timestamp, status))
 
 def generate_uptime_graph(self):
     fig, ax = plt.subplots(figsize=(20, 15))  # Increased figure height
-    
-    # Generate a set of random colors
-    num_uids = len(self.status_history)
-    base_colors = plt.cm.tab20.colors + plt.cm.Set2.colors + plt.cm.Set3.colors
-    colors = random.sample(base_colors, min(num_uids, len(base_colors)))
-    
-    # If we need more colors, generate them randomly
-    while len(colors) < num_uids:
-        colors.append(self.generate_random_color())
-    
-    # Shuffle the colors to ensure randomness
-    random.shuffle(colors)
     
     # Prepare data
     all_times = sorted(set(time for history in self.status_history.values() for time, _ in history))
     status_matrix = defaultdict(lambda: [None] * len(all_times))
     
+    # Fill in status matrix
     for uid, history in self.status_history.items():
-        for time, status in history:
-            status_matrix[uid][all_times.index(time)] = 1 if status == 'connected' else 0
+        current_status = "disconnected"  # Assume disconnected at start
+        for i, current_time in enumerate(all_times):
+            # Find the latest status update for this UID up to the current time
+            latest_status = next((status for time, status in reversed(history) if time <= current_time), current_status)
+            current_status = latest_status
+            status_matrix[uid][i] = 1 if current_status == 'connected' else 0
     
-    # Calculate positions for each UID in the lanes with increased spacing
+    # Calculate positions for each UID
     uid_positions = {uid: idx for idx, uid in enumerate(sorted(status_matrix.keys()))}
+    num_uids = len(uid_positions)
     
     # Plot lines
     for uid, statuses in status_matrix.items():
         y_values = []
-        current_status = None
         for status in statuses:
-            if status is not None:
-                current_status = status
-            if current_status == 1:
-                y_values.append(0.75 + (uid_positions[uid] / (num_uids - 1)) * 0.4)  # Connected lane
+            if status == 1:
+                # Connected: Space UIDs between 0.6 and 0.9
+                y_values.append(0.6 + (uid_positions[uid] / (num_uids - 1)) * 0.3)
             else:
-                y_values.append(0.25 - (uid_positions[uid] / (num_uids - 1)) * 0.4)  # Disconnected lane
+                y_values.append(0.25)  # Disconnected
         
-        line, = ax.plot(all_times, y_values, color=colors[uid_positions[uid]], alpha=0.7, linewidth=2)
+        color = get_uid_color(self, uid)
+        ax.plot(all_times, y_values, color=color, alpha=0.7, linewidth=2, label=f'UID {uid}')
         
         # Add label at the end of the line
-        last_valid_index = next((i for i in reversed(range(len(y_values))) if y_values[i] is not None), None)
-        if last_valid_index is not None:
+        last_valid_index = len(y_values) - 1
+        if last_valid_index >= 0:
             ax.annotate(f'UID {uid}', 
-                        xy=(all_times[-1], y_values[last_valid_index]),
+                        xy=(all_times[last_valid_index], y_values[last_valid_index]),
                         xytext=(5, 0), 
                         textcoords='offset points',
                         va='center',
                         fontsize=8,
-                        color=colors[uid_positions[uid]])
+                        color=color)
+
+    # Plot AllReduce operations
+    for i, operation in enumerate(self.allreduce_history):
+        color = 'green' if operation['success'] else 'red'
+        ax.axvline(x=operation['time'], color=color, linestyle='--', alpha=0.5)
+        
+        # Add label for participating UIDs
+        uids_str = ', '.join(map(str, operation['uids']))
+        status_str = 'Success' if operation['success'] else 'Failure'
+        
+        # Alternate between top and bottom placement to avoid overlapping
+        y_pos = 0.95 if i % 2 == 0 else 0.05
+        va = 'bottom' if i % 2 == 0 else 'top'
+        
+        ax.annotate(f"{status_str}\nUIDs: {uids_str}", 
+                    xy=(operation['time'], y_pos), 
+                    xytext=(0, 5 if i % 2 == 0 else -5), 
+                    textcoords='offset points',
+                    rotation=45,
+                    va=va,
+                    ha='center',
+                    fontsize=6,
+                    color=color)
 
     # Customize the plot
-    ax.set_title('Peer Connection Status Over Time', fontsize=16)
+    ax.set_title('Peer Connection Status and AllReduce Operations Over Time', fontsize=16)
     ax.set_xlabel('Time (seconds)', fontsize=12)
     ax.set_yticks([0.25, 0.75])
     ax.set_yticklabels(['Disconnected', 'Connected'])
-    ax.set_ylim(-0.1, 1.1)  # Expanded y-axis limits
+    ax.set_ylim(0, 1)  # Set y-axis limits
     
     # Add shaded areas for connected and disconnected lanes
     ax.axhspan(0, 0.5, facecolor='red', alpha=0.1)
     ax.axhspan(0.5, 1, facecolor='green', alpha=0.1)
     
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     plt.tight_layout()
     
     # Save static PNG
     plt.savefig("peer_uptime_graph.png", dpi=300, bbox_inches='tight')
+
+    # Log to wandb
+    if not self.config.neuron.dont_wandb_log:
+        # Convert plot to image
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png')
+        img_buf.seek(0)
+        
+        # Log the plot as an image
+        self.wandb.log({"Peer Uptime Graph": self.wandb.Image(img_buf)})
+
     plt.close()
 
 # async def run_uptime_tracking(self, uids: List[int], interval: int):
@@ -282,6 +319,7 @@ def generate_uptime_graph(self):
 #         await asyncio.sleep(interval)
 
 def initialize_uid_mapping(self):
+    self.uid_colors = {}
     max_retries = 3 # TODO Make config
     for attempt in range(max_retries):
         uids_to_peerids = self.loop.run_until_complete(

@@ -86,7 +86,7 @@ async def perform_all_reduce(self, start_time):
     bt.logging.info("Group Peer IDs:", list(group_peerids.values()))
 
     ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values())
-
+    
     group = template.protocol.Group(
         peer_count=len(group_peerids) + 1,  # Including the local peer
         peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
@@ -332,11 +332,20 @@ async def forward(self):
             if failed_gradient_all_reduce:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
-                with self.grad_averager.use_averaged_gradients():
-                    self.opt.zero_grad()
+                #with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
                 bt.logging.info("Optimizer Gradients Zeroed")
 
             self.step_scheduled = False
+            
+            # Record AllReduce operation data
+            success = gradient_averaging_step.done() and not failed_gradient_all_reduce
+
+            self.allreduce_history.append({
+                'time': time.time() - self.start_time,
+                'uids': self.miner_uids,
+                'success': success
+            })
             
         # Process the Train query responses
         else:
