@@ -30,6 +30,7 @@ from logging.handlers import QueueHandler, QueueListener
 from math import floor
 from multiprocessing import Queue
 from typing import Any, Callable, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import bittensor as bt
 import hivemind
@@ -425,7 +426,7 @@ def setup_logging(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     file_handler.setFormatter(formatter)
-    file_handler.addFilter(logging_filter)
+    #file_handler.addFilter(logging_filter)
     hivemind_logger.addHandler(file_handler)
     # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (
@@ -452,6 +453,31 @@ def get_bandwidth():
 
 
 def init_dht(self):
+     
+    def _get_initial_peers(self) -> List[str]:
+        api = wandb.Api()
+        initial_peers_list = self.config.neuron.initial_peers.copy()
+        runs = api.runs(
+            f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
+        )
+        for ru in runs:
+            if ru.state == "running" and "dht_addresses" in ru.config["neuron"]:
+                for peer in ru.config["neuron"]["dht_addresses"]:
+                    if peer not in initial_peers_list:
+                        initial_peers_list.append(peer)
+        return initial_peers_list
+
+    def _connect_to_peer(self, initial_peer: str, announce_maddrs: List[str]):
+        return hivemind.DHT(
+            host_maddrs=[
+                f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
+                f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
+            ],
+            initial_peers=[initial_peer],
+            announce_maddrs=announce_maddrs,
+            start=True,
+        )
+        
     # Init DHT and model
     if self.config.dht.ip:
         version = "4"
@@ -464,67 +490,45 @@ def init_dht(self):
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
 
     # Init list of available DHT addresses from wandb
-    api = wandb.Api()
-    initial_peers_list = self.config.neuron.initial_peers
-    runs = api.runs(
-        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-    )
-    for ru in runs:
-        if ru.state == "running":
-            if "dht_addresses" not in ru.config["neuron"].keys():
-                continue
-            else:
-                for peer in ru.config["neuron"]["dht_addresses"]:
-                    if peer not in initial_peers_list:
-                        initial_peers_list.append(peer)
+    initial_peers_list = _get_initial_peers(self)
+
+    # Shuffle the list of initial peers
+    random.shuffle(initial_peers_list)
 
     # Init DHT
-    retries = 0
-    buffer = 2
-    max_retries = buffer * len(initial_peers_list)
-    successful_connection = False
-    while successful_connection is False:
-        if (retries == max_retries) and (successful_connection is False):
-            raise Exception("Max retries reached, operation failed.")
-        for initial_peer in initial_peers_list:
-            for attempt in range(0, buffer):
-                try:
-                    # Init DHT
-                    self.dht = hivemind.DHT(
-                        host_maddrs=[
-                            f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
-                            f"/ip4/0.0.0.0/udp/{self.config.dht.port}/quic",
-                        ],
-                        initial_peers=[initial_peer],
-                        announce_maddrs=announce_maddrs,
-                        start=True,
-                    )
-                    bt.logging.info(
-                        f"Successfully initialised dht using initial_peer as {initial_peer}"
-                    )
-                    successful_connection = True
-                    utils.log_visible_maddrs(
-                        self.dht.get_visible_maddrs(), only_p2p=True
-                    )
-                    # Add DHT address to wandb config
-                    self.config.neuron.dht_addresses = [
-                        re.sub(
-                            "ip4/?(.*?)/",
-                            f"ip{version}/{address}/",
-                            str(addr),
-                            flags=re.DOTALL,
-                        )
-                        for addr in self.dht.get_visible_maddrs()
-                    ]
-                    return
-                except Exception as e:
-                    bt.logging.error(
-                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initial_peer} failed with error: {e}"
-                    )
-                    retries += 1
-                    time.sleep(5)
-                    bt.logging.error(f"Retrying...")
+    max_retries = 10
+    base_delay = 1
+    max_delay = 5
 
+    for retry in range(max_retries):
+        for initial_peer in initial_peers_list:
+            try:
+                self.dht = _connect_to_peer(self, initial_peer, announce_maddrs)
+                bt.logging.info(f"Successfully initialized DHT using initial_peer: {initial_peer}")
+                utils.log_visible_maddrs(
+                    self.dht.get_visible_maddrs(), only_p2p=True
+                )
+                # Add DHT address to wandb config
+                self.config.neuron.dht_addresses = [
+                    re.sub(
+                        "ip4/?(.*?)/",
+                        f"ip{version}/{address}/",
+                        str(addr),
+                        flags=re.DOTALL,
+                    )
+                    for addr in self.dht.get_visible_maddrs()
+                ]
+                return
+            except Exception as e:
+                bt.logging.error(f"Failed to initialize DHT using initial_peer {initial_peer}: {e}")
+        
+        delay = min(base_delay * (1.05 ** retry), max_delay)
+        bt.logging.info(f"All peers failed. Retrying in {delay} seconds...")
+        time.sleep(delay)
+
+    raise Exception("Max retries reached, DHT initialization failed.")
+
+    
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
     # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.

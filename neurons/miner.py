@@ -130,8 +130,13 @@ class Miner(BaseMinerNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
+        # Used for tracking peers
+        self.peer_status = {}
+        self.status_history = {}
+        self.start_time = time.time()
         # Create mapping between uids to peerids
         self.uids_to_peerids = initialize_uid_mapping(self)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
 
         # Load dataset
         self.dataset_loader = ()
@@ -193,10 +198,6 @@ class Miner(BaseMinerNeuron):
                 custom_group_info=custom_group,
                 timeout=(synapse.timeout - 20),
                 peerids_to_uids=self.peerids_to_uids,
-                weight=(
-                    self.local_progress.samples_accumulated
-                    / self.config.neuron.global_batch_size_train
-                ),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
@@ -340,15 +341,15 @@ class Miner(BaseMinerNeuron):
             #with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             outputs = self.model(input_ids=inputs, labels=inputs)
             loss = outputs.loss
-            
-            # Normalize loss to account for gradient accumulation
-            scaled_loss = loss / grad_accum_steps
-
-            # Backward Pass
-            scaled_loss.backward()
+            scaled_loss = ( # TODO Consider dividing by world_size too
+                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
+            )
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
+
+            # Backward Pass
+            scaled_loss.backward()
 
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
@@ -369,7 +370,6 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
-                
         # Copy gradients
         gradients = tuple(
             (
@@ -379,7 +379,7 @@ class Miner(BaseMinerNeuron):
             )
             for param in self.model.parameters()
         )
-
+        
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."

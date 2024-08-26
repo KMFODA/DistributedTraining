@@ -37,7 +37,7 @@ def score_gradients(self, response, uid):
     )
 
     index = 0
-    # Train data for on last indices
+    # Train data for only last indices
     for index, batch in enumerate(dataloader):
         continue
 
@@ -54,10 +54,18 @@ def score_gradients(self, response, uid):
     outputs = self.model(input_ids=inputs, labels=inputs)
 
     loss = outputs.loss
+    
+    scaled_loss = ( # TODO Consider dividing by world_size too
+                   # TODO set to response.local_batch_size instead of self.config.neuron.local_batch_size_train to ensure we divide by same as miner
+                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
+            )
 
     # Backward Pass
-    loss.backward()
+    scaled_loss.backward()
 
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+    
     # Copy gradients
     gradients = tuple(
         (
@@ -67,12 +75,6 @@ def score_gradients(self, response, uid):
         )
         for param in self.model.parameters()
     )
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Zero Gradients
-    self.opt.zero_grad()
 
     if response.gradient_test_index > len(gradients):
         bt.logging.info(
@@ -101,8 +103,10 @@ async def score_blacklist(self, uids):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         if self.uids_to_peerids[uid] == None:
+            bt.logging.info(f"- Scoring {uid} 0.0")
             scores[i] = 0.0
         else:
+            bt.logging.info(f"- Scoring {uid} 1.0")
             scores[i] = 1.0
 
     return scores

@@ -38,106 +38,90 @@ from template.utils.state_loader import load_state_from_peer
 from template.utils.uids import get_random_uids, map_uid_to_peerid
 from template.validator.reward import get_rewards, score_blacklist
 
-def validate_peers(self, group_peerids: Dict[int, str], blacklist_scores: List[float]) -> Tuple[bool, str]:
-    if not group_peerids:
-        return False, "Empty group_peerids"
-    if blacklist_scores is None:
-        return False, "Blacklist scores are None"
-    if len(group_peerids) != len(blacklist_scores):
-        return False, f"Mismatch in lengths: group_peerids ({len(group_peerids)}) vs blacklist_scores ({len(blacklist_scores)})"
-
-    invalid_peers = []
-    blacklisted_peers = []
-
-    for (uid, peer_id), score in zip(group_peerids.items(), blacklist_scores):
-        if uid != self.uid:
-            if peer_id is None:
-                invalid_peers.append(uid)
-            elif score == 0:
-                blacklisted_peers.append(uid)
-
-    if invalid_peers:
-        return False, f"Invalid peer IDs for UIDs: {invalid_peers}"
-    if blacklisted_peers:
-        return False, f"Blacklisted peers (score 0) for UIDs: {blacklisted_peers}"
-
-    return True, "All peers valid"
-
 async def perform_all_reduce(self, start_time):
     
-    while time.perf_counter() - start_time < self.all_reduce_timeout:
+    #while time.perf_counter() - start_time < self.all_reduce_timeout:
 
-        # Map UIDs to peer IDs
+    group_peerids = None
+    blacklist_scores = None
+    new_group_peerids = {}
+    new_miner_uids = []
+
+    # Map UIDs to PeerIds
+    while (
+        (group_peerids is None)
+        or (blacklist_scores is None)
+        # or (blacklist_scores.sum().item() == 0)
+        or any(
+            scores_ids_tuple[1] is None
+            for index, scores_ids_tuple in enumerate(
+                zip(blacklist_scores, group_peerids.values())
+            )
+            if (index != self.uid) and (scores_ids_tuple[0] != 0)
+        )
+    ):
         group_peerids = await map_uid_to_peerid(self, self.miner_uids.tolist())
-        if not group_peerids:
-            await asyncio.sleep(0.2)
-            continue
+        self.uids_to_peerids = group_peerids
+        blacklist_scores = await score_blacklist(self, group_peerids.keys())
+        bt.logging.info(f"group_peerids: {group_peerids}")
+        bt.logging.info(f"blacklist_scores: {blacklist_scores}")
+    
+    bt.logging.info(f"While loop finished...")
 
-        # Calculate blacklist scores
-        blacklist_scores = await score_blacklist(self, list(group_peerids.keys()))
+    # Filter any UIDs not connected to the DHT
+    group_peerids = {key: group_peerids[key] 
+                     for i, key in enumerate(group_peerids.keys()) 
+                     if blacklist_scores[i] != 0.0}
+    
+    self.miner_uids = torch.tensor(list(group_peerids.keys())).to(self.device)
 
-        # Validate peers
-        is_valid, error_message = validate_peers(self, group_peerids, blacklist_scores)
-        if not is_valid:
-            bt.logging.warning(f"Peer validation failed: {error_message}. Retrying...")
-            await asyncio.sleep(0.2)
-            continue
+    # Map uids to peerids
+    self.peerids_to_uids = {
+        str(value): key for key, value in self.uids_to_peerids.items()
+    }
+    
+    group_id = DHTID.generate().to_bytes()
 
-        # Filter out blacklisted peers
-        valid_group_peerids = {uid: peer_id for uid, peer_id in group_peerids.items() 
-                               if blacklist_scores[list(group_peerids.keys()).index(uid)] != 0.0}
+    bt.logging.info("DHT ID:", self.dht.peer_id)
+    bt.logging.info("Group Peer IDs:", list(group_peerids.values()))
 
-        self.miner_uids = torch.tensor(list(valid_group_peerids.keys())).to(self.device)
+    ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values())
 
-        group_id = DHTID.generate().to_bytes()
+    group = template.protocol.Group(
+        peer_count=len(group_peerids) + 1,  # Including the local peer
+        peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
+        group_id=base64.b64encode(group_id),
+    )
 
-        bt.logging.info(f"DHT ID: {self.dht.peer_id}")
-        bt.logging.info(f"Group Peer IDs: {list(valid_group_peerids.values())}")
+    # Define a custom group for all-reduce
+    custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
-        ordered_peer_ids = [self.dht.peer_id] + list(valid_group_peerids.values())
+    bt.logging.info("Performing Gradient Averaging")
+    gradient_averaging_step = self.grad_averager.step(
+        custom_group_info=custom_group, wait=False, 
+        peerids_to_uids=self.peerids_to_uids
+    )
 
-        # Check if there are other peers besides the local peer
-        if len(ordered_peer_ids) > 1:
-            
-            # Map uids to peerids
-            self.peerids_to_uids = {
-                str(value): key for key, value in self.uids_to_peerids.items()
-            }
-            
-            group = template.protocol.Group(
-                peer_count=len(valid_group_peerids) + 1,  # Including the local peer
-                peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
-                group_id=base64.b64encode(group_id),
-            )
+    learning_rate = self.get_learning_rate()
+    bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
-            # Define a custom group for all-reduce
-            custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
+    queries = [
+        template.protocol.AllReduce(
+            group=group,
+            timeout=self.all_reduce_timeout - (time.perf_counter() - start_time), # Subtracting this step from the timeout
+            learning_rate=learning_rate,
+        )
+        for _ in self.miner_uids
+    ]
 
-            bt.logging.info("Performing Gradient Averaging")
-            gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, wait=False, peerids_to_uids=self.peerids_to_uids
-            )
+    return gradient_averaging_step, queries
 
-            learning_rate = self.get_learning_rate()
-            bt.logging.info(f"Current Learning Rate: {learning_rate}")
+        # else:
+        #     bt.logging.warning(f"Only local peer found. Retrying...")
+        #     await asyncio.sleep(0.5)
 
-            queries = [
-                template.protocol.AllReduce(
-                    group=group,
-                    timeout=self.all_reduce_timeout - (time.perf_counter() - start_time), # Subtracting this step from the timeout
-                    learning_rate=learning_rate,
-                )
-                for _ in self.miner_uids
-            ]
-
-            return gradient_averaging_step, queries
-
-        else:
-            bt.logging.warning(f"Only local peer found. Retrying...")
-            await asyncio.sleep(0.5)
-
-    bt.logging.error("Failed to find other peers for gradient averaging within the timeout period")
-    return None, None
+    # bt.logging.error("Failed to find other peers for gradient averaging within the timeout period")
+    # return None, None
 
 async def forward(self):
     """
