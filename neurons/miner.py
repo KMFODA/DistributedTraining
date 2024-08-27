@@ -148,6 +148,7 @@ class Miner(BaseMinerNeuron):
                 )
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
         # Load dataset
         self.dataset_loader = ()
@@ -191,6 +192,7 @@ class Miner(BaseMinerNeuron):
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         try:
             self.grad_averager.step(
                 timeout=(synapse.timeout - 20),

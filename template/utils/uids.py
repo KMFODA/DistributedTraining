@@ -116,7 +116,7 @@ async def map_uid_to_peerid(self, uids):
         miner_ip = self.metagraph.axons[uid].ip
         miner_port = self.metagraph.axons[uid].port
 
-        # Get all peers connected to our DHT and their ips
+        # Get all peers connected to our DHT, their ips and their ports
         peer_list_dht = await self._p2p.list_peers()
         peer_list_dht_addrs = [
             str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
@@ -137,7 +137,7 @@ async def map_uid_to_peerid(self, uids):
             uids_to_peerids[uid] = None
             continue
 
-        peer_list_run = [
+        run_peer_id_list = [
             str(PeerID(peer_id))
             for peer_id, info in metadata.items()
             if isinstance(info, ValueWithExpiration)
@@ -156,22 +156,24 @@ async def map_uid_to_peerid(self, uids):
                     for i in range(len(peer_list_dht_addrs))
                     if peer_list_dht_addrs[i] == miner_ip
                 ]
+                peer_id = None
                 for index in indices:
                     if abs(miner_port - int(peer_list_dht_ports[index])) < 10:
                         peer_id = peer_list_dht[index].peer_id
                         break
                     elif index == indices[-1]:
-                        uids_to_peerids[uid] = None
                         break
                     else:
                         continue
-                if uids_to_peerids[uid] == None:
+
+                if peer_id is None:
+                    uids_to_peerids[uid] = None
                     continue
             else:
                 peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
 
         # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in peer_list_run:
+        if str(peer_id) not in run_peer_id_list:
             # return None
             uids_to_peerids[uid] = None
             continue
@@ -179,4 +181,5 @@ async def map_uid_to_peerid(self, uids):
             # return peer_id
             uids_to_peerids[uid] = peer_id
             continue
+
     return uids_to_peerids
