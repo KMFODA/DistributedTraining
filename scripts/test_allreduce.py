@@ -66,36 +66,19 @@ def launch_dht_instances(n_peers: int, **kwargs) -> List[DHT]:
 class DummyModel(nn.Module):
     def __init__(self):
         super(DummyModel, self).__init__()
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.conv1 = nn.Conv2d(4, 8, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, padding=1)
-        self.fc3 = nn.Linear(8192, 4096)
-        self.fc4 = nn.Linear(4096, 2048)
-        self.fc5 = nn.Linear(2048, 1024)
+        self.param1 = nn.Parameter(torch.randn(16, 1024))
+        self.param2 = nn.Parameter(torch.randn(3, 8192))
+        self.param3 = nn.Parameter(torch.randn(4, 4, 4))
+        self.param4 = nn.Parameter(torch.randn(1024, 1024))
 
     def forward(self, x1, x2, x3, x4):
-        # Process x1 (16, 1024)
-        y1 = F.relu(self.fc1(x1))
-        y1 = self.fc2(y1)
 
-        # Process x2 (3, 8192)
-        y2 = F.relu(self.fc3(x2))
-        y2 = F.relu(self.fc4(y2))
-        y2 = self.fc5(y2)
+        y1 = x1 + self.param1
+        y2 = -(x2 + self.param2)
+        y3 = 2 * (x3 + self.param3) 
+        y4 = x4 + self.param4
 
-        # Process x3 (4, 4, 4)
-        y3 = F.relu(self.conv1(x3))
-        y3 = self.conv2(y3)
-        y3 = y3.view(y3.size(0), -1)
-
-        # Process x4 (1024, 1024)
-        y4 = torch.matmul(x4, x4.t())
-        y4 = y4.mean(dim=1)
-
-        # Combine all outputs
-        combined = torch.cat([y1.mean(dim=1), y2.mean(dim=1), y3.mean(dim=1), y4], dim=0)
-        return combined
+        return [y1, y2, y3, y4]
     
 class FaultyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
 # class FaultyGradientAverager(hivemind.DecentralizedAverager):
@@ -117,7 +100,7 @@ class FaultyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
             )
 
             if self.fault == Fault.FAIL_BEFORE:
-                raise Exception("Oops, I failed!")
+                raise Exception(f"Oops, I (peerID {[str(self.peer_id)]}) failed before aggregation!")
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 allreduce = FaultyAllReduceRunner(
@@ -200,6 +183,9 @@ class FaultyDTGradientAverager(DTGradientAverager):
         self.fault = fault
         super().__init__(*args, **kwargs)
 
+    def get_banned_peers(self):
+        return list(self.banned_peers)
+    
     # async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, peerids_to_uids: dict, **kwargs):
     async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, **kwargs):
         try:
@@ -211,6 +197,7 @@ class FaultyDTGradientAverager(DTGradientAverager):
                 raise Exception(f"Oops, I (peerID {[str(self.peer_id)]}) failed before aggregation!")
             
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
+                
                 runner = FaultyDTAllReduceRunner(
                     # peerids_to_uids=peerids_to_uids,
                     p2p=self._p2p,
@@ -234,17 +221,19 @@ class FaultyDTGradientAverager(DTGradientAverager):
                     async for _ in runner:
                         raise ValueError("aux peers should not receive averaged tensors")
 
+                self.banned_peers.update(runner.banned_peers)
+                print("YOOO:", self.banned_peers)
                 return group_info
         except BaseException as e:
-            if isinstance(e, Exception):
-                logger.exception(e)
-            raise AllReduceError(f"Error during AllReduce: {str(e)}") from e
+            logger.exception(e)
+            raise MatchmakingException(f"Unable to run All-Reduce: {e}")
 
 class FaultyDTAllReduceRunner(DTAllReduceRunner):
     def __init__(self, *args, fault: Fault, **kwargs):
         self.fault = fault
-        super().__init__(*args, **kwargs)
 
+        super().__init__(*args, **kwargs)
+    
     async def rpc_aggregate_part(self, stream, context) -> AsyncIterator[averaging_pb2.AveragingData]:
         if self.fault in (Fault.FAIL_REDUCING, Fault.SLOW_REDUCING):
     
@@ -277,7 +266,6 @@ class FaultyDTAllReduceRunner(DTAllReduceRunner):
         )
         if self.fault in (Fault.FAIL_SENDING, Fault.SLOW_SENDING):
             last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
-            print("last_reducer_index: ", last_reducer_index)
             if peer_index == last_reducer_index:
                 if self.fault == Fault.FAIL_SENDING:
                     #print(f"{Fore.YELLOW}UID: {uid} failed sending...{Style.RESET_ALL}")
@@ -289,11 +277,11 @@ class FaultyDTAllReduceRunner(DTAllReduceRunner):
             yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
 
-async def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_to_uids, custom_group, use_original=False):
+def make_tensors():
+    return [torch.rand(16, 1024), -torch.rand(3, 8192), 2 * torch.randn(4, 4, 4), torch.randn(1024, 1024)]
+
+def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_to_uids, custom_group, use_original=False):
     allreduce_timeout = 35
-    
-    # def _make_tensors():
-    #     return [torch.rand(16, 1024), -torch.rand(3, 8192), 2 * torch.randn(4, 4, 4), torch.randn(1024, 1024)]
 
     if use_original:
         averagers = [
@@ -325,56 +313,46 @@ async def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_
                 start=True,
                 fault=fault0 if i == 0 else fault1 if i == 1 else Fault.NONE,
                 allreduce_timeout=allreduce_timeout,
+                client_mode= True if i == 1 else False,
             )
             for i, (dht, model) in enumerate(zip(dht_instances, models))
         ]
-    
-    # Define a dummy input and target
-    dummy_input = [
-        torch.rand(16, 1024),
-        -torch.rand(3, 8192),
-        2 * torch.randn(4, 4, 4),
-        torch.randn(1024, 1024)
-    ]
-    # Define a loss function
+        
     criterion = nn.MSELoss()
 
-    # Simulate dummy gradients for averaging
     for model, averager in zip(models, averagers):
         # Forward pass
-        output = model(*dummy_input)
+        output = model(*make_tensors())
         
-        dummy_target = torch.randn(output.size(0))
+        dummy_target = torch.randn(sum(tensor.numel() for tensor in output))
+        flat_output = torch.cat([tensor.flatten() for tensor in output])
         
-        # Calculate loss
-        loss = criterion(output, dummy_target)
-        # Backward pass
+        loss = criterion(flat_output, dummy_target)
         loss.backward()
         # Accumulate gras
         averager.accumulate_grads_(batch_size=1)   
 
     ref_numerators = [torch.zeros_like(param.grad) for param in models[0].parameters()]
-    # ref_numerators = [0,0,0,0]
     ref_denominator = 0
 
     for averager in averagers:
         if averager.fault not in (Fault.FAIL_BEFORE, Fault.CANCEL):
                 for i, param in enumerate(averager.parameters):
                     ref_numerators[i] = ref_numerators[i] + param.grad.clone()
-                # with averager.get_tensors() as tensors:
-                #     for i, tensor in enumerate(tensors):
-                #         ref_numerators[i] = ref_numerators[i] + tensor.clone()
                 ref_denominator += 1
     
     ref_tensors = [ref_numerator / ref_denominator for ref_numerator in ref_numerators]
     flat_ref = torch.cat(list(map(torch.flatten, ref_tensors)))
-
     flat_local_tensors = []
+    
     for averager in averagers:
-        for i, param in enumerate(averager.parameters):
-            flat_local_tensors.append(torch.cat(list(map(torch.flatten, param.grad.clone()))))
+        averager_tensors = []
+        for param in averager.parameters:
+            averager_tensors.append(param.grad.clone().flatten())
+    flat_local_tensors.append(torch.cat(averager_tensors))
     
     futures = []
+ 
     for averager in averagers:
         if use_original:
             future = averager.step(
@@ -395,16 +373,20 @@ async def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_
         if averager.fault == Fault.CANCEL:
             futures[i].cancel()
 
+        
+    # TODO Need to put averager.banned_peers inside a MP.lock to infer them even after future.result() (as with .get_tensors())
+    for averager in averagers:
+        banned_peers = averager.get_banned_peers()
+        print("BANNED PEERS: ",banned_peers)
+        
     for future in futures[2:]:
         assert future.result()
-
-   
+        
     for averager, prev_local_tensors in zip(averagers[2:], flat_local_tensors[2:]):
         with averager.get_tensors() as tensors:
             flat_tensors = torch.cat(list(map(torch.flatten, tensors)))
 
         diff_with_reference = abs(flat_ref - flat_tensors)
-        
     
         if all(fault in (Fault.FAIL_SENDING, Fault.SLOW_SENDING) for fault in (fault0, fault1)):
             assert fault0 != Fault.FAIL_REDUCING and fault1 != Fault.FAIL_REDUCING
@@ -431,8 +413,9 @@ async def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_
 
 if __name__ == "__main__":
     fault_pairs = [
-        (Fault.NONE, Fault.NONE),
-        (Fault.NONE, Fault.FAIL_BEFORE),
+        # (Fault.NONE, Fault.NONE),
+        # (Fault.NONE, Fault.FAIL_BEFORE),
+        # (Fault.FAIL_BEFORE, Fault.NONE), 
         (Fault.FAIL_BEFORE, Fault.FAIL_BEFORE),
         # (Fault.SLOW_SENDING, Fault.FAIL_SENDING),
         # (Fault.SLOW_SENDING, Fault.NONE),
@@ -458,7 +441,13 @@ if __name__ == "__main__":
         custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
         
         print(f"Running test with fault0={fault0}, fault1={fault1}")
-        asyncio.run(
-            run_test(fault0, fault1, dht_instances, models, peerids_to_uids, custom_group, use_original=False)
-            )
+        # asyncio.run(
+        run_test(fault0, fault1, dht_instances, models, peerids_to_uids, custom_group, use_original=False)
+            # )
         print("Test completed\n")
+        
+        
+# TODO:
+# 1. Get banned peers from averager
+# 2. Check they are consistent across averagers
+# 3. Check exception handling

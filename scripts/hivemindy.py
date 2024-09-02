@@ -57,7 +57,7 @@ class DTAllReduceRunner(AllReduceRunner):
     # def __init__(self, peerids_to_uids, *args, **kwargs):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.count = 0
+        self.banned_peers = set()
         # self.peerids_to_uids = peerids_to_uids
         # bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
@@ -144,13 +144,13 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
             
-            except ConnectionResetError:
-                logger.error(f"Connection reset by peer: {peer_id}")
-                if peer_id == self.ordered_peer_ids[0]:
-                    bt.logging.error("Validator connection faulting")
-                self.tensor_part_container.register_failed_reducer(peer_index)                    
-                # raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
-                raise AllreduceException(f"Connection reset by PeerID: {peer_id}")
+            # except ConnectionResetError:
+            #     logger.error(f"Connection reset by peer: {peer_id}")
+            #     if peer_id == self.ordered_peer_ids[0]:
+            #         bt.logging.error("Validator connection faulting")
+            #     self.tensor_part_container.register_failed_reducer(peer_index)                    
+            #     # raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
+            #     raise AllreduceException(f"Connection reset by PeerID: {peer_id}")
 
             except BaseException as e:
                 if isinstance(
@@ -222,14 +222,12 @@ class DTAllReduceRunner(AllReduceRunner):
                 # error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 error_message = f"PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
-
-                raise Exception(error_message)
-
+                self.banned_peers.add(peer_id)
 
 class DTAverager(hivemind.DecentralizedAverager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
+    
     def step(
         self,
         gather: Optional[GatheredData] = None,
@@ -357,22 +355,23 @@ class DTAverager(hivemind.DecentralizedAverager):
                     bt.logging.info("Running AllReduce..")
                     # await self._run_allreduce(step, custom_group_info, peerids_to_uids)
                     await self._run_allreduce(step, custom_group_info)
+
                     # Averaging is finished, loop will now exit
                 
-                except ConnectionResetError as e:
-                    logger.error(f"Connection reset error: {e}")
-                    if (
-                        step.done()
-                        or not step.allow_retries
-                        or get_dht_time() >= step.deadline
-                    ):
-                        if not step.cancelled():
-                            logger.exception(e)
-                        if not step.done():
-                            step.set_exception(e)
-                    else:
-                        logger.warning(f"ConnectionResetError occurred, retrying...")
-                        await asyncio.sleep(0.5)
+                # except ConnectionResetError as e:
+                #     logger.error(f"Connection reset error: {e}")
+                #     if (
+                #         step.done()
+                #         or not step.allow_retries
+                #         or get_dht_time() >= step.deadline
+                #     ):
+                #         if not step.cancelled():
+                #             logger.exception(e)
+                #         if not step.done():
+                #             step.set_exception(e)
+                #     else:
+                #         logger.warning(f"ConnectionResetError occurred, retrying...")
+                #         await asyncio.sleep(0.5)
                         
                 except (
                     AllreduceException,
@@ -406,6 +405,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         finally:
             bt.logging.info("Finally..")
             step.stage = AveragingStage.FINISHED
+
             if not step.done():
                 step.set_exception(
                     RuntimeError(
@@ -490,11 +490,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                 await asyncio.wait_for(self.barrier_complete.wait(), timeout=60) # TODO set to a config param
                 bt.logging.info(f"Barrier complete for {self.peer_id}")
         
-        except ConnectionResetError as e:
-            logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
-            if self.peer_id == leader_id:
-                bt.logging.error("Validator connection faulting")
-            raise BarrierError("Connection reset during barrier") from e
+        # except ConnectionResetError as e:
+        #     logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
+        #     if self.peer_id == leader_id:
+        #         bt.logging.error("Validator connection faulting")
+        #     raise BarrierError("Connection reset during barrier") from e
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
             raise BarrierError("Barrier timeout") from None
@@ -549,10 +549,10 @@ class DTAverager(hivemind.DecentralizedAverager):
 
             bt.logging.info(f"Leader {self.peer_id} notified all followers.")
         
-        except ConnectionResetError as e:
-            logger.error(f"Connection reset during leader coordination: {e}")
-            bt.logging.error("Validator connection faulting")
-            raise
+        # except ConnectionResetError as e:
+        #     logger.error(f"Connection reset during leader coordination: {e}")
+        #     bt.logging.error("Validator connection faulting")
+        #     raise
         except Exception as e:
             logger.error(f"Error in leader_coordinate_barrier: {e}")
             raise
@@ -604,11 +604,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                         )
                     await asyncio.sleep(1)  # Wait before retrying
             
-            except ConnectionResetError as e:
-                logger.error(f"Connection reset while joining barrier: {e}")
-                if attempt == max_retries - 1:
-                    raise MatchmakingException(f"Failed to join barrier due to connection reset")
-                await asyncio.sleep(0.2)  # Wait before retrying
+            # except ConnectionResetError as e:
+            #     logger.error(f"Connection reset while joining barrier: {e}")
+            #     if attempt == max_retries - 1:
+            #         raise MatchmakingException(f"Failed to join barrier due to connection reset")
+            #     await asyncio.sleep(0.2)  # Wait before retrying
             except Exception as e:
                 logger.error(
                     f"Error in follower_join_barrier attempt {attempt + 1}: {e}"
@@ -709,6 +709,8 @@ class DTAverager(hivemind.DecentralizedAverager):
                     peer_fractions=peer_fractions,
                     **kwargs,
                 )
+                
+                
                 assert (
                     group_id in self._running_groups
                 ), f"Group id {group_id} was not registered in _register_allreduce_group"
@@ -728,12 +730,17 @@ class DTAverager(hivemind.DecentralizedAverager):
                         raise ValueError(
                             "aux peers should not receive averaged tensors"
                         )
-
+                
+                self.banned_peers.update(runner.banned_peers)
+                print(runner.banned_peers)
                 return group_info
         except BaseException as e:
             if isinstance(e, Exception):
                 logger.exception(e)
-            raise AllReduceError(f"Error during AllReduce: {str(e)}") from e
+            raise MatchmakingException(f"Unable to run All-Reduce: {e}")
+    
+    def get_banned_peers(self):
+        return list(self.banned_peers)
 
 
 class DTGradientAverager(DTAverager):
@@ -755,6 +762,8 @@ class DTGradientAverager(DTAverager):
         self.barrier_group = None
         self.barrier_complete = asyncio.Event()
         self.ready_peers = {}
+        
+        self.banned_peers = set()
 
         if reuse_grad_buffers and accumulate_grads_on is not None:
             logger.warning(
