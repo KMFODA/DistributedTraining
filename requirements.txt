@@ -1,4 +1,4 @@
-bittensor==6.12.0
+git+https://github.com/opentensor/bittensor@release/6.12.3
 bitarray==2.9.2
 datasets==2.18.0
 transformers==4.39.3
