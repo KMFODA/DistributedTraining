@@ -58,7 +58,6 @@ class DTAllReduceRunner(AllReduceRunner):
     # def __init__(self, peerids_to_uids, *args, **kwargs):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # self.banned_peers = set()
         # self.peerids_to_uids = peerids_to_uids
         # bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
@@ -757,9 +756,6 @@ class DTGradientAverager(DTAverager):
         self.barrier_group = None
         self.barrier_complete = asyncio.Event()
         self.ready_peers = {}
-        
-        # self.banned_peers = set()
-        # self._banned_peers_lock = mp.Lock()
 
         if reuse_grad_buffers and accumulate_grads_on is not None:
             logger.warning(
@@ -929,16 +925,7 @@ class DTGradientAverager(DTAverager):
         control.allow_allreduce()
         bt.logging.info(f"control.stage {control.stage}")
 
-        #return control.result(timeout) if wait else control
-        if wait:
-            result = control.result(timeout)
-            # Ensure banned peers are updated after the step is complete
-            if isinstance(result, GroupInfo):
-                with self._banned_peers_lock:
-                    self.banned_peers[:] = list(set(self.banned_peers) | set(result.banned_peers))
-            return result
-        else:
-            return control
+        return control.result(timeout) if wait else control
 
     @torch.no_grad()
     def load_accumulators_into_averager_(self):
