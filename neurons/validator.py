@@ -101,7 +101,7 @@ class Validator(BaseValidatorNeuron):
             self.wandb = load_wandb(
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
-            
+
         # Track AllReduce operation
         self.allreduce_history = []
 
@@ -162,7 +162,7 @@ class Validator(BaseValidatorNeuron):
         self.peer_status = {}
         self.status_history = {}
         self.start_time = time.time()
-        # Create mapping between uids to peerids       
+        # Create mapping between uids to peerids
         self.uids_to_peerids = initialize_uid_mapping(self)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
 
@@ -191,7 +191,7 @@ class Validator(BaseValidatorNeuron):
     def get_learning_rate(self):
         if self.global_progress.epoch is None:
             return self.config.neuron.learning_rate
-        
+
         learning_rate_minimum = self.config.neuron.learning_rate * 0.1
         # 1) linear warmup for warmup_steps
         if self.global_progress.epoch < self.config.neuron.warmup_steps:

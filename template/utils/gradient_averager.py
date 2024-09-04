@@ -17,7 +17,7 @@ from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.dht import DHT
-from hivemind.p2p import (P2PContext, P2PDaemonError, P2PHandlerError, PeerID)
+from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
 from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
@@ -141,18 +141,18 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"peer {peer_id} sent {part_index} parts, but we expected "
                         f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
                     )
-            
+
             except ConnectionResetError:
                 logger.error(f"Connection reset by peer: {peer_id}")
                 if peer_id == self.ordered_peer_ids[0]:
                     bt.logging.error("Validator connection faulting")
-                self.tensor_part_container.register_failed_reducer(peer_index)                    
-                raise AllreduceException(f"Connection reset by PeerID: {peer_id} - UID:{uid}")
+                self.tensor_part_container.register_failed_reducer(peer_index)
+                raise AllreduceException(
+                    f"Connection reset by PeerID: {peer_id} - UID:{uid}"
+                )
 
             except BaseException as e:
-                if isinstance(
-                    e, Exception
-                ):  
+                if isinstance(e, Exception):
                     logger.debug(
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
@@ -299,7 +299,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         step=step,
                         future_for_init=future_for_init,
                         custom_group_info=custom_group_info,
-                        peerids_to_uids=peerids_to_uids
+                        peerids_to_uids=peerids_to_uids,
                     ),
                 )
             )
@@ -351,7 +351,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                     bt.logging.info("Running AllReduce..")
                     await self._run_allreduce(step, custom_group_info, peerids_to_uids)
                     # Averaging is finished, loop will now exit
-                
+
                 except ConnectionResetError as e:
                     logger.error(f"Connection reset error: {e}")
                     if (
@@ -366,7 +366,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                     else:
                         logger.warning(f"ConnectionResetError occurred, retrying...")
                         await asyncio.sleep(0.5)
-                        
+
                 except (
                     AllreduceException,
                     MatchmakingException,
@@ -480,11 +480,15 @@ class DTAverager(hivemind.DecentralizedAverager):
                     await self._follower_join_barrier(leader_id)
 
                 bt.logging.info(f"Waiting for barrier_complete for {self.peer_id}")
-                await asyncio.wait_for(self.barrier_complete.wait(), timeout=60) # TODO set to a config param
+                await asyncio.wait_for(
+                    self.barrier_complete.wait(), timeout=60
+                )  # TODO set to a config param
                 bt.logging.info(f"Barrier complete for {self.peer_id}")
-        
+
         except ConnectionResetError as e:
-            logger.error(f"Connection reset during barrier for peer {self.peer_id}: {e}")
+            logger.error(
+                f"Connection reset during barrier for peer {self.peer_id}: {e}"
+            )
             if self.peer_id == leader_id:
                 bt.logging.error("Validator connection faulting")
             raise BarrierError("Connection reset during barrier") from e
@@ -541,7 +545,7 @@ class DTAverager(hivemind.DecentralizedAverager):
             )
 
             bt.logging.info(f"Leader {self.peer_id} notified all followers.")
-        
+
         except ConnectionResetError as e:
             logger.error(f"Connection reset during leader coordination: {e}")
             bt.logging.error("Validator connection faulting")
@@ -554,7 +558,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         bt.logging.info(
             f"Follower {self.peer_id} attempting to join barrier led by {leader_id}."
         )
-        max_retries = 3 # TODO set this to reasonable value/config param
+        max_retries = 3  # TODO set this to reasonable value/config param
         for attempt in range(max_retries):
             try:
                 self.barrier_state = BarrierState.JOINED_GROUP
@@ -596,11 +600,13 @@ class DTAverager(hivemind.DecentralizedAverager):
                             f"Failed to join barrier after {max_retries} attempts"
                         )
                     await asyncio.sleep(1)  # Wait before retrying
-            
+
             except ConnectionResetError as e:
                 logger.error(f"Connection reset while joining barrier: {e}")
                 if attempt == max_retries - 1:
-                    raise MatchmakingException(f"Failed to join barrier due to connection reset")
+                    raise MatchmakingException(
+                        f"Failed to join barrier due to connection reset"
+                    )
                 await asyncio.sleep(0.2)  # Wait before retrying
             except Exception as e:
                 logger.error(
@@ -655,7 +661,9 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         await matchmaking_task
 
-    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict):
+    async def _run_allreduce(
+        self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict
+    ):
         with self._register_allreduce_group(custom_group_info):
             bt.logging.info("Running AllReduce.")
             assert (

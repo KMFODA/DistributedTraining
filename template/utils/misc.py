@@ -24,18 +24,19 @@ import random
 import re
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, update_wrapper
 from ipaddress import ip_address
 from logging.handlers import QueueHandler, QueueListener
 from math import floor
 from multiprocessing import Queue
 from typing import Any, Callable, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import bittensor as bt
 import hivemind
 import logging_loki
 import speedtest
+import wandb
 from bitarray import bitarray
 from dotenv import load_dotenv
 from hivemind import utils
@@ -43,7 +44,6 @@ from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
-import wandb
 from template.data.dataset import SubsetFalconLoader
 from template.protocol import Train
 
@@ -453,7 +453,6 @@ def get_bandwidth():
 
 
 def init_dht(self):
-     
     def _get_initial_peers(self) -> List[str]:
         api = wandb.Api()
         initial_peers_list = self.config.neuron.initial_peers.copy()
@@ -477,7 +476,7 @@ def init_dht(self):
             announce_maddrs=announce_maddrs,
             start=True,
         )
-        
+
     # Init DHT and model
     if self.config.dht.ip:
         version = "4"
@@ -504,10 +503,10 @@ def init_dht(self):
         for initial_peer in initial_peers_list:
             try:
                 self.dht = _connect_to_peer(self, initial_peer, announce_maddrs)
-                bt.logging.info(f"Successfully initialized DHT using initial_peer: {initial_peer}")
-                utils.log_visible_maddrs(
-                    self.dht.get_visible_maddrs(), only_p2p=True
+                bt.logging.info(
+                    f"Successfully initialized DHT using initial_peer: {initial_peer}"
                 )
+                utils.log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
                 # Add DHT address to wandb config
                 self.config.neuron.dht_addresses = [
                     re.sub(
@@ -520,15 +519,16 @@ def init_dht(self):
                 ]
                 return
             except Exception as e:
-                bt.logging.error(f"Failed to initialize DHT using initial_peer {initial_peer}: {e}")
-        
-        delay = min(base_delay * (1.05 ** retry), max_delay)
+                bt.logging.error(
+                    f"Failed to initialize DHT using initial_peer {initial_peer}: {e}"
+                )
+
+        delay = min(base_delay * (1.05**retry), max_delay)
         bt.logging.info(f"All peers failed. Retrying in {delay} seconds...")
         time.sleep(delay)
 
     raise Exception("Max retries reached, DHT initialization failed.")
 
-    
     # Commit Peer Id to Subtensor
     # self.subtensor.commit(self.wallet, self.config.netuid, self.dht.peer_id.to_base58())
     # Wrap calls to the subtensor in a subprocess w ith a timeout to handle potential hangs.

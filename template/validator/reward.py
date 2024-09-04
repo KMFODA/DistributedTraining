@@ -54,18 +54,20 @@ def score_gradients(self, response, uid):
     outputs = self.model(input_ids=inputs, labels=inputs)
 
     loss = outputs.loss
-    
-    scaled_loss = ( # TODO Consider dividing by world_size too
-                   # TODO set to response.local_batch_size instead of self.config.neuron.local_batch_size_train to ensure we divide by same as miner
-                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
-            )
+
+    scaled_loss = (  # TODO Consider dividing by world_size too
+        # TODO set to response.local_batch_size instead of self.config.neuron.local_batch_size_train to ensure we divide by same as miner
+        loss
+        / self.config.neuron.global_batch_size_train
+        / self.config.neuron.local_batch_size_train  # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
+    )
 
     # Backward Pass
     scaled_loss.backward()
 
     # Accumulate Gradients
     self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-    
+
     # Copy gradients
     gradients = tuple(
         (
@@ -176,9 +178,9 @@ async def get_rewards(
 
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id   
-        
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not  
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
+
+        # Check if peer is connected to DHT & run_id and blacklist them if they are not
         blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
 
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
@@ -227,14 +229,15 @@ async def get_rewards(
 
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if (self.step % 10) == 0:
-
             # Update mapping of uids to peerids
-            self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-            self.uids_to_peerids[self.uid] = self.dht.peer_id   
-            
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not  
+            self.uids_to_peerids = await map_uid_to_peerid(
+                self, range(0, self.metagraph.n)
+            )
+            self.uids_to_peerids[self.uid] = self.dht.peer_id
+
+            # Check if peer is connected to DHT & run_id and blacklist them if they are not
             blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
-            
+
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
                 {

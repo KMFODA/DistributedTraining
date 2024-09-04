@@ -28,9 +28,9 @@ import hivemind
 import numpy as np
 import torch
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.p2p import PeerID
-from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
@@ -46,7 +46,7 @@ from template.utils.progress_tracker import (GlobalTrainingProgress,
                                              LocalTrainingProgress,
                                              update_global_tracker_state)
 from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import map_uid_to_peerid, initialize_uid_mapping
+from template.utils.uids import initialize_uid_mapping, map_uid_to_peerid
 
 
 class Miner(BaseMinerNeuron):
@@ -103,11 +103,17 @@ class Miner(BaseMinerNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        
+
         # Set weight decay of specific layers:
         optim_groups = [
-            {'params': [p for _, p in self.model.named_parameters() if p.dim() >= 2], 'weight_decay': 0.1},
-            {'params': [p for _, p in self.model.named_parameters() if p.dim() < 2], 'weight_decay': 0.0}
+            {
+                "params": [p for _, p in self.model.named_parameters() if p.dim() >= 2],
+                "weight_decay": 0.1,
+            },
+            {
+                "params": [p for _, p in self.model.named_parameters() if p.dim() < 2],
+                "weight_decay": 0.0,
+            },
         ]
 
         # Set up a decentralized optimizer that will average with peers in background
@@ -115,7 +121,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
-            self.model.parameters(), # TODO Set to optim_groups too?
+            self.model.parameters(),  # TODO Set to optim_groups too?
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
@@ -175,7 +181,6 @@ class Miner(BaseMinerNeuron):
         self, synapse: template.protocol.AllReduce
     ) -> template.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
-        
 
         custom_group = GroupInfo(
             base64.b64decode(synapse.group.group_id),
@@ -187,7 +192,7 @@ class Miner(BaseMinerNeuron):
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
-        
+
         # Map uids to peerids
         self.peerids_to_uids = {
             str(value): key for key, value in self.uids_to_peerids.items()
@@ -267,7 +272,7 @@ class Miner(BaseMinerNeuron):
             synapse.completion = "False"
 
         if failed_gradient_all_reduce:
-            #with self.grad_averager.use_averaged_gradients():
+            # with self.grad_averager.use_averaged_gradients():
             self.opt.zero_grad(set_to_none=True)
             bt.logging.info("Optimizer Gradients Zeroed")
 
@@ -326,7 +331,10 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         index = 0
-        grad_accum_steps = self.config.neuron.global_batch_size_train // (self.config.neuron.local_batch_size_train * self.config.neuron.training_examples_per_miner)
+        grad_accum_steps = self.config.neuron.global_batch_size_train // (
+            self.config.neuron.local_batch_size_train
+            * self.config.neuron.training_examples_per_miner
+        )
 
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
@@ -334,15 +342,17 @@ class Miner(BaseMinerNeuron):
 
             # Zero Gradients
             self.opt.zero_grad(
-                set_to_none=True # Potential memory save setting to None
-            )  
+                set_to_none=True  # Potential memory save setting to None
+            )
 
             # Forward pass with potential mixed precision
-            #with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            # with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             outputs = self.model(input_ids=inputs, labels=inputs)
             loss = outputs.loss
-            scaled_loss = ( # TODO Consider dividing by world_size too
-                loss / self.config.neuron.global_batch_size_train / self.config.neuron.local_batch_size_train # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
+            scaled_loss = (  # TODO Consider dividing by world_size too
+                loss
+                / self.config.neuron.global_batch_size_train
+                / self.config.neuron.local_batch_size_train  # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
             )
 
             # Accumulate Total Loss
@@ -379,7 +389,7 @@ class Miner(BaseMinerNeuron):
             )
             for param in self.model.parameters()
         )
-        
+
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."

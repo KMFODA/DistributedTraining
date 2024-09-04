@@ -171,7 +171,7 @@ class BaseMinerNeuron(BaseNeuron):
         This method facilitates the use of the miner in a 'with' statement.
         """
         self.run_in_background_thread()
-        #self.run()
+        # self.run()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):

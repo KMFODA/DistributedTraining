@@ -2,10 +2,9 @@ from dataclasses import dataclass
 
 import bittensor as bt
 import pandas as pd
+import wandb
 from huggingface_hub import list_repo_refs
 from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
-
-import wandb
 
 
 @dataclass(frozen=False)
