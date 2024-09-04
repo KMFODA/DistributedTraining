@@ -1,4 +1,5 @@
 git+https://github.com/opentensor/bittensor@release/6.12.3
+bitsandbytes==0.43.3
 bitarray==2.9.2
 datasets==2.18.0
 transformers==4.39.3
