@@ -23,7 +23,7 @@ This repository requires python3.10 or higher. To install, simply clone this rep
 ```bash
 git clone https://github.com/KMFODA/DistributedTraining
 cd DistributedTraining
-pip install -e . && python post_install.py
+pip install -e .
 ```
 
 2. Log in to wandb:
@@ -42,10 +42,22 @@ sudo apt update && sudo apt install jq && sudo apt install npm && sudo npm insta
 brew update && brew install jq && brew install npm && sudo npm install pm2 -g && pm2 update
 ```
 
-4. Copy the .env file to your root directory
+4. Register your hotkey
+```bash
+btcli subnets register --subtensor.network finney --netuid $NETUID --wallet.name $WALLET_NAME --wallet.hotkey $HOTKEY_NAME
+```
+
+5. Copy the .env file to your root directory
 ```bash
 cp DTraining/.env /root/
 ```
+
+6. Uninstall nest_asyncio as it isn't compatible with hivemind
+```bash
+python post_install.py
+```
+
+
 ---
 # Running a Miner
 Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.
