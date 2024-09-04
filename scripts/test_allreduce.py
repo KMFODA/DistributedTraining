@@ -182,9 +182,6 @@ class FaultyDTGradientAverager(DTGradientAverager):
     def __init__(self, *args, fault: Fault = Fault.NONE, **kwargs):
         self.fault = fault
         super().__init__(*args, **kwargs)
-
-    def get_banned_peers(self):
-        return list(self.banned_peers)
     
     # async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, peerids_to_uids: dict, **kwargs):
     async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, **kwargs):
@@ -221,9 +218,7 @@ class FaultyDTGradientAverager(DTGradientAverager):
                     async for _ in runner:
                         raise ValueError("aux peers should not receive averaged tensors")
 
-                self.banned_peers.update(runner.banned_peers)
-                print("YOOO:", self.banned_peers)
-                return group_info
+                return runner.banned_senders
         except BaseException as e:
             logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
@@ -372,14 +367,9 @@ def run_test(fault0: Fault, fault1: Fault, dht_instances, models, peerids_to_uid
     for i, averager in enumerate(averagers):
         if averager.fault == Fault.CANCEL:
             futures[i].cancel()
-
-        
-    # TODO Need to put averager.banned_peers inside a MP.lock to infer them even after future.result() (as with .get_tensors())
-    for averager in averagers:
-        banned_peers = averager.get_banned_peers()
-        print("BANNED PEERS: ",banned_peers)
         
     for future in futures[2:]:
+        print(future.result())
         assert future.result()
         
     for averager, prev_local_tensors in zip(averagers[2:], flat_local_tensors[2:]):

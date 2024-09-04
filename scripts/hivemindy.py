@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import multiprocessing as mp
 from contextlib import contextmanager
 from enum import Enum
 from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
@@ -17,7 +18,7 @@ from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.dht import DHT
-from hivemind.p2p import (P2PContext, P2PDaemonError, P2PHandlerError, PeerID)
+from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
 from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
@@ -57,7 +58,7 @@ class DTAllReduceRunner(AllReduceRunner):
     # def __init__(self, peerids_to_uids, *args, **kwargs):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.banned_peers = set()
+        # self.banned_peers = set()
         # self.peerids_to_uids = peerids_to_uids
         # bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
 
@@ -222,7 +223,6 @@ class DTAllReduceRunner(AllReduceRunner):
                 # error_message = f"UID:{uid} - PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 error_message = f"PeerID:{peer_id} - Banning peer {peer_id} due to a failure."
                 logger.error(error_message)
-                self.banned_peers.add(peer_id)
 
 class DTAverager(hivemind.DecentralizedAverager):
     def __init__(self, *args, **kwargs):
@@ -731,16 +731,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                             "aux peers should not receive averaged tensors"
                         )
                 
-                self.banned_peers.update(runner.banned_peers)
-                print(runner.banned_peers)
-                return group_info
+                return runner.banned_senders
         except BaseException as e:
             if isinstance(e, Exception):
                 logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
-    
-    def get_banned_peers(self):
-        return list(self.banned_peers)
 
 
 class DTGradientAverager(DTAverager):
@@ -763,7 +758,8 @@ class DTGradientAverager(DTAverager):
         self.barrier_complete = asyncio.Event()
         self.ready_peers = {}
         
-        self.banned_peers = set()
+        # self.banned_peers = set()
+        # self._banned_peers_lock = mp.Lock()
 
         if reuse_grad_buffers and accumulate_grads_on is not None:
             logger.warning(
@@ -813,7 +809,7 @@ class DTGradientAverager(DTAverager):
     Needs this wrapper class to ensure device is set properly when averaging gradients
     See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
     """
-
+    
     @contextmanager
     @torch.no_grad()
     def use_averaged_gradients(self):
@@ -933,7 +929,16 @@ class DTGradientAverager(DTAverager):
         control.allow_allreduce()
         bt.logging.info(f"control.stage {control.stage}")
 
-        return control.result(timeout) if wait else control
+        #return control.result(timeout) if wait else control
+        if wait:
+            result = control.result(timeout)
+            # Ensure banned peers are updated after the step is complete
+            if isinstance(result, GroupInfo):
+                with self._banned_peers_lock:
+                    self.banned_peers[:] = list(set(self.banned_peers) | set(result.banned_peers))
+            return result
+        else:
+            return control
 
     @torch.no_grad()
     def load_accumulators_into_averager_(self):
