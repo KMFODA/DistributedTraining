@@ -141,13 +141,6 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.dataset_name",
-        type=str,
-        help="The datasets the model will be trained on",
-        default="tiiuae/falcon-refinedweb",
-    )
-
-    parser.add_argument(
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",
