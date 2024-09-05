@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from enum import Enum, auto
 from typing import AsyncIterator, Dict, List
@@ -7,12 +8,13 @@ from typing import AsyncIterator, Dict, List
 import hivemind
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from colorama import Fore, Style, init
+from colorama import Fore, Style
 from hivemind.averaging.averager import *
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
+from hivemind.optim.grad_averager import GradientAverager
+from hivemind.dht.routing import DHTID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import use_hivemind_log_handler
 from hivemind.utils.asyncio import (aenumerate, as_aiter, azip,
@@ -52,12 +54,12 @@ class Fault(Enum):
     CANCEL = auto()
 
 
-def launch_dht_instances(n_peers: int, **kwargs) -> List[DHT]:
-    dhts = [DHT(start=True, **kwargs)]
+def launch_dht_instances(n_peers: int, **kwargs) -> List[hivemind.DHT]:
+    dhts = [hivemind.DHT(start=True, **kwargs)]
     initial_peers = dhts[0].get_visible_maddrs()
 
     dhts.extend(
-        DHT(initial_peers=initial_peers, start=True, await_ready=False, **kwargs)
+        hivemind.DHT(initial_peers=initial_peers, start=True, await_ready=False, **kwargs)
         for _ in range(n_peers - 1)
     )
     for process in dhts[1:]:
@@ -83,7 +85,7 @@ class DummyModel(nn.Module):
         return [y1, y2, y3, y4]
 
 
-class FaultyGradientAverager(hivemind.optim.grad_averager.GradientAverager):
+class FaultyGradientAverager(GradientAverager):
     # class FaultyGradientAverager(hivemind.DecentralizedAverager):
     def __init__(self, *args, fault: Fault = Fault.NONE, **kwargs):
         self.fault = fault
@@ -218,10 +220,10 @@ class FaultyDTGradientAverager(DTGradientAverager):
         self.fault = fault
         super().__init__(*args, **kwargs)
 
-    # async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, peerids_to_uids: dict, **kwargs):
-    async def _aggregate_with_group(
-        self, group_info: GroupInfo, min_vector_size: int, **kwargs
-    ):
+    async def _aggregate_with_group(self, group_info: GroupInfo, min_vector_size: int, peerids_to_uids: dict, **kwargs):
+    # async def _aggregate_with_group(
+    #     self, group_info: GroupInfo, min_vector_size: int, **kwargs
+    # ):
         try:
             num_peers = len(group_info.peer_ids)
             peer_fractions = [1.0 / num_peers] * num_peers
@@ -234,7 +236,7 @@ class FaultyDTGradientAverager(DTGradientAverager):
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = FaultyDTAllReduceRunner(
-                    # peerids_to_uids=peerids_to_uids,
+                    peerids_to_uids=peerids_to_uids,
                     p2p=self._p2p,
                     servicer_type=type(self),
                     prefix=self.prefix,
@@ -263,7 +265,7 @@ class FaultyDTGradientAverager(DTGradientAverager):
                             "aux peers should not receive averaged tensors"
                         )
 
-                return runner.banned_senders
+                return runner.banned_senders if runner.banned_senders else True
         except BaseException as e:
             logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
@@ -297,10 +299,7 @@ class FaultyDTAllReduceRunner(DTAllReduceRunner):
             async for message in super().rpc_aggregate_part(stream, context):
                 yield message
 
-    # async def _generate_input_for_peer(self, peer_index: int, uid: str, peer_id: hivemind.PeerID) -> AsyncIterator[averaging_pb2.AveragingData]:
-    async def _generate_input_for_peer(
-        self, peer_index: int
-    ) -> AsyncIterator[averaging_pb2.AveragingData]:
+    async def _generate_input_for_peer(self, peer_index: int, uid: str, peer_id: hivemind.PeerID) -> AsyncIterator[averaging_pb2.AveragingData]:
         parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
         first_part = await anext(parts_aiter)
         yield averaging_pb2.AveragingData(
@@ -346,7 +345,7 @@ def run_test(
     custom_group,
     use_original=False,
 ):
-    allreduce_timeout = 35
+    allreduce_timeout = 5
 
     if use_original:
         averagers = [
@@ -361,6 +360,8 @@ def run_test(
                 start=True,
                 fault=fault0 if i == 0 else fault1 if i == 1 else Fault.NONE,
                 allreduce_timeout=allreduce_timeout,
+                # client_mode=True if i == 1 else False,
+
             )
             for i, (dht, model) in enumerate(zip(dht_instances, models))
         ]
@@ -377,7 +378,7 @@ def run_test(
                 start=True,
                 fault=fault0 if i == 0 else fault1 if i == 1 else Fault.NONE,
                 allreduce_timeout=allreduce_timeout,
-                client_mode=True if i == 1 else False,
+                # client_mode=True if i == 2 else False,
             )
             for i, (dht, model) in enumerate(zip(dht_instances, models))
         ]
@@ -428,15 +429,16 @@ def run_test(
                 wait=False,
                 allow_retries=False,
                 custom_group_info=custom_group,
-                # peerids_to_uids=peerids_to_uids
+                peerids_to_uids=peerids_to_uids
             )
         futures.append(future)
 
     for i, averager in enumerate(averagers):
         if averager.fault == Fault.CANCEL:
             futures[i].cancel()
-
+            
     for future in futures[2:]:
+        # future.result() will hold allreduce.runnner.banned_senders if any was faulting, otherwise True
         print(future.result())
         assert future.result()
 
@@ -483,16 +485,16 @@ def run_test(
 if __name__ == "__main__":
     fault_pairs = [
         # (Fault.NONE, Fault.NONE),
-        # (Fault.NONE, Fault.FAIL_BEFORE),
-        # (Fault.FAIL_BEFORE, Fault.NONE),
+        (Fault.NONE, Fault.FAIL_BEFORE),
+        (Fault.FAIL_BEFORE, Fault.NONE),
         (Fault.FAIL_BEFORE, Fault.FAIL_BEFORE),
-        # (Fault.SLOW_SENDING, Fault.FAIL_SENDING),
-        # (Fault.SLOW_SENDING, Fault.NONE),
-        # (Fault.NONE, Fault.SLOW_SENDING),
-        # (Fault.FAIL_SENDING, Fault.FAIL_BEFORE),
-        # (Fault.SLOW_REDUCING, Fault.FAIL_SENDING),
-        # (Fault.FAIL_REDUCING, Fault.FAIL_REDUCING),
-        # (Fault.NONE, Fault.CANCEL),
+        (Fault.SLOW_SENDING, Fault.FAIL_SENDING),
+        (Fault.SLOW_SENDING, Fault.NONE),
+        (Fault.NONE, Fault.SLOW_SENDING),
+        (Fault.FAIL_SENDING, Fault.FAIL_BEFORE),
+        (Fault.SLOW_REDUCING, Fault.FAIL_SENDING),
+        (Fault.FAIL_REDUCING, Fault.FAIL_REDUCING),
+        (Fault.NONE, Fault.CANCEL),
     ]
 
     # Run loop of fault scenarios
@@ -525,6 +527,5 @@ if __name__ == "__main__":
 
 
 # TODO:
-# 1. Get banned peers from averager
-# 2. Check they are consistent across averagers
+
 # 3. Check exception handling

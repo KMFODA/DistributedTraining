@@ -329,7 +329,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         step: StepControl,
         future_for_init: MPFuture,
         custom_group_info: GroupInfo,
-        peerids_to_uids: dict = {},
+        peerids_to_uids: Dict,
     ):
         self.current_group_info = custom_group_info
         self.p2p = await self.dht.replicate_p2p()
