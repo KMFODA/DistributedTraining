@@ -184,6 +184,7 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
