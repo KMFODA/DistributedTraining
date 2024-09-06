@@ -1,17 +1,27 @@
 import asyncio
 import logging
-import multiprocessing as mp
 from contextlib import contextmanager
 from enum import Enum
-from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
-                    Sequence, Union)
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Sequence,
+    Union,
+)
 
 import bittensor as bt
 import hivemind
 import hivemind.averaging.averager
 import torch
-from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
-                                          AveragingMode)
+from hivemind.averaging.allreduce import (
+    AllreduceException,
+    AllReduceRunner,
+    AveragingMode,
+)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
@@ -21,9 +31,14 @@ from hivemind.dht import DHT
 from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
-from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
-                                    as_aiter, attach_event_on_finished, azip,
-                                    enter_asynchronously)
+from hivemind.utils.asyncio import (
+    aiter_with_timeout,
+    amap_in_executor,
+    as_aiter,
+    attach_event_on_finished,
+    azip,
+    enter_asynchronously,
+)
 from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
 from template.proto import custom_averaging_pb2
@@ -56,7 +71,6 @@ class BarrierState(Enum):
 
 class DTAllReduceRunner(AllReduceRunner):
     def __init__(self, peerids_to_uids, *args, **kwargs):
-    # def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.peerids_to_uids = peerids_to_uids
         bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
@@ -168,10 +182,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     await self._ban_sender(peer_id)
 
     async def _generate_input_for_peer(
-        self,
-        peer_index: int,
-        uid: int,
-        peer_id: PeerID
+        self, peer_index: int, uid: int, peer_id: PeerID
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
@@ -292,7 +303,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                         step=step,
                         future_for_init=future_for_init,
                         custom_group_info=custom_group_info,
-                        peerids_to_uids=peerids_to_uids
+                        peerids_to_uids=peerids_to_uids,
                     ),
                 )
             )
@@ -460,7 +471,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                 bt.logging.info(f"Waiting for barrier_complete for {self.peer_id}")
                 await asyncio.wait_for(
                     self.barrier_complete.wait(), timeout=self.barrier_timeout
-                )  # TODO set to a config param
+                )
                 bt.logging.info(f"Barrier complete for {self.peer_id}")
 
         except asyncio.TimeoutError:
@@ -577,7 +588,9 @@ class DTAverager(hivemind.DecentralizedAverager):
 
     async def _wait_for_barrier_completion(self):
         try:
-            await asyncio.wait_for(self.barrier_complete.wait(), timeout=self.barrier_timeout)
+            await asyncio.wait_for(
+                self.barrier_complete.wait(), timeout=self.barrier_timeout
+            )
             bt.logging.info(f"Peer {self.peer_id} barrier completed")
         except asyncio.TimeoutError:
             logger.error(
@@ -620,7 +633,9 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         await matchmaking_task
 
-    async def _run_allreduce(self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict):
+    async def _run_allreduce(
+        self, step: StepControl, custom_group_info: GroupInfo, peerids_to_uids: Dict
+    ):
         with self._register_allreduce_group(custom_group_info):
             bt.logging.info("Running AllReduce.")
             assert (

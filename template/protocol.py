@@ -17,10 +17,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import bittensor as bt
-import numpy as np
 import pydantic
 
 

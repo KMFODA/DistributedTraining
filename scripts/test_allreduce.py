@@ -512,7 +512,7 @@ if __name__ == "__main__":
         custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
         print(f"Running test with fault0={fault0}, fault1={fault1}")
-        # asyncio.run(
+
         run_test(
             fault0,
             fault1,
@@ -522,10 +522,4 @@ if __name__ == "__main__":
             custom_group,
             use_original=False,
         )
-        # )
         print("Test completed\n")
-
-
-# TODO:
-
-# 3. Check exception handling
