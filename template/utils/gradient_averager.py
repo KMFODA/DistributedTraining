@@ -282,7 +282,6 @@ class DTAverager(hivemind.DecentralizedAverager):
         # When custom_group_info is provided, bypass matchmaking and proceed directly
         custom_group_info = kwargs.get("custom_group_info", None)
         peerids_to_uids = kwargs.get("peerids_to_uids", None)
-        self.barrier_timeout = barrier_timeout
 
         if custom_group_info is not None:
             self._outer_pipe.send(
