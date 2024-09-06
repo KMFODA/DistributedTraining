@@ -258,6 +258,7 @@ def load_state_from_peer(self, epoch=None):
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
+            trust_remote_code=True,
         )
         self.model.to(self.device)
         self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
