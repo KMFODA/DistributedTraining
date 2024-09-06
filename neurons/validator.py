@@ -29,7 +29,6 @@ import hivemind
 import torch
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
-from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
@@ -39,12 +38,12 @@ from transformers import AutoModelForCausalLM
 import math
 
 from distributed_training.base.validator import BaseValidatorNeuron
+from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
-    DTStateAverager,
 )
 
 from distributed_training.utils.progress_tracker import (
@@ -121,7 +120,7 @@ class Validator(BaseValidatorNeuron):
             )
 
         # Init Dataset
-        dataset_length = 968000015
+        dataset_length = DataLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device & Model
