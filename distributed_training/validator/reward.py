@@ -20,8 +20,8 @@ from typing import List
 
 import bittensor as bt
 import torch
-from template.data.dataset import SubsetFalconLoader
-from template.utils.uids import get_random_uids, map_uid_to_peerid
+from distributed_training.data.dataset import SubsetFalconLoader
+from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 

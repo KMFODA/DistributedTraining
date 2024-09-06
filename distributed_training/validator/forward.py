@@ -23,12 +23,12 @@ import time
 import bittensor as bt
 from huggingface_hub import create_tag, list_repo_refs
 
-import template
-from template.utils.state_loader import load_state_from_peer
-from template.utils.misc import get_bandwidth
-from template.utils.progress_tracker import update_global_tracker_state
-from template.utils.uids import get_random_uids
-from template.validator.reward import get_rewards
+import distributed_training
+from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.misc import get_bandwidth
+from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.uids import get_random_uids
+from distributed_training.validator.reward import get_rewards
 import copy
 import numpy as np
 from huggingface_hub.utils import HfHubHTTPError
@@ -106,14 +106,14 @@ async def forward(self):
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
             queries = [
-                template.protocol.AllReduce(learning_rate=learning_rate)
+                distributed_training.protocol.AllReduce(learning_rate=learning_rate)
                 for _ in self.miner_uids
             ]
         else:
             # Get a random layer to check gradients against
             gradient_test_index = random.choice(self.test_layer_indices)
             queries = [
-                template.protocol.Train(
+                distributed_training.protocol.Train(
                     model_name=self.model.name_or_path,
                     gradient_test_index=gradient_test_index,
                 )

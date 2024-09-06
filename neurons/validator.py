@@ -38,18 +38,21 @@ from huggingface_hub import list_repo_refs
 from transformers import AutoModelForCausalLM
 import math
 
-from template.base.validator import BaseValidatorNeuron
-from template.utils.gradient_averager import (
+from distributed_training.base.validator import BaseValidatorNeuron
+from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
-from template.utils.state_loader import load_state_from_peer, DTStateAverager
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    DTStateAverager,
+)
 
-from template.utils.progress_tracker import (
+from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     update_global_tracker_state,
 )
-from template.utils.misc import (
+from distributed_training.utils.misc import (
     AsyncDendritePool,
     init_dht,
     load_wandb,
@@ -57,13 +60,13 @@ from template.utils.misc import (
     warmup,
 )
 
-from template.utils.uids import (
+from distributed_training.utils.uids import (
     map_uid_to_peerid,
 )
 
-from template.validator import forward
+from distributed_training.validator import forward
 from torch_optimizer import Lamb
-from template import __version__, __spec_version__
+from distributed_training import __version__, __spec_version__
 
 logger = get_logger(__name__)
 

@@ -4,7 +4,7 @@ import bittensor as bt
 from typing import List
 import traceback
 import asyncio
-import template
+import distributed_training
 from hivemind.utils.timed_storage import ValueWithExpiration
 from hivemind.p2p import PeerID
 
@@ -12,7 +12,10 @@ from hivemind.p2p import PeerID
 async def check_uid(dendrite, axon, uid, epoch=None):
     try:
         response = await dendrite(
-            axon, template.protocol.IsAlive(), deserialize=False, timeout=2.3
+            axon,
+            distributed_training.protocol.IsAlive(),
+            deserialize=False,
+            timeout=2.3,
         )
         if response.is_success:
             if (epoch is not None) and (response.epoch == epoch):

@@ -49,12 +49,12 @@ btcli subnets register --subtensor.network finney --netuid $NETUID --wallet.name
 
 5. Copy the .env file to your root directory
 ```bash
-cp DTraining/.env /root/
+cp DistributedTraining/.env /root/
 ```
 
 6. Uninstall nest_asyncio as it isn't compatible with hivemind
 ```bash
-python post_install.py
+python DistributedTraining/post_install.py
 ```
 
 

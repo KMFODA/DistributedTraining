@@ -31,30 +31,33 @@ import copy
 import numpy as np
 
 # Bittensor Miner Template:
-import template
+import distributed_training
 
 # import base miner class which takes care of most of the boilerplate
-from template.base.miner import BaseMinerNeuron
-from template.data.dataset import SubsetFalconLoader
-from template.utils.gradient_averager import (
+from distributed_training.base.miner import BaseMinerNeuron
+from distributed_training.data.dataset import SubsetFalconLoader
+from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
-from template.utils.state_loader import load_state_from_peer, DTStateAverager
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    DTStateAverager,
+)
 
-from template.utils.progress_tracker import (
+from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     update_global_tracker_state,
 )
-from template.utils.misc import (
+from distributed_training.utils.misc import (
     get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
 )
-from template.utils.uids import map_uid_to_peerid
+from distributed_training.utils.uids import map_uid_to_peerid
 from torch_optimizer import Lamb
-from template import __version__, __spec_version__
+from distributed_training import __version__, __spec_version__
 
 
 class Miner(BaseMinerNeuron):
@@ -176,16 +179,16 @@ class Miner(BaseMinerNeuron):
         }
 
     async def is_alive(
-        self, synapse: template.protocol.IsAlive
-    ) -> template.protocol.IsAlive:
+        self, synapse: distributed_training.protocol.IsAlive
+    ) -> distributed_training.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
         synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(
-        self, synapse: template.protocol.AllReduce
-    ) -> template.protocol.AllReduce:
+        self, synapse: distributed_training.protocol.AllReduce
+    ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
 
@@ -276,8 +279,8 @@ class Miner(BaseMinerNeuron):
         return synapse
 
     async def forward(
-        self, synapse: template.protocol.Train
-    ) -> template.protocol.Train:
+        self, synapse: distributed_training.protocol.Train
+    ) -> distributed_training.protocol.Train:
         """
         Processes the incoming 'Train' synapse by performing a training run
 
@@ -484,27 +487,29 @@ class Miner(BaseMinerNeuron):
         return False, "Hotkey recognized!"
 
     async def blacklist_is_alive(
-        self, synapse: template.protocol.IsAlive
+        self, synapse: distributed_training.protocol.IsAlive
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])
         return blacklist
 
     async def blacklist_all_reduce(
-        self, synapse: template.protocol.AllReduce
+        self, synapse: distributed_training.protocol.AllReduce
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])
         return blacklist
 
     async def blacklist_train(
-        self, synapse: template.protocol.Train
+        self, synapse: distributed_training.protocol.Train
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.info(blacklist[1])
         return blacklist
 
-    async def priority_base(self, synapse: template.protocol.Train) -> float:
+    async def priority_base(
+        self, synapse: distributed_training.protocol.Train
+    ) -> float:
         """
         The priority function determines the order in which requests are handled. More valuable or higher-priority
         requests are processed before others. You should design your own priority mechanism with care.

@@ -22,7 +22,7 @@ from typing import Callable, Any
 from functools import lru_cache, update_wrapper
 import bittensor as bt
 from typing import Any, List
-from template.protocol import Train
+from distributed_training.protocol import Train
 import asyncio
 import wandb
 import logging
@@ -41,7 +41,7 @@ from ipaddress import ip_address
 import os
 import shutil
 import random
-from template.data.dataset import SubsetFalconLoader
+from distributed_training.data.dataset import SubsetFalconLoader
 from bitarray import bitarray
 import wandb
 from logtail import LogtailHandler

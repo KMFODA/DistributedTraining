@@ -22,7 +22,7 @@ import os
 import bittensor as bt
 import torch
 from loguru import logger
-from template import __version__, __run__
+from distributed_training import __version__, __run__
 
 
 def check_config(cls, config: "bt.Config"):
