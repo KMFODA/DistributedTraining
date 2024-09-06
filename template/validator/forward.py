@@ -100,6 +100,8 @@ async def forward(self):
 
         ## AllReduce synapse
         if all_reduce:
+            start_time = time.perf_counter()
+
             group_peerids = None
             blacklist_scores = None
 
@@ -155,7 +157,6 @@ async def forward(self):
             custom_group = GroupInfo(group_id, tuple(ordered_peer_ids), gathered=None)
 
             bt.logging.info("Performing Gradient Averaging")
-            start_time = time.perf_counter()
             gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group, 
                 wait=False, 
@@ -190,7 +191,7 @@ async def forward(self):
         query_tasks.append(
             self.dendrite_pool.async_forward(
                 self.miner_uids, queries, 
-                timeout=self.all_reduce_timeout - (time.perf_counter() - start_time)
+                timeout=self.all_reduce_timeout
             )
         )
         bt.logging.info("Query Sent Out")

@@ -213,7 +213,8 @@ class DTAllReduceRunner(AllReduceRunner):
 
 
 class DTAverager(hivemind.DecentralizedAverager):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, barrier_timeout: float = 60.0, **kwargs):
+        self.barrier_timeout = barrier_timeout
         super().__init__(*args, **kwargs)
 
     def step(
@@ -225,7 +226,6 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
-        barrier_timeout: float = 5.0,
         **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         """
