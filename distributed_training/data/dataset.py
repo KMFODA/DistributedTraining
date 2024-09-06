@@ -31,7 +31,7 @@ tokenizer.pad_token = tokenizer.eos_token
 
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
-class SubsetFalconLoader(IterableDataset):
+class DataLoader(IterableDataset):
     max_pages: int = 519_000_000
 
     def __init__(

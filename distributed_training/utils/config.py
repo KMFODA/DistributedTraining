@@ -22,8 +22,7 @@ import os
 import bittensor as bt
 import torch
 from loguru import logger
-
-from template import __run__, __version__
+from distributed_training import __version__, __run__
 
 
 def check_config(cls, config: "bt.Config"):
@@ -116,7 +115,7 @@ def add_args(cls, parser):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWBUWLsC2QfgPX8Xd2WwY4d6zd8EcLMq9uioMUq4bT9DSi",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWABz2UdJQj2TR94uxKvqZCGQhgxxzk6BpaCTAoCW9HKGP",
         ],
     )
 
@@ -139,13 +138,6 @@ def add_args(cls, parser):
         type=float,
         help="The number of warmup steps",
         default=12,
-    )
-
-    parser.add_argument(
-        "--neuron.dataset_name",
-        type=str,
-        help="The datasets the model will be trained on",
-        default="tiiuae/falcon-refinedweb",
     )
 
     parser.add_argument(

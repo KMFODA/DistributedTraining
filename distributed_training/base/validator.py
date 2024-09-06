@@ -26,9 +26,7 @@ from typing import List
 import bittensor as bt
 import torch
 
-from template.base.neuron import BaseNeuron
-from template.utils.uids import get_random_uids
-from template.validator.reward import get_rewards
+from distributed_training.base.neuron import BaseNeuron
 
 
 class BaseValidatorNeuron(BaseNeuron):

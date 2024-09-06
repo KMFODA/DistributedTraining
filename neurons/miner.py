@@ -34,19 +34,32 @@ from hivemind.p2p import PeerID
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
-import template
-from template import __spec_version__, __version__
+import distributed_training
+
 # import base miner class which takes care of most of the boilerplate
-from template.base.miner import BaseMinerNeuron
-from template.data.dataset import SubsetFalconLoader
-from template.utils.gradient_averager import DTGradientAverager
-from template.utils.misc import (get_bandwidth, init_dht, load_wandb,
-                                 setup_logging)
-from template.utils.progress_tracker import (GlobalTrainingProgress,
-                                             LocalTrainingProgress,
-                                             update_global_tracker_state)
-from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import initialize_uid_mapping, map_uid_to_peerid
+from distributed_training.base.miner import BaseMinerNeuron
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.gradient_averager import (
+    DTGradientAverager,
+)
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+)
+
+from distributed_training.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
+from distributed_training.utils.misc import (
+    get_bandwidth,
+    init_dht,
+    load_wandb,
+    setup_logging,
+)
+from distributed_training.utils.uids import map_uid_to_peerid
+from torch_optimizer import Lamb
+from distributed_training import __version__, __spec_version__
 
 
 class Miner(BaseMinerNeuron):
@@ -137,11 +150,26 @@ class Miner(BaseMinerNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        self.start_time = time.time()
-       
+        # Create mapping between uids to peerids
+        self.uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(self, range(0, self.metagraph.n))
+        )
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (
+            retries >= max_retries
+        ):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    map_uid_to_peerid(self, range(0, self.metagraph.n))
+                )
+                time.sleep(1)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = SubsetFalconLoader.max_pages
+        dataset_length = DataLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -165,16 +193,16 @@ class Miner(BaseMinerNeuron):
         }
 
     async def is_alive(
-        self, synapse: template.protocol.IsAlive
-    ) -> template.protocol.IsAlive:
+        self, synapse: distributed_training.protocol.IsAlive
+    ) -> distributed_training.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
         synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(
-        self, synapse: template.protocol.AllReduce
-    ) -> template.protocol.AllReduce:
+        self, synapse: distributed_training.protocol.AllReduce
+    ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
 
         custom_group = GroupInfo(
@@ -187,11 +215,7 @@ class Miner(BaseMinerNeuron):
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
-
-        # Map uids to peerids
-        self.peerids_to_uids = {
-            str(value): key for key, value in self.uids_to_peerids.items()
-        }
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         try:
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(
@@ -274,8 +298,8 @@ class Miner(BaseMinerNeuron):
         return synapse
 
     async def forward(
-        self, synapse: template.protocol.Train
-    ) -> template.protocol.Train:
+        self, synapse: distributed_training.protocol.Train
+    ) -> distributed_training.protocol.Train:
         """
         Processes the incoming 'Train' synapse by performing a training run
 
@@ -318,7 +342,7 @@ class Miner(BaseMinerNeuron):
         self.dataset_indices[group] = True
 
         # Create Dataloader
-        dataloader = SubsetFalconLoader(
+        dataloader = DataLoader(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
             rows=group,
@@ -493,27 +517,29 @@ class Miner(BaseMinerNeuron):
         return False, "Hotkey recognized!"
 
     async def blacklist_is_alive(
-        self, synapse: template.protocol.IsAlive
+        self, synapse: distributed_training.protocol.IsAlive
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])
         return blacklist
 
     async def blacklist_all_reduce(
-        self, synapse: template.protocol.AllReduce
+        self, synapse: distributed_training.protocol.AllReduce
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])
         return blacklist
 
     async def blacklist_train(
-        self, synapse: template.protocol.Train
+        self, synapse: distributed_training.protocol.Train
     ) -> typing.Tuple[bool, str]:
         blacklist = await self.blacklist_base(synapse)
         bt.logging.info(blacklist[1])
         return blacklist
 
-    async def priority_base(self, synapse: template.protocol.Train) -> float:
+    async def priority_base(
+        self, synapse: distributed_training.protocol.Train
+    ) -> float:
         """
         The priority function determines the order in which requests are handled. More valuable or higher-priority
         requests are processed before others. You should design your own priority mechanism with care.

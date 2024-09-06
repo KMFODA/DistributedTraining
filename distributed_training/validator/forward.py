@@ -21,7 +21,6 @@ import base64
 import copy
 import random
 import time
-from typing import Dict, List, Tuple
 
 import bittensor as bt
 import numpy as np
@@ -31,13 +30,12 @@ from hivemind.dht import DHTID
 from huggingface_hub import create_tag, list_repo_refs
 from huggingface_hub.utils import HfHubHTTPError
 
-import template
-from template.utils.misc import get_bandwidth
-from template.utils.progress_tracker import update_global_tracker_state
-from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import get_random_uids, map_uid_to_peerid
-from template.validator.reward import get_rewards, score_blacklist
-
+import distributed_training
+from distributed_training.utils.misc import get_bandwidth
+from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
+from distributed_training.validator.reward import get_rewards, score_blacklist
 
 
 async def forward(self):
@@ -68,7 +66,7 @@ async def forward(self):
             <= 25
         )
         and (not self.step_scheduled)
-    and (self.global_progress.epoch == self.local_progress.epoch)
+        and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # If running an AllReduce synapse, call as many miners as possible
         sample_size = int(self.metagraph.n)
@@ -158,18 +156,21 @@ async def forward(self):
 
             bt.logging.info("Performing Gradient Averaging")
             gradient_averaging_step = self.grad_averager.step(
-                custom_group_info=custom_group, 
-                wait=False, 
-                peerids_to_uids=self.peerids_to_uids
+                custom_group_info=custom_group,
+                wait=False,
+                peerids_to_uids=self.peerids_to_uids,
             )
 
             learning_rate = self.get_learning_rate()
             bt.logging.info(f"Current Learning Rate: {learning_rate}")
 
             queries = [
-                template.protocol.AllReduce(
+                distributed_training.protocol.AllReduce(
                     group=group,
-                    timeout=self.all_reduce_timeout - (time.perf_counter() - start_time),  # Subtracting this step from the timeout
+                    timeout=self.all_reduce_timeout
+                    - (
+                        time.perf_counter() - start_time
+                    ),  # Subtracting this step from the timeout
                     learning_rate=learning_rate,
                 )
                 for _ in self.miner_uids
@@ -180,7 +181,7 @@ async def forward(self):
             # Get a random layer to check gradients against
             gradient_test_index = random.choice(self.test_layer_indices)
             queries = [
-                template.protocol.Train(
+                distributed_training.protocol.Train(
                     model_name=self.model.name_or_path,
                     gradient_test_index=gradient_test_index,
                 )
@@ -190,8 +191,7 @@ async def forward(self):
         # Query the network
         query_tasks.append(
             self.dendrite_pool.async_forward(
-                self.miner_uids, queries, 
-                timeout=self.all_reduce_timeout
+                self.miner_uids, queries, timeout=self.all_reduce_timeout
             )
         )
         bt.logging.info("Query Sent Out")

@@ -43,9 +43,10 @@ from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
-
-from template.data.dataset import SubsetFalconLoader
 from template.protocol import Train
+
+from distributed_training.data.dataset import DataLoader
+from distributed_training.protocol import Train
 
 load_dotenv()
 
@@ -540,7 +541,7 @@ def warmup(self):
 
     # Load dataset
     self.dataset_loader = ()
-    dataset_length = SubsetFalconLoader.max_pages
+    dataset_length = DataLoader.max_pages
     self.dataset_indices = bitarray(dataset_length)
 
     search_start = random.choice(
@@ -559,7 +560,7 @@ def warmup(self):
     self.dataset_indices[group] = True
 
     # Create Dataloader
-    dataloader = SubsetFalconLoader(
+    dataloader = DataLoader(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
         rows=group,

@@ -17,20 +17,19 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import random
 import time
 from typing import List
 
 import bittensor as bt
 import torch
 
-from template.data.dataset import SubsetFalconLoader
-from template.utils.uids import get_random_uids, map_uid_to_peerid
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 
 
 def score_gradients(self, response, uid):
     # Create Dataloader
-    dataloader = SubsetFalconLoader(
+    dataloader = DataLoader(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
         rows=response.dataset_indices,
@@ -114,7 +113,7 @@ async def score_blacklist(self, uids):
     return scores
 
 
-async def score_bandwidth(self, uids, timeout=60):
+async def score_bandwidth(self, uids, timeout=90):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         peer = self.uids_to_peerids[uid]
@@ -179,6 +178,7 @@ async def get_rewards(
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
         blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
@@ -219,21 +219,24 @@ async def get_rewards(
     else:
         scores = torch.FloatTensor(
             [
-                1
-                if response.dendrite.status_code == 200 and response.loss != 0.0
-                else 0
+                (
+                    1
+                    if response.dendrite.status_code == 200 and response.loss != 0.0
+                    else 0
+                )
                 for _, response in zip(uids, responses[0])
             ]
         ).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-        if (self.step % 10) == 0:
+        if (self.step % 1) == 0:
             # Update mapping of uids to peerids
             self.uids_to_peerids = await map_uid_to_peerid(
                 self, range(0, self.metagraph.n)
             )
             self.uids_to_peerids[self.uid] = self.dht.peer_id
+            bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())

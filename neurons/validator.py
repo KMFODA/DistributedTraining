@@ -18,37 +18,33 @@
 
 
 import asyncio
-import datetime as dt
 import math
 import time
-import traceback
 from typing import Optional
 
 import bittensor as bt
 import hivemind
 import torch
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB
 from hivemind.compression import deserialize_torch_tensor
-from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
-from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
 
-from template import __spec_version__, __version__
-from template.base.validator import BaseValidatorNeuron
-from template.data.dataset import SubsetFalconLoader
-from template.utils.gradient_averager import DTGradientAverager
-from template.utils.misc import (AsyncDendritePool, init_dht, load_wandb,
-                                 setup_logging, warmup)
-from template.utils.progress_tracker import (GlobalTrainingProgress,
-                                             LocalTrainingProgress,
-                                             update_global_tracker_state)
-from template.utils.state_loader import load_state_from_peer
-from template.utils.uids import initialize_uid_mapping
-from template.validator import forward
+from distributed_training import __spec_version__, __version__
+from distributed_training.base.validator import BaseValidatorNeuron
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.gradient_averager import DTGradientAverager
+from distributed_training.utils.misc import (AsyncDendritePool, init_dht,
+                                             load_wandb, setup_logging, warmup)
+from distributed_training.utils.progress_tracker import (
+    GlobalTrainingProgress, LocalTrainingProgress, update_global_tracker_state)
+from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training.validator import forward
 
 logger = get_logger(__name__)
 
@@ -106,7 +102,7 @@ class Validator(BaseValidatorNeuron):
         self.allreduce_history = []
 
         # Init Dataset
-        dataset_length = SubsetFalconLoader.max_pages
+        dataset_length = DataLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device & Model
@@ -159,8 +155,23 @@ class Validator(BaseValidatorNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        self.start_time = time.time()
-        
+        # Create mapping between uids to peerids
+        self.uids_to_peerids = self.loop.run_until_complete(
+            map_uid_to_peerid(self, range(0, self.metagraph.n))
+        )
+        max_retries = 3
+        retries = 0
+        while all(value is None for value in self.uids_to_peerids.values()) and (
+            retries >= max_retries
+        ):
+            for retries in range(0, max_retries):
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    map_uid_to_peerid(self, range(0, self.metagraph.n))
+                )
+                time.sleep(1)
+        self.uids_to_peerids[self.uid] = self.dht.peer_id
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
         self.step_scheduled = False

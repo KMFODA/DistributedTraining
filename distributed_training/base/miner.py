@@ -23,7 +23,7 @@ import traceback
 import bittensor as bt
 import torch
 
-from template.base.neuron import BaseNeuron
+from distributed_training.base.neuron import BaseNeuron
 
 
 class BaseMinerNeuron(BaseNeuron):

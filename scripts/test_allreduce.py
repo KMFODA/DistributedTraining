@@ -13,14 +13,13 @@ from hivemind.averaging.averager import *
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.optim.grad_averager import GradientAverager
 from hivemind.dht.routing import DHTID
+from hivemind.optim.grad_averager import GradientAverager
 from hivemind.proto import averaging_pb2
 from hivemind.utils import use_hivemind_log_handler
 from hivemind.utils.asyncio import (aenumerate, as_aiter, azip,
                                     enter_asynchronously)
-from hivemindy import (AllReduceError, AveragingMode, DTAllReduceRunner,
-                       DTGradientAverager)
+from hivemindy import AveragingMode, DTAllReduceRunner, DTGradientAverager
 
 # Logging
 logger = logging.getLogger()
