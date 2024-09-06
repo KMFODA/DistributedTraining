@@ -72,10 +72,10 @@ def proto_compile(output_path):
 
     cli_args = [
         "grpc_tools.protoc",
-        "--proto_path=template/proto",
+        "--proto_path=distributed_training/proto",
         f"--python_out={output_path}",
         f"--grpc_python_out={output_path}",
-    ] + glob.glob("template/proto/*.proto")
+    ] + glob.glob("distributed_training/proto/*.proto")
 
     code = grpc_tools.protoc.main(cli_args)
     if (
@@ -102,8 +102,8 @@ class BuildPy(build_py):
 
     def run(self):
         super().run()
-        print(os.path.join(os.path.dirname(__file__), "template", "proto"))
-        proto_compile(os.path.join(os.path.dirname(__file__), "template", "proto"))
+        print(os.path.join(os.path.dirname(__file__), "distributed_training", "proto"))
+        proto_compile(os.path.join(os.path.dirname(__file__), "distributed_training", "proto"))
 
 
 class Develop(develop):

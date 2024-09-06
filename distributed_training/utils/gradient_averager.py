@@ -41,7 +41,7 @@ from hivemind.utils.asyncio import (
 )
 from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
-from template.proto import custom_averaging_pb2
+from distributed_training.proto import custom_averaging_pb2
 
 GatheredData = Any
 
