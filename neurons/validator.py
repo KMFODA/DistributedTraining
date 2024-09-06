@@ -147,7 +147,8 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            next_chunk_timeout=30.0,  # TODO Might be cause of timeouterror
+            next_chunk_timeout=30.0,
+            barrier_timeout=40.0,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -158,14 +159,8 @@ class Validator(BaseValidatorNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        # Used for tracking peers
-        self.peer_status = {}
-        self.status_history = {}
         self.start_time = time.time()
-        # Create mapping between uids to peerids
-        self.uids_to_peerids = initialize_uid_mapping(self)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-
+        
         # Init All Reduce Variables
         self.all_reduce_timeout = 300
         self.step_scheduled = False

@@ -126,6 +126,7 @@ class Miner(BaseMinerNeuron):
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
             next_chunk_timeout=30.0,
+            barrier_timeout=40.0,
             start=True,
         )
 
@@ -136,14 +137,8 @@ class Miner(BaseMinerNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        # Used for tracking peers
-        self.peer_status = {}
-        self.status_history = {}
         self.start_time = time.time()
-        # Create mapping between uids to peerids
-        self.uids_to_peerids = initialize_uid_mapping(self)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-
+       
         # Load dataset
         self.dataset_loader = ()
         dataset_length = SubsetFalconLoader.max_pages
@@ -201,7 +196,7 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(
                 custom_group_info=custom_group,
-                timeout=(synapse.timeout - 20),
+                timeout=(synapse.timeout),
                 peerids_to_uids=self.peerids_to_uids,
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
