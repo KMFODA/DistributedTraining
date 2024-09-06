@@ -145,7 +145,7 @@ async def forward(self):
 
             ordered_peer_ids = [self.dht.peer_id] + list(group_peerids.values())
 
-            group = template.protocol.Group(
+            group = distributed_training.protocol.Group(
                 peer_count=len(group_peerids) + 1,  # Including the local peer
                 peer_ids=[peer_id.to_string() for peer_id in ordered_peer_ids],
                 group_id=base64.b64encode(group_id),

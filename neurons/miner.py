@@ -33,7 +33,6 @@ from hivemind.averaging.group_info import GroupInfo
 from hivemind.p2p import PeerID
 from transformers import AutoModelForCausalLM
 
-# Bittensor Miner Template:
 import distributed_training
 
 # import base miner class which takes care of most of the boilerplate
@@ -304,10 +303,10 @@ class Miner(BaseMinerNeuron):
         Processes the incoming 'Train' synapse by performing a training run
 
         Args:
-            synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
+            synapse (distributed_training.protocol.Train): The synapse object containing the 'dataset_indices' data.
 
         Returns:
-            template.protocol.Train: The synapse object with the 'loss' field set to models loss.
+            distributed_training.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
         update_global_tracker_state(self)
         if (self.local_progress.epoch != self.global_progress.epoch) or (
@@ -453,7 +452,7 @@ class Miner(BaseMinerNeuron):
         requests before they are deserialized to avoid wasting resources on requests that will be ignored.
 
         Args:
-            synapse (template.protocol.Train): A synapse object constructed from the headers of the incoming request.
+            synapse (distributed_training.protocol.Train): A synapse object constructed from the headers of the incoming request.
 
         Returns:
             Tuple[bool, str]: A tuple containing a boolean indicating whether the synapse's hotkey is blacklisted,
@@ -547,7 +546,7 @@ class Miner(BaseMinerNeuron):
         This implementation assigns priority to incoming requests based on the calling entity's stake in the metagraph.
 
         Args:
-            synapse (template.protocol.Train): The synapse object that contains metadata about the incoming request.
+            synapse (distributed_training.protocol.Train): The synapse object that contains metadata about the incoming request.
 
         Returns:
             float: A priority score derived from the stake of the calling entity.

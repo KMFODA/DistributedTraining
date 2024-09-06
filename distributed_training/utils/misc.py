@@ -43,7 +43,6 @@ from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
-from template.protocol import Train
 
 from distributed_training.data.dataset import DataLoader
 from distributed_training.protocol import Train
@@ -533,10 +532,10 @@ def warmup(self):
     Processes the incoming 'Train' synapse by performing a training run
 
     Args:
-        synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
+        synapse (distributed_training.protocol.Train): The synapse object containing the 'dataset_indices' data.
 
     Returns:
-        template.protocol.Train: The synapse object with the 'loss' field set to models loss.
+        distributed_training.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
 
     # Load dataset
