@@ -29,7 +29,6 @@ import hivemind
 import torch
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
-from hivemind.optim.progress_tracker import ProgressTracker
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
@@ -44,7 +43,6 @@ from distributed_training.utils.gradient_averager import (
 )
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
-    DTStateAverager,
 )
 
 from distributed_training.utils.progress_tracker import (

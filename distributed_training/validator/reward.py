@@ -20,7 +20,7 @@ from typing import List
 
 import bittensor as bt
 import torch
-from distributed_training.data.dataset import SubsetFalconLoader
+from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
@@ -28,7 +28,7 @@ import asyncio
 
 def score_gradients(self, response, uid):
     # Create Dataloader
-    dataloader = SubsetFalconLoader(
+    dataloader = DataLoader(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
         rows=response.dataset_indices,
@@ -103,7 +103,7 @@ async def score_blacklist(self, uids):
     return scores
 
 
-async def score_bandwidth(self, uids, timeout=60):
+async def score_bandwidth(self, uids, timeout=90):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         peer = self.uids_to_peerids[uid]

@@ -25,7 +25,6 @@ import bittensor as bt
 import hivemind
 import torch
 from bitarray import bitarray
-from hivemind.optim.progress_tracker import ProgressTracker
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
@@ -35,13 +34,12 @@ import distributed_training
 
 # import base miner class which takes care of most of the boilerplate
 from distributed_training.base.miner import BaseMinerNeuron
-from distributed_training.data.dataset import SubsetFalconLoader
+from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
-    DTStateAverager,
 )
 
 from distributed_training.utils.progress_tracker import (
@@ -155,7 +153,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = SubsetFalconLoader.max_pages
+        dataset_length = DataLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -323,7 +321,7 @@ class Miner(BaseMinerNeuron):
         self.dataset_indices[group] = True
 
         # Create Dataloader
-        dataloader = SubsetFalconLoader(
+        dataloader = DataLoader(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
             rows=group,
