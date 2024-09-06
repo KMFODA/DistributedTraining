@@ -132,10 +132,14 @@ class Validator(BaseValidatorNeuron):
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+                self.config.neuron.model_name,
+                revision=str(self.global_progress.epoch),
+                trust_remote_code=True,
             )
             if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            else AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, trust_remote_code=True
+            )
         )
 
         # Move the model to the appropriate device

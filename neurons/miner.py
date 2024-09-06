@@ -103,10 +103,14 @@ class Miner(BaseMinerNeuron):
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+                self.config.neuron.model_name,
+                revision=str(self.global_progress.epoch),
+                trust_remote_code=True,
             )
             if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            else AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, trust_remote_code=True
+            )
         )
 
         # Move the model to the appropriate device
@@ -333,16 +337,18 @@ class Miner(BaseMinerNeuron):
         index = 0
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
-            inputs = batch.to(self.device)
+            # Extract inputs and labels
+            inputs = batch[0].to(self.device)
+            labels = batch[1].to(self.device)
 
             # Forward pass
-            outputs = self.model(input_ids=inputs, labels=inputs)
+            outputs = self.model(input_ids=inputs, labels=labels)
 
             # Normalize loss to account for batch accumulation
-            loss = outputs.loss
+            logits, loss = outputs
 
             # Accumulate Total Loss
-            total_loss += outputs.loss.detach().item()
+            total_loss += loss.detach().item()
 
             # Backward Pass
             loss.backward()
@@ -367,13 +373,11 @@ class Miner(BaseMinerNeuron):
             self.local_progress.samples_accumulated += 1
 
             # Log accumulation status
-            bt.logging.info(
-                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
-            )
+            bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
-                        "loss": outputs.loss.detach().item(),
+                        "loss": loss.detach().item(),
                         "local_epoch": self.local_progress.epoch,
                         "global_epoch": self.global_progress.epoch,
                     }

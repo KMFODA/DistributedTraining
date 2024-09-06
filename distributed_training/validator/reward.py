@@ -43,12 +43,14 @@ def score_gradients(self, response, uid):
         score = 0
         return score
 
-    inputs = batch.to(self.device)
+    # Extract inputs and labels
+    inputs = batch[0].to(self.device)
+    labels = batch[1].to(self.device)
 
     # Forward pass
-    outputs = self.model(input_ids=inputs, labels=inputs)
+    outputs = self.model(input_ids=inputs, labels=labels)
 
-    loss = outputs.loss
+    logits, loss = outputs
 
     # Backward Pass
     loss.backward()
