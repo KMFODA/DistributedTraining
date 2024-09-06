@@ -38,6 +38,7 @@ from transformers import AutoModelForCausalLM
 import math
 
 from distributed_training.base.validator import BaseValidatorNeuron
+from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
@@ -119,7 +120,7 @@ class Validator(BaseValidatorNeuron):
             )
 
         # Init Dataset
-        dataset_length = 968000015
+        dataset_length = DataLoader.max_pages
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device & Model
