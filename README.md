@@ -95,7 +95,7 @@ pm2 start run_validator.sh --name distributed_training_auto_update --
 ---
 
 ## Known Errors
-Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate the all-reduce part of distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common failures.
+Currently this subnet still relies on the awesome [hivemind](https://github.com/learning-at-home/hivemind) library to facilitate the all-reduce part of distributed training. This library runs multiple asynchronous porcesses in the background and sometimes these fail. It is desinged in a way such that if some of these failures occur training still progresses. Here are some of the most common errors.
 
 **Asyncio Timeout Error**:
 ![Image](assets/error_asyncio_timeout.png)
@@ -111,6 +111,11 @@ This happens when a validator tries to pull the latest model state frorm another
 ![Image](assets/error_could_not_find_a_group_error.png)
 
 This occurs when your miner hasn't been able to find a group to join to perform the all-reduce round. This might be due to low bandwidth or issues with your DHT connecting with other DHTs. Make sure your bandwidth is above the minimum requirements and that you aren't running any other background processes or miners on the same machine. Getting this error once shouldn't have a huge impact on incentive but if it keeps repeating incentives will drop.
+
+**Failed to connect to DHT address**:
+![Image](assets/error_failed_to_connect_to_DHT.png)
+
+This error indicates that you are failing to connect to some of the DHT addresses in the initial_peers list. This isn't a breaking error if you just have 1 successful attempt at the end of these retries. Many retries are expected as nodes drop out of training and leave their DHT's idle in the background.
 
 ## License
 This repository is licensed under the MIT License.
