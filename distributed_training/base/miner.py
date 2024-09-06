@@ -227,6 +227,7 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
+        self.metagraph.last_update[self.uid] = self.block
 
     def save_state(self):
         """Saves the state of the validator to a file."""
