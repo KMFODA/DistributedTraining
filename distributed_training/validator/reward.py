@@ -47,13 +47,19 @@ def score_gradients(self, response, uid):
     inputs = batch[0].to(self.device)
     labels = batch[1].to(self.device)
 
+    # Zero Gradients
+    self.opt.zero_grad()
+    
     # Forward pass
     outputs = self.model(input_ids=inputs, labels=labels)
 
-    logits, loss = outputs
+    _, loss = outputs
 
     # Backward Pass
     loss.backward()
+
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
     # Copy gradients
     gradients = tuple(
@@ -64,12 +70,6 @@ def score_gradients(self, response, uid):
         )
         for param in self.model.parameters()
     )
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Zero Gradients
-    self.opt.zero_grad()
 
     if response.gradient_test_index > len(gradients):
         bt.logging.info(

@@ -338,12 +338,15 @@ class Miner(BaseMinerNeuron):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
+            
+            # Zero Gradients
+            self.opt.zero_grad()
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=labels)
 
             # Normalize loss to account for batch accumulation
-            logits, loss = outputs
+            _, loss = outputs
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
@@ -351,21 +354,8 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # Copy gradients
-            gradients = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
-
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-            # Zero Gradients
-            self.opt.zero_grad()
 
             # Update Tracker
             self.local_progress.samples_accumulated += 1
@@ -380,6 +370,16 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
+                
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
 
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
