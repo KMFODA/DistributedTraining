@@ -208,6 +208,13 @@ async def forward(self):
                 await asyncio.sleep(1)
 
             if gradient_averaging_step.done():
+                
+                # Check if there are failed senders
+                averaging_result = gradient_averaging_step.result()
+                if averaging_result is not True:
+                    failed_senders = averaging_result
+                    bt.logging.info(f"Failed senders detected: {failed_senders}")
+                    
                 # Optimizer Step
                 with self.grad_averager.use_averaged_gradients():
                     # Log Model Weight Before Optimizer Step
@@ -360,7 +367,7 @@ async def forward(self):
             bt.logging.info(f"Current Average Miner Loss: {average_loss}")
 
     rewards = await get_rewards(
-        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce
+        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders
     )
 
     # Normalise Rewards
