@@ -219,7 +219,7 @@ async def get_rewards(
         scores *= bandwidth_scores
         
         # Apply penalty to failed senders if any
-        failed_sender_scores = score_failed_senders(self, failed_senders)
+        failed_sender_scores = score_failed_senders(self, self.miner_uids.tolist(), failed_senders)
         bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
         self.event.update(
             {
