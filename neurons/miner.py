@@ -215,6 +215,10 @@ class Miner(BaseMinerNeuron):
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        # Map uids to peerids
+        self.peerids_to_uids = {
+            str(value): key for key, value in self.uids_to_peerids.items()
+        }
         try:
             bt.logging.info("Performing Gradient Averaging")
             self.grad_averager.step(

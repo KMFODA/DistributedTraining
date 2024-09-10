@@ -48,6 +48,7 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
+    failed_senders = None
     update_global_tracker_state(self)
     if self.global_progress.epoch is not None:
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -72,7 +73,6 @@ async def forward(self):
         sample_size = int(self.metagraph.n)
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
-        failed_senders = None
 
     else:
         # If running a Train synapse call, only call the sample_size
