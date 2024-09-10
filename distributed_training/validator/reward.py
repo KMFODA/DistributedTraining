@@ -49,7 +49,7 @@ def score_gradients(self, response, uid):
 
     # Zero Gradients
     self.opt.zero_grad()
-    
+
     # Forward pass
     outputs = self.model(input_ids=inputs, labels=labels)
 
@@ -242,7 +242,8 @@ async def get_rewards(
             [
                 (
                     score_gradients(self, response, uids.tolist()[index])
-                    if (response.dendrite.status_code == 200) and (scores[index] != 0)
+                    if (response.dendrite.status_code == 200)
+                    and (response.gradients is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])
@@ -262,7 +263,8 @@ async def get_rewards(
             [
                 (
                     len(response.dataset_indices)
-                    if (response.dendrite.status_code == 200) and (scores[index] != 0)
+                    if (response.dendrite.status_code == 200)
+                    and (response.dataset_indices is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])

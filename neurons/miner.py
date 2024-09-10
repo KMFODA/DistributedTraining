@@ -338,7 +338,7 @@ class Miner(BaseMinerNeuron):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
-            
+
             # Zero Gradients
             self.opt.zero_grad()
 
@@ -370,7 +370,7 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
-                
+
         # Copy gradients
         gradients = tuple(
             (
