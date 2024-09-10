@@ -72,6 +72,7 @@ async def forward(self):
         sample_size = int(self.metagraph.n)
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
+        failed_senders = None
 
     else:
         # If running a Train synapse call, only call the sample_size
