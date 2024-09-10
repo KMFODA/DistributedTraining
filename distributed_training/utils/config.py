@@ -190,7 +190,7 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--dht.announce_ip",
+        "--dht.ip",
         type=str,
         help="The IP address to use in announce_maddrs",
     )

@@ -346,7 +346,7 @@ class Miner(BaseMinerNeuron):
             outputs = self.model(input_ids=inputs, labels=labels)
 
             # Normalize loss to account for batch accumulation
-            _, loss = outputs
+            loss = outputs[0]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
@@ -393,7 +393,7 @@ class Miner(BaseMinerNeuron):
                 torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
             )
 
-            average_loss = total_loss / index
+            average_loss = total_loss / (index + 1)
             synapse.loss = average_loss
             synapse.dataset_indices = group
 
