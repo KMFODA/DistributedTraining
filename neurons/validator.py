@@ -37,9 +37,13 @@ from transformers import AutoModelForCausalLM
 from distributed_training import __spec_version__, __version__
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import (AsyncDendritePool, init_dht,
-                                             load_wandb, setup_logging, warmup)
+from distributed_training.utils.gradient_averager import (
+    DTGradientAverager,
+)
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+)
+
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress, LocalTrainingProgress, update_global_tracker_state)
 from distributed_training.utils.state_loader import load_state_from_peer

@@ -31,6 +31,8 @@ class BaseMinerNeuron(BaseNeuron):
     Base class for Bittensor miners.
     """
 
+    neuron_type: str = "MinerNeuron"
+
     def __init__(self, config=None):
         super().__init__(config=config)
 
@@ -124,6 +126,7 @@ class BaseMinerNeuron(BaseNeuron):
                         break
 
                 # Sync metagraph and potentially set weights.
+                self.sync()
                 self.step += 1
 
             # Await the training task to ensure it completes before exiting
@@ -225,6 +228,7 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
+        self.metagraph.last_update[self.uid] = self.block
 
     def save_state(self):
         """Saves the state of the validator to a file."""

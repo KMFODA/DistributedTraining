@@ -34,6 +34,8 @@ class BaseValidatorNeuron(BaseNeuron):
     Base class for Bittensor validators. Your validator should inherit from this class.
     """
 
+    neuron_type: str = "ValidatorNeuron"
+
     def __init__(self, config=None):
         super().__init__(config=config)
 
@@ -269,6 +271,7 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
+        self.metagraph.last_update[self.uid] = self.block
 
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:
