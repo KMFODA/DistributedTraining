@@ -53,7 +53,7 @@ def score_gradients(self, response, uid):
     # Forward pass
     outputs = self.model(input_ids=inputs, labels=labels)
 
-    loss = outputs[0]
+    loss = outputs[1]
 
     # Backward Pass
     loss.backward()

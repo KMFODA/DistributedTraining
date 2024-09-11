@@ -364,14 +364,8 @@ def setup_logging(
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    logtail_handler = LogtailHandler(source_token=os.getenv("LOGTAIL_KEY"))
-    formatter = logging.Formatter("%(host)s%(message)s")
-    logtail_handler.setFormatter(formatter)
-    logtail_handler.addFilter(IpFilter(ip=ip, port=port))
-
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
-    bt_logger_.addHandler(logtail_handler)
     add_loki_logger_handler(
         bt_logger_,
         network,
@@ -397,7 +391,6 @@ def setup_logging(
     formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
-    root_logger.addHandler(logtail_handler)
 
     add_loki_logger_handler(
         root_logger,
@@ -432,7 +425,6 @@ def setup_logging(
     )
     file_handler.setFormatter(formatter)
     hivemind_logger.addHandler(file_handler)
-    # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (
         False  # Stop hivemind logs from propagating to the root logger
     )

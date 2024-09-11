@@ -346,7 +346,7 @@ class Miner(BaseMinerNeuron):
             outputs = self.model(input_ids=inputs, labels=labels)
 
             # Normalize loss to account for batch accumulation
-            loss = outputs[0]
+            loss = outputs[1]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
