@@ -44,7 +44,6 @@ import random
 from distributed_training.data.dataset import DataLoader
 from bitarray import bitarray
 import wandb
-from logtail import LogtailHandler
 import os
 from dotenv import load_dotenv
 import asyncio
