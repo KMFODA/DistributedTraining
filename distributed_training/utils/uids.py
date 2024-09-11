@@ -116,6 +116,7 @@ async def get_random_uids(
 
 async def map_uid_to_peerid(self, uids):
     uids_to_peerids = {}
+    retry_delay = 1
     for uid in uids:
         miner_ip = self.metagraph.axons[uid].ip
         miner_port = self.metagraph.axons[uid].port
