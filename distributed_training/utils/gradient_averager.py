@@ -476,13 +476,13 @@ class DTAverager(hivemind.DecentralizedAverager):
 
         except asyncio.TimeoutError:
             logger.error(f"Barrier timeout for peer {self.peer_id}")
-            raise BarrierError("Barrier timeout") from None
+            raise MatchmakingException("Barrier timeout") from None
         except Exception as e:
             logger.error(
                 f"Error in distributed_barrier for peer {self.peer_id}: {str(e)}",
                 exc_info=True,
             )
-            raise BarrierError(f"Error in distributed_barrier: {str(e)}") from e
+            raise MatchmakingException(f"Error in distributed_barrier: {str(e)}") from e
 
     async def _leader_coordinate_barrier(self):
         bt.logging.info(f"Leader {self.peer_id} starting barrier coordination")
