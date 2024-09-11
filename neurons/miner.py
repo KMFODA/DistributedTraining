@@ -54,7 +54,7 @@ from distributed_training.utils.misc import (
     setup_logging,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 
@@ -118,7 +118,7 @@ class Miner(BaseMinerNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(

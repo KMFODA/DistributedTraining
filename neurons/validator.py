@@ -64,7 +64,7 @@ from distributed_training.utils.uids import (
 )
 
 from distributed_training.validator import forward
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 logger = get_logger(__name__)
@@ -155,7 +155,7 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
