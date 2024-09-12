@@ -325,10 +325,10 @@ async def forward(self):
             else:
                 bt.logging.info("Averaging Failed. Loading Latest Model State.")
                 failed_gradient_all_reduce = True
+                gradient_averaging_step.cancel()
                 load_state_from_peer(self)
 
             if failed_gradient_all_reduce:
-                gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
                 with self.grad_averager.use_averaged_gradients():
                     self.opt.zero_grad()
