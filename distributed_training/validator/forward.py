@@ -156,6 +156,9 @@ async def forward(self):
                         for param in self.model.parameters()
                     )
                     bt.logging.info(gradients[-1][-10:].tolist())
+                    
+                    bt.logging.info("Clipping Grads")        
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     bt.logging.info("Performing Optimizer Step")
                     # Update model parameters using averaged gradients
                     self.opt.step()
