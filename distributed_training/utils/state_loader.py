@@ -245,7 +245,7 @@ def load_state_from_peer(self, epoch=None):
 
     bt.logging.info("Model Weights Before Loading State")
     current_model_weights_sample = copy.copy(
-        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        [layer for layer in self.model.parameters()][-2][-10:].tolist()
     )
     bt.logging.info(current_model_weights_sample)
 
@@ -267,7 +267,7 @@ def load_state_from_peer(self, epoch=None):
 
         bt.logging.info("Model Weights After Loading State")
         new_model_weights_sample = copy.copy(
-            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            [layer for layer in self.model.parameters()][-2][-10:].tolist()
         )
         bt.logging.info(new_model_weights_sample)
 

@@ -201,15 +201,11 @@ class Miner(BaseMinerNeuron):
         try:
             self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
-                weight=(
-                    self.local_progress.samples_accumulated
-                    / self.config.neuron.global_batch_size_train
-                ),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
                 bt.logging.info("Model Gradients Before Optimizer Step")
@@ -234,7 +230,7 @@ class Miner(BaseMinerNeuron):
 
             bt.logging.info("Model Weights After Optimizer Step")
             new_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
             bt.logging.info(new_model_weights_sample)
 
@@ -296,7 +292,7 @@ class Miner(BaseMinerNeuron):
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
             )
             > 1
