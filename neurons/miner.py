@@ -225,6 +225,8 @@ class Miner(BaseMinerNeuron):
                     )
                     for param_group in self.opt.param_groups:
                         param_group["lr"] = synapse.learning_rate
+                bt.logging.info("Clipping Grads")        
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()
 
