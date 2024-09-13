@@ -197,7 +197,8 @@ class Validator(BaseValidatorNeuron):
         self.step_scheduled = False
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
-        self.maximum_steps = 306 * 4
+        self.maximum_steps = 38_146 # 10_000_000_000/(256*1024)
+        self.warmup_steps = self.maximum_steps / 640
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
 
