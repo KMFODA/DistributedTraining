@@ -115,7 +115,7 @@ def add_args(cls, parser):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWABz2UdJQj2TR94uxKvqZCGQhgxxzk6BpaCTAoCW9HKGP",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWQEW27pELHmYLLtxQEHm5v7t66CVJ6We1Z75kS9DC9KDz",
         ],
     )
 
@@ -123,7 +123,7 @@ def add_args(cls, parser):
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
-        default="distributed/gpt2-250m",
+        default="distributed/optimized-gpt2-250m",
     )
 
     parser.add_argument(
@@ -190,7 +190,7 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--dht.announce_ip",
+        "--dht.ip",
         type=str,
         help="The IP address to use in announce_maddrs",
     )

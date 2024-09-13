@@ -96,17 +96,15 @@ async def forward(self):
             }
             gradient_averaging_step = self.grad_averager.step(
                 wait=False,
-                weight=(
-                    self.local_progress.samples_accumulated
-                    / self.config.neuron.global_batch_size_train
-                ),
             )
             # peerids_to_uids = self.peerids_to_uids)
-            learning_rate = self.get_learning_rate()
-            bt.logging.info(f"Current Learning Rate: {learning_rate}")
+            self.learning_rate = self.get_learning_rate()
+            bt.logging.info(f"Current Learning Rate: {self.learning_rate}")
 
             queries = [
-                distributed_training.protocol.AllReduce(learning_rate=learning_rate)
+                distributed_training.protocol.AllReduce(
+                    learning_rate=self.learning_rate
+                )
                 for _ in self.miner_uids
             ]
         else:
@@ -146,7 +144,7 @@ async def forward(self):
                     # Log Model Weight Before Optimizer Step
                     bt.logging.info("Model Weights Before Optimizer Step")
                     current_model_weights_sample = copy.copy(
-                        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
                     )
                     bt.logging.info(current_model_weights_sample)
                     bt.logging.info("Model Gradients Before Optimizer Step")
@@ -167,7 +165,7 @@ async def forward(self):
                 # Log Model Weight After Optimizer Step
                 bt.logging.info("Model Weights After Optimizer Step")
                 new_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
                 bt.logging.info(new_model_weights_sample)
 
@@ -282,7 +280,7 @@ async def forward(self):
                     ]
                 )
             )
-            average_loss = np.array(
+            self.average_loss = np.array(
                 [
                     response.loss
                     for response, uid in zip(responses[0], self.miner_uids)
@@ -290,7 +288,7 @@ async def forward(self):
                     and (response.dataset_indices is not None)
                 ]
             ).mean()
-            bt.logging.info(f"Current Average Miner Loss: {average_loss}")
+            bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
@@ -311,6 +309,8 @@ async def forward(self):
             "local_epoch": self.local_progress.epoch,
             "global_samples_accumulated": self.global_progress.samples_accumulated,
             "global_epoch": self.global_progress.epoch,
+            "average_miner_loss": self.average_loss,
+            "learning_rate": self.learning_rate,
         }
     )
 

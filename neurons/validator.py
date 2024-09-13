@@ -64,7 +64,7 @@ from distributed_training.utils.uids import (
 )
 
 from distributed_training.validator import forward
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 logger = get_logger(__name__)
@@ -131,10 +131,14 @@ class Validator(BaseValidatorNeuron):
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+                self.config.neuron.model_name,
+                revision=str(self.global_progress.epoch),
+                trust_remote_code=True,
             )
             if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            else AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, trust_remote_code=True
+            )
         )
 
         # Move the model to the appropriate device
@@ -151,7 +155,7 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init Optimizer
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -193,7 +197,10 @@ class Validator(BaseValidatorNeuron):
         self.step_scheduled = False
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
-        self.maximum_steps = 306 * 4
+        self.maximum_steps = 38_146  # 10_000_000_000/(256*1024)
+        self.warmup_steps = self.maximum_steps / 640
+        self.learning_rate = self.get_learning_rate()
+        self.average_loss = None
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:

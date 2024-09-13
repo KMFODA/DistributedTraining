@@ -1,4 +1,5 @@
 bittensor==6.12.3
+bitsandbytes==0.43.3
 bitarray==2.9.2
 datasets==2.18.0
 transformers==4.39.3
@@ -13,6 +14,4 @@ flake8==7.0.0
 black==23.7.0
 isort==5.13.2
 numpy==1.24.1
-logtail-python==0.3.0
-torch-optimizer==0.3.0
 protobuf==5.28.0

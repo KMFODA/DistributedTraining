@@ -10,19 +10,21 @@
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
+import math
+import time
+import typing
+
+import bittensor as bt
+import requests
+
 # THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 import torch
-import typing
-import requests
-import bittensor as bt
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
-import time
-import math
 
 model_name = "distilgpt2"
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
@@ -86,14 +88,18 @@ class DataLoader(IterableDataset):
     def __iter__(self):
         while len(self.buffer) >= self.sequence_length * self.batch_size:
             batch = []
+            label = []
             for _ in range(self.batch_size):
                 batch.append(torch.tensor(self.buffer[: self.sequence_length]))
+                label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
                 self.buffer = self.buffer[self.sequence_length :]
-            yield torch.stack(batch)
+            yield torch.stack(batch), torch.stack(label)
 
     def __next__(self):
         batch = []
+        label = []
         for _ in range(self.batch_size):
             batch.append(torch.tensor(self.buffer[: self.sequence_length]))
+            label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
             self.buffer = self.buffer[self.sequence_length :]
-        return torch.stack(batch)
+        yield torch.stack(batch), torch.stack(label)

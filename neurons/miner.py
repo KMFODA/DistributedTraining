@@ -54,7 +54,7 @@ from distributed_training.utils.misc import (
     setup_logging,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 
@@ -101,10 +101,14 @@ class Miner(BaseMinerNeuron):
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+                self.config.neuron.model_name,
+                revision=str(self.global_progress.epoch),
+                trust_remote_code=True,
             )
             if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            else AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, trust_remote_code=True
+            )
         )
 
         # Move the model to the appropriate device
@@ -114,7 +118,7 @@ class Miner(BaseMinerNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -197,15 +201,11 @@ class Miner(BaseMinerNeuron):
         try:
             self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
-                weight=(
-                    self.local_progress.samples_accumulated
-                    / self.config.neuron.global_batch_size_train
-                ),
             )
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
                 bt.logging.info("Model Gradients Before Optimizer Step")
@@ -230,7 +230,7 @@ class Miner(BaseMinerNeuron):
 
             bt.logging.info("Model Weights After Optimizer Step")
             new_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
             bt.logging.info(new_model_weights_sample)
 
@@ -292,7 +292,7 @@ class Miner(BaseMinerNeuron):
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
             )
             > 1
@@ -331,51 +331,51 @@ class Miner(BaseMinerNeuron):
         index = 0
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
-            inputs = batch.to(self.device)
+            # Extract inputs and labels
+            inputs = batch[0].to(self.device)
+            labels = batch[1].to(self.device)
+
+            # Zero Gradients
+            self.opt.zero_grad()
 
             # Forward pass
-            outputs = self.model(input_ids=inputs, labels=inputs)
+            outputs = self.model(input_ids=inputs, labels=labels)
 
             # Normalize loss to account for batch accumulation
-            loss = outputs.loss
+            loss = outputs[1]
 
             # Accumulate Total Loss
-            total_loss += outputs.loss.detach().item()
+            total_loss += loss.detach().item()
 
             # Backward Pass
             loss.backward()
 
-            # Copy gradients
-            gradients = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
-
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-            # Zero Gradients
-            self.opt.zero_grad()
 
             # Update Tracker
             self.local_progress.samples_accumulated += 1
 
             # Log accumulation status
-            bt.logging.info(
-                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
-            )
+            bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
-                        "loss": outputs.loss.detach().item(),
+                        "loss": loss.detach().item(),
                         "local_epoch": self.local_progress.epoch,
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
+
+        # Copy gradients
+        gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
+        )
 
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
@@ -389,7 +389,7 @@ class Miner(BaseMinerNeuron):
                 torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
             )
 
-            average_loss = total_loss / index
+            average_loss = total_loss / (index + 1)
             synapse.loss = average_loss
             synapse.dataset_indices = group
 

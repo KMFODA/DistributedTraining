@@ -43,15 +43,23 @@ def score_gradients(self, response, uid):
         score = 0
         return score
 
-    inputs = batch.to(self.device)
+    # Extract inputs and labels
+    inputs = batch[0].to(self.device)
+    labels = batch[1].to(self.device)
+
+    # Zero Gradients
+    self.opt.zero_grad()
 
     # Forward pass
-    outputs = self.model(input_ids=inputs, labels=inputs)
+    outputs = self.model(input_ids=inputs, labels=labels)
 
-    loss = outputs.loss
+    loss = outputs[1]
 
     # Backward Pass
     loss.backward()
+
+    # Accumulate Gradients
+    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
     # Copy gradients
     gradients = tuple(
@@ -62,12 +70,6 @@ def score_gradients(self, response, uid):
         )
         for param in self.model.parameters()
     )
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Zero Gradients
-    self.opt.zero_grad()
 
     if response.gradient_test_index > len(gradients):
         bt.logging.info(
@@ -240,7 +242,8 @@ async def get_rewards(
             [
                 (
                     score_gradients(self, response, uids.tolist()[index])
-                    if (response.dendrite.status_code == 200) and (scores[index] != 0)
+                    if (response.dendrite.status_code == 200)
+                    and (response.gradients is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])
@@ -260,7 +263,8 @@ async def get_rewards(
             [
                 (
                     len(response.dataset_indices)
-                    if (response.dendrite.status_code == 200) and (scores[index] != 0)
+                    if (response.dendrite.status_code == 200)
+                    and (response.dataset_indices is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])

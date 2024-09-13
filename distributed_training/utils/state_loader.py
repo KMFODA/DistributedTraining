@@ -17,7 +17,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
 from transformers import AutoModelForCausalLM
-from torch_optimizer import Lamb
+from bitsandbytes.optim import LAMB
 
 from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
@@ -245,7 +245,7 @@ def load_state_from_peer(self, epoch=None):
 
     bt.logging.info("Model Weights Before Loading State")
     current_model_weights_sample = copy.copy(
-        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        [layer for layer in self.model.parameters()][-2][-10:].tolist()
     )
     bt.logging.info(current_model_weights_sample)
 
@@ -258,15 +258,16 @@ def load_state_from_peer(self, epoch=None):
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
+            trust_remote_code=True,
         )
         self.model.to(self.device)
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
         self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
         new_model_weights_sample = copy.copy(
-            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            [layer for layer in self.model.parameters()][-2][-10:].tolist()
         )
         bt.logging.info(new_model_weights_sample)
 
