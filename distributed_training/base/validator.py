@@ -213,7 +213,6 @@ class BaseValidatorNeuron(BaseNeuron):
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
-
         # Check if self.scores contains any NaN values and log a warning if it does.
         if torch.isnan(self.scores).any():
             bt.logging.warning(
@@ -223,9 +222,9 @@ class BaseValidatorNeuron(BaseNeuron):
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
         raw_weights = torch.nn.functional.normalize(self.scores, p=1, dim=0)
-        bt.logging.trace("raw_weights", raw_weights)
-        bt.logging.trace("top10 values", raw_weights.sort()[0])
-        bt.logging.trace("top10 uids", raw_weights.sort()[1])
+        bt.logging.info("raw_weights", raw_weights)
+        bt.logging.info("top10 values", raw_weights.sort()[0])
+        bt.logging.info("top10 uids", raw_weights.sort()[1])
 
         # Process the raw weights to final_weights via subtensor limitations.
         (
@@ -238,8 +237,8 @@ class BaseValidatorNeuron(BaseNeuron):
             subtensor=self.subtensor,
             metagraph=self.metagraph,
         )
-        bt.logging.trace("processed_weights", processed_weights)
-        bt.logging.trace("processed_weight_uids", processed_weight_uids)
+        bt.logging.info("processed_weights", processed_weights)
+        bt.logging.info("processed_weight_uids", processed_weight_uids)
 
         # Set the weights on chain via our subtensor connection.
         self.subtensor.set_weights(
@@ -271,7 +270,6 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
-        self.metagraph.last_update[self.uid] = self.block
 
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:

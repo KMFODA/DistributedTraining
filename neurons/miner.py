@@ -23,7 +23,6 @@ import random
 import time
 import typing
 
-import bittensor as bt
 import hivemind
 import numpy as np
 import torch
@@ -33,32 +32,19 @@ from hivemind.averaging.group_info import GroupInfo
 from hivemind.p2p import PeerID
 from transformers import AutoModelForCausalLM
 
+import bittensor as bt
 import distributed_training
-
+from distributed_training import __spec_version__, __version__
 # import base miner class which takes care of most of the boilerplate
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.gradient_averager import (
-    DTGradientAverager,
-)
-from distributed_training.utils.state_loader import (
-    load_state_from_peer,
-)
-
+from distributed_training.utils.gradient_averager import DTGradientAverager
+from distributed_training.utils.misc import (get_bandwidth, init_dht,
+                                             load_wandb, setup_logging)
 from distributed_training.utils.progress_tracker import (
-    GlobalTrainingProgress,
-    LocalTrainingProgress,
-    update_global_tracker_state,
-)
-from distributed_training.utils.misc import (
-    get_bandwidth,
-    init_dht,
-    load_wandb,
-    setup_logging,
-)
+    GlobalTrainingProgress, LocalTrainingProgress, update_global_tracker_state)
+from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import map_uid_to_peerid
-from torch_optimizer import Lamb
-from distributed_training import __version__, __spec_version__
 
 
 class Miner(BaseMinerNeuron):
@@ -104,10 +90,14 @@ class Miner(BaseMinerNeuron):
             )
         self.model = (
             AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, revision=str(self.global_progress.epoch)
+                self.config.neuron.model_name,
+                revision=str(self.global_progress.epoch),
+                trust_remote_code=True,
             )
             if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(self.config.neuron.model_name)
+            else AutoModelForCausalLM.from_pretrained(
+                self.config.neuron.model_name, trust_remote_code=True
+            )
         )
 
         # Move the model to the appropriate device
@@ -116,20 +106,8 @@ class Miner(BaseMinerNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        # Set weight decay of specific layers:
-        optim_groups = [
-            {
-                "params": [p for _, p in self.model.named_parameters() if p.dim() >= 2],
-                "weight_decay": 0.1,
-            },
-            {
-                "params": [p for _, p in self.model.named_parameters() if p.dim() < 2],
-                "weight_decay": 0.0,
-            },
-        ]
-
         # Set up a decentralized optimizer that will average with peers in background
-        self.opt = LAMB(optim_groups, lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -229,7 +207,7 @@ class Miner(BaseMinerNeuron):
             with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
                 bt.logging.info("Model Weights Before Optimizer Step")
                 current_model_weights_sample = copy.copy(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
                 bt.logging.info("Model Gradients Before Optimizer Step")
@@ -254,7 +232,7 @@ class Miner(BaseMinerNeuron):
 
             bt.logging.info("Model Weights After Optimizer Step")
             new_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
             bt.logging.info(new_model_weights_sample)
 
@@ -316,7 +294,7 @@ class Miner(BaseMinerNeuron):
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
-                    [layer for layer in self.model.parameters()][-1][-10:].tolist()
+                    [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
             )
             > 1
@@ -353,35 +331,27 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         index = 0
-        grad_accum_steps = self.config.neuron.global_batch_size_train // (
-            self.config.neuron.local_batch_size_train
-            * self.config.neuron.training_examples_per_miner
-        )
 
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
-            inputs = batch.to(self.device)
+            # Extract inputs and labels
+            inputs = batch[0].to(self.device)
+            labels = batch[1].to(self.device)
 
             # Zero Gradients
-            self.opt.zero_grad(
-                set_to_none=True  # Potential memory save setting to None
-            )
+            self.opt.zero_grad()
 
-            # Forward pass with potential mixed precision
-            # with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            outputs = self.model(input_ids=inputs, labels=inputs)
-            loss = outputs.loss
-            scaled_loss = (  # TODO Consider dividing by world_size too
-                loss
-                / self.config.neuron.global_batch_size_train
-                / self.config.neuron.local_batch_size_train  # We dont divide by len(input) as global_batch_size_train already reflects that (million tokens/token len)
-            )
+            # Forward pass
+            outputs = self.model(input_ids=inputs, labels=labels)
+
+            # Normalize loss to account for batch accumulation
+            loss = outputs[1]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
 
             # Backward Pass
-            scaled_loss.backward()
+            loss.backward()
 
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
@@ -390,14 +360,11 @@ class Miner(BaseMinerNeuron):
             self.local_progress.samples_accumulated += 1
 
             # Log accumulation status
-            bt.logging.info(
-                f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}"
-            )
-
+            bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(
                     {
-                        "loss": outputs.loss.detach().item(),
+                        "loss": loss.detach().item(),
                         "local_epoch": self.local_progress.epoch,
                         "global_epoch": self.global_progress.epoch,
                     }
@@ -412,6 +379,7 @@ class Miner(BaseMinerNeuron):
             for param in self.model.parameters()
         )
 
+
         if synapse.gradient_test_index > len(gradients):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
@@ -424,7 +392,7 @@ class Miner(BaseMinerNeuron):
                 torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
             )
 
-            average_loss = total_loss / index
+            average_loss = total_loss / (index + 1)
             synapse.loss = average_loss
             synapse.dataset_indices = group
 

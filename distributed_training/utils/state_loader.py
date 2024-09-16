@@ -5,9 +5,9 @@ import re
 from itertools import chain
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-import bittensor as bt
 import hivemind
 import torch
+from bitsandbytes.optim import LAMB
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
@@ -15,14 +15,12 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
-from torch_optimizer import Lamb
+from huggingface_hub import scan_cache_dir
 from transformers import AutoModelForCausalLM
 
+import bittensor as bt
 from distributed_training.utils.progress_tracker import (
-    LocalTrainingProgress,
-    update_global_tracker_state,
-)
+    LocalTrainingProgress, update_global_tracker_state)
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -245,7 +243,7 @@ def load_state_from_peer(self, epoch=None):
 
     bt.logging.info("Model Weights Before Loading State")
     current_model_weights_sample = copy.copy(
-        [layer for layer in self.model.parameters()][-1][-10:].tolist()
+        [layer for layer in self.model.parameters()][-2][-10:].tolist()
     )
     bt.logging.info(current_model_weights_sample)
 
@@ -257,15 +255,16 @@ def load_state_from_peer(self, epoch=None):
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
+            trust_remote_code=True,
         )
         self.model.to(self.device)
-        self.opt = Lamb(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
         self.grad_averager.parameters = tuple(self.model.parameters())
         state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
         new_model_weights_sample = copy.copy(
-            [layer for layer in self.model.parameters()][-1][-10:].tolist()
+            [layer for layer in self.model.parameters()][-2][-10:].tolist()
         )
         bt.logging.info(new_model_weights_sample)
 

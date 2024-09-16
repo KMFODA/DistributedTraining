@@ -31,7 +31,6 @@ from math import floor
 from multiprocessing import Queue
 from typing import Any, Callable, List
 
-import bittensor as bt
 import hivemind
 import logging_loki
 import speedtest
@@ -44,6 +43,7 @@ from hivemind.utils.logging import use_hivemind_log_handler
 from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
+import bittensor as bt
 from distributed_training.data.dataset import DataLoader
 from distributed_training.protocol import Train
 
@@ -362,14 +362,8 @@ def setup_logging(
     # Function to force hivemind to log via bittensor
     _ = bt.logging()
 
-    logtail_handler = LogtailHandler(source_token=os.getenv("LOGTAIL_KEY"))
-    formatter = logging.Formatter("%(host)s%(message)s")
-    logtail_handler.setFormatter(formatter)
-    logtail_handler.addFilter(IpFilter(ip=ip, port=port))
-
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
-    bt_logger_.addHandler(logtail_handler)
     add_loki_logger_handler(
         bt_logger_,
         network,
@@ -395,7 +389,6 @@ def setup_logging(
     formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
-    root_logger.addHandler(logtail_handler)
 
     add_loki_logger_handler(
         root_logger,
@@ -428,7 +421,6 @@ def setup_logging(
     file_handler.setFormatter(formatter)
     file_handler.addFilter(logging_filter)
     hivemind_logger.addHandler(file_handler)
-    # hivemind_logger.addHandler(logtail_handler)
     hivemind_logger.propagate = (
         False  # Stop hivemind logs from propagating to the root logger
     )
@@ -487,8 +479,8 @@ def init_dht(self):
     while successful_connection is False:
         if (retries == max_retries) and (successful_connection is False):
             raise Exception("Max retries reached, operation failed.")
-        for initial_peer in initial_peers_list:
-            for attempt in range(0, buffer):
+        for attempt in range(0, buffer):
+            for initial_peer in initial_peers_list:
                 try:
                     # Init DHT
                     self.dht = hivemind.DHT(
@@ -520,7 +512,7 @@ def init_dht(self):
                     return
                 except Exception as e:
                     bt.logging.error(
-                        f"Attempt {attempt + 1} to init DHT using initial_peer as {initial_peer} failed with error: {e}"
+                        f"Attempt {retries + 1} to init DHT using initial_peer as {initial_peer} failed with error: {e}"
                     )
                     retries += 1
                     time.sleep(5)

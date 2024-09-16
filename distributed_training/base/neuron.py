@@ -121,6 +121,8 @@ class BaseNeuron(ABC):
         if self.should_set_weights():
             self.set_weights()
 
+        self.metagraph.last_update[self.uid] = self.block
+
         # Always save state.
         self.save_state()
 
