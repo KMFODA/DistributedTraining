@@ -2,26 +2,14 @@ import asyncio
 import logging
 from contextlib import contextmanager
 from enum import Enum
-from typing import (
-    Any,
-    AsyncIterator,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Sequence,
-    Union,
-)
+from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
+                    Sequence, Union)
 
-import bittensor as bt
 import hivemind
 import hivemind.averaging.averager
 import torch
-from hivemind.averaging.allreduce import (
-    AllreduceException,
-    AllReduceRunner,
-    AveragingMode,
-)
+from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
+                                          AveragingMode)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
@@ -31,16 +19,12 @@ from hivemind.dht import DHT
 from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
-from hivemind.utils.asyncio import (
-    aiter_with_timeout,
-    amap_in_executor,
-    as_aiter,
-    attach_event_on_finished,
-    azip,
-    enter_asynchronously,
-)
+from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
+                                    as_aiter, attach_event_on_finished, azip,
+                                    enter_asynchronously)
 from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
+import bittensor as bt
 from distributed_training.proto import custom_averaging_pb2
 
 GatheredData = Any

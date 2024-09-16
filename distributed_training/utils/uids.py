@@ -3,11 +3,12 @@ import random
 import traceback
 from typing import List
 
-import bittensor as bt
 import torch
-import distributed_training
-from hivemind.utils.timed_storage import ValueWithExpiration
 from hivemind.p2p import PeerID
+from hivemind.utils.timed_storage import ValueWithExpiration
+
+import bittensor as bt
+import distributed_training
 
 
 async def check_uid(dendrite, axon, uid, epoch=None):

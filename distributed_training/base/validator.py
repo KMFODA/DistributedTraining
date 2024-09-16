@@ -23,9 +23,9 @@ import threading
 from traceback import print_exception
 from typing import List
 
-import bittensor as bt
 import torch
 
+import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
 
 
