@@ -281,10 +281,21 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             cache_info = scan_cache_dir()
             for repo in cache_info.repos:
                 if repo.repo_id == self.config.neuron.model_name:
-                    revisions = sorted(repo.revisions, key=lambda r: r.last_modified, reverse=True)
-                    current_index = next((i for i, r in enumerate(revisions) if r.commit_hash == current_revision), None)
+                    revisions = sorted(
+                        repo.revisions, key=lambda r: r.last_modified, reverse=True
+                    )
+                    current_index = next(
+                        (
+                            i
+                            for i, r in enumerate(revisions)
+                            if r.commit_hash == current_revision
+                        ),
+                        None,
+                    )
                     if current_index is not None:
-                        for revision in revisions[max(current_index + 1, keep_recent):]:
+                        for revision in revisions[
+                            max(current_index + 1, keep_recent) :
+                        ]:
                             cache_info.delete_revisions(revision.commit_hash).execute()
                     break
         except:

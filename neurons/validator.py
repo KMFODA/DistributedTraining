@@ -211,7 +211,7 @@ class Validator(BaseValidatorNeuron):
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
-            if reward != 0:
+            if (reward != 0) and (response.dataset_indices is not None):
                 self.local_progress.samples_accumulated += len(response.dataset_indices)
             else:
                 continue
