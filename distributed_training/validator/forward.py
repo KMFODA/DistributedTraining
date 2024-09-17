@@ -161,6 +161,10 @@ async def forward(self):
                     bt.logging.info("Performing Optimizer Step")
                     # Update model parameters using averaged gradients
                     self.opt.step()
+                    # Reset gradients and update local progress
+                    self.grad_averager.reset_accumulated_grads_()
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
 
                 # Log Model Weight After Optimizer Step
                 bt.logging.info("Model Weights After Optimizer Step")
@@ -190,11 +194,6 @@ async def forward(self):
                         )
 
                 else:
-                    # Reset gradients and update local progress
-                    self.grad_averager.reset_accumulated_grads_()
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
-
                     # Push to HF Hub if the current validator is the first to update
                     refs = list_repo_refs(
                         self.config.neuron.model_name, repo_type="model"
