@@ -235,12 +235,15 @@ async def forward(self):
                         while attempt < self.model_upload_retry_limit:
                             try:
                                 bt.logging.info("Pushing New Model Weights To HF Hub.")
-                                self.model.push_to_hub(self.config.neuron.model_name)
+                                self.model.push_to_hub(
+                                    self.config.neuron.model_name,
+                                    commit_message=f"Epoch {self.local_progress.epoch}",
+                                )
                                 create_tag(
                                     self.config.neuron.model_name,
                                     repo_type="model",
                                     tag=str(self.local_progress.epoch),
-                                    tag_message=f"Epcoh {self.local_progress.epoch}",
+                                    tag_message=f"Epoch {self.local_progress.epoch}",
                                 )
                                 refs = list_repo_refs(
                                     self.config.neuron.model_name, repo_type="model"

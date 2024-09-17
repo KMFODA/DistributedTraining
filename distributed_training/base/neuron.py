@@ -118,9 +118,11 @@ class BaseNeuron(ABC):
             self.resync_metagraph()
 
         if self.should_set_weights():
+            bt.logging.info("Should Set Weights")
             self.set_weights()
 
-        self.metagraph.last_update[self.uid] = self.block
+        if self.should_sync_metagraph():
+            self.metagraph.last_update[self.uid] = self.block
 
         # Always save state.
         self.save_state()
