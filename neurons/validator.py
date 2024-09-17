@@ -198,7 +198,8 @@ class Validator(BaseValidatorNeuron):
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
         self.maximum_steps = 38_146  # 10_000_000_000/(256*1024)
-        self.warmup_steps = self.maximum_steps / 640
+        self.warmup_steps = 1430  # 38_146 * 0.03
+        self.learning_rate_maximum = 6e-4
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
 
@@ -276,26 +277,26 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Exiting update models loop.")
 
     def get_learning_rate(self):
-        learning_rate_minimum = self.config.neuron.learning_rate * 0.1
+        learning_rate_minimum = self.learning_rate_maximum * 0.1
         # 1) linear warmup for warmup_steps
-        if self.global_progress.epoch < self.config.neuron.warmup_steps:
+        if self.global_progress.epoch < self.warmup_steps:
             return (
-                self.config.neuron.learning_rate
+                self.learning_rate_maximum
                 * (self.global_progress.epoch + 1)
-                / self.config.neuron.warmup_steps
+                / self.warmup_steps
             )
         # 2) if epoch > lr_decay_iters, return learning_rate_minimum
         if self.global_progress.epoch > self.maximum_steps:
             return learning_rate_minimum
         # 3) if in between, use cosine decay down to min learning rate
-        decay_ratio = (self.global_progress.epoch - self.config.neuron.warmup_steps) / (
-            self.maximum_steps - self.config.neuron.warmup_steps
+        decay_ratio = (self.global_progress.epoch - self.warmup_steps) / (
+            self.maximum_steps - self.warmup_steps
         )
         assert 0 <= decay_ratio <= 1
         # coeff starts at 1 and goes to 0
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return (learning_rate_minimum + coeff) * (
-            self.config.neuron.learning_rate - learning_rate_minimum
+            self.learning_rate_maximum - learning_rate_minimum
         )
 
     def get_validator_info(self):

@@ -208,7 +208,8 @@ class Miner(BaseMinerNeuron):
                     [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
                 bt.logging.info(current_model_weights_sample)
-                bt.logging.info("Model Gradients Before Optimizer Step")
+
+                bt.logging.info("Model Gradients Before Clipping")
                 # Copy gradients
                 gradients = tuple(
                     (
@@ -218,18 +219,35 @@ class Miner(BaseMinerNeuron):
                     )
                     for param in self.model.parameters()
                 )
-                bt.logging.info(gradients[-1][-10:])
+                bt.logging.info(gradients[-1][-10:].tolist())
+
+                bt.logging.info("Clipping Grads")
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                bt.logging.info("Model Gradients After Clipping Before Optimizer Step")
+                # Copy gradients
+                gradients = tuple(
+                    (
+                        param.grad.detach().cpu().clone()
+                        if param.grad is not None
+                        else torch.zeros_like(param)
+                    )
+                    for param in self.model.parameters()
+                )
+                bt.logging.info(gradients[-1][-10:].tolist())
+
                 if synapse.learning_rate is not None:
                     bt.logging.info(
                         f"Updating Optimizer Learning Rate To: {synapse.learning_rate}"
                     )
                     for param_group in self.opt.param_groups:
                         param_group["lr"] = synapse.learning_rate
+
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
+
+                # Reset gradient buffers
+                self.grad_averager.reset_accumulated_grads_()
 
             bt.logging.info("Model Weights After Optimizer Step")
             new_model_weights_sample = copy.copy(
@@ -258,6 +276,9 @@ class Miner(BaseMinerNeuron):
                     )
 
             else:
+                # Update local progress
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
                 synapse.completion = "True"
 
         except Exception as e:
