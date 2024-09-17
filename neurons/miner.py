@@ -227,6 +227,9 @@ class Miner(BaseMinerNeuron):
                         param_group["lr"] = synapse.learning_rate
                 bt.logging.info("Performing Optimizer Step")
                 self.opt.step()
+                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
 
             bt.logging.info("Model Weights After Optimizer Step")
             new_model_weights_sample = copy.copy(
@@ -255,9 +258,6 @@ class Miner(BaseMinerNeuron):
                     )
 
             else:
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
                 synapse.completion = "True"
 
         except Exception as e:
