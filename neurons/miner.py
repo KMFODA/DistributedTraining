@@ -136,7 +136,7 @@ class Miner(BaseMinerNeuron):
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
-            optim_groups,
+            self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
