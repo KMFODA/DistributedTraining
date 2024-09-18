@@ -131,7 +131,7 @@ class Miner(BaseMinerNeuron):
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
         self.opt = LAMB(
-            optim_groups, lr=self.learning_rate, betas=(0.9, 0.95), eps=1e-8
+            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
         )
 
         # Init Gradient Averager
