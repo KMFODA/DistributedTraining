@@ -261,7 +261,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             trust_remote_code=True,
         )
         self.model.to(self.device)
-        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.learning_rate_maximum)
         self.grad_averager.parameters = tuple(self.model.parameters())
         # Reset gradient buffers
         self.grad_averager.reset_accumulated_grads_()
