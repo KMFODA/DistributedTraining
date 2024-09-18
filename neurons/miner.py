@@ -117,8 +117,9 @@ class Miner(BaseMinerNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        # Set up a decentralized optimizer that will average with peers in background
-        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        # Init Optimizer
+        self.learning_rate_maximum = 6e-4
+        self.opt = LAMB(self.model.parameters(), lr=self.learning_rate_maximum)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(

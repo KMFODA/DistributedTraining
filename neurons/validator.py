@@ -154,8 +154,19 @@ class Validator(BaseValidatorNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
+        # Init All Reduce Variables
+        self.all_reduce_timeout = 300
+        self.step_scheduled = False
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+        self.maximum_steps = 19_073  # 10_000_000_000/(512*1024)
+        self.warmup_steps = 715  # 38_146 * 0.03
+        self.learning_rate_maximum = 6e-4
+        self.learning_rate = self.get_learning_rate()
+        self.average_loss = None
+
         # Init Optimizer
-        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        self.opt = LAMB(self.model.parameters(), lr=self.learning_rate)
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -191,17 +202,6 @@ class Validator(BaseValidatorNeuron):
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        # Init All Reduce Variables
-        self.all_reduce_timeout = 300
-        self.step_scheduled = False
-        self.model_upload_retry_limit = 3
-        self.model_upload_retry_delay = 10
-        self.maximum_steps = 19_073  # 10_000_000_000/(512*1024)
-        self.warmup_steps = 715  # 38_146 * 0.03
-        self.learning_rate_maximum = 6e-4
-        self.learning_rate = self.get_learning_rate()
-        self.average_loss = None
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
