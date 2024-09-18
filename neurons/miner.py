@@ -220,7 +220,7 @@ class Miner(BaseMinerNeuron):
             start_time = time.perf_counter()
 
             while (gradient_averaging_step.done() is False) and (
-                (time.perf_counter() - start_time) <= self.all_reduce_timeout
+                (time.perf_counter() - start_time) <= synapse.timeout
             ):
                 time.sleep(1)
 
