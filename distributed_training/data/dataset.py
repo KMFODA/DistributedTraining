@@ -90,8 +90,40 @@ class DataLoader(IterableDataset):
             batch = []
             label = []
             for _ in range(self.batch_size):
-                batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-                label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
+                if len(self.buffer[: self.sequence_length]) != self.sequence_length:
+                    batch.append(
+                        torch.tensor(
+                            self.buffer[: self.sequence_length]
+                            + (
+                                [self.tokenizer.eos_token_id]
+                                * (
+                                    self.sequence_length
+                                    - len(self.buffer[: self.sequence_length])
+                                )
+                            )
+                        )
+                    )
+                else:
+                    batch.append(torch.tensor(self.buffer[: self.sequence_length]))
+
+                if len(self.buffer[: self.sequence_length]) != self.sequence_length:
+                    label.append(
+                        torch.tensor(
+                            self.buffer[1 : self.sequence_length + 1]
+                            + (
+                                [self.tokenizer.eos_token_id]
+                                * (
+                                    self.sequence_length
+                                    - len(self.buffer[1 : self.sequence_length + 1])
+                                )
+                            )
+                        )
+                    )
+                else:
+                    label.append(
+                        torch.tensor(self.buffer[1 : self.sequence_length + 1])
+                    )
+
                 self.buffer = self.buffer[self.sequence_length :]
             yield torch.stack(batch), torch.stack(label)
 
@@ -99,7 +131,37 @@ class DataLoader(IterableDataset):
         batch = []
         label = []
         for _ in range(self.batch_size):
-            batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-            label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
+            if len(self.buffer[: self.sequence_length]) != self.sequence_length:
+                batch.append(
+                    torch.tensor(
+                        self.buffer[: self.sequence_length]
+                        + (
+                            [self.tokenizer.eos_token_id]
+                            * (
+                                self.sequence_length
+                                - len(self.buffer[: self.sequence_length])
+                            )
+                        )
+                    )
+                )
+            else:
+                batch.append(torch.tensor(self.buffer[: self.sequence_length]))
+
+            if len(self.buffer[: self.sequence_length]) != self.sequence_length:
+                label.append(
+                    torch.tensor(
+                        self.buffer[1 : self.sequence_length + 1]
+                        + (
+                            [self.tokenizer.eos_token_id]
+                            * (
+                                self.sequence_length
+                                - len(self.buffer[1 : self.sequence_length + 1])
+                            )
+                        )
+                    )
+                )
+            else:
+                label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
+
             self.buffer = self.buffer[self.sequence_length :]
         yield torch.stack(batch), torch.stack(label)

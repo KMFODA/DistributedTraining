@@ -154,8 +154,32 @@ class Validator(BaseValidatorNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
+        # Init All Reduce Variables
+        self.all_reduce_timeout = 300
+        self.step_scheduled = False
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+        self.maximum_steps = 19_073  # 10_000_000_000/(512*1024)
+        self.warmup_steps = 715  # 38_146 * 0.03
+        self.learning_rate_maximum = 6e-4
+        self.learning_rate = self.get_learning_rate()
+        self.average_loss = None
+        self.weight_decay = 0.1
+
         # Init Optimizer
-        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": self.weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        self.opt = LAMB(
+            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
+        )
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
@@ -191,16 +215,6 @@ class Validator(BaseValidatorNeuron):
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        # Init All Reduce Variables
-        self.all_reduce_timeout = 300
-        self.step_scheduled = False
-        self.model_upload_retry_limit = 3
-        self.model_upload_retry_delay = 10
-        self.maximum_steps = 38_146  # 10_000_000_000/(256*1024)
-        self.warmup_steps = self.maximum_steps / 640
-        self.learning_rate = self.get_learning_rate()
-        self.average_loss = None
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -276,26 +290,26 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Exiting update models loop.")
 
     def get_learning_rate(self):
-        learning_rate_minimum = self.config.neuron.learning_rate * 0.1
+        learning_rate_minimum = self.learning_rate_maximum * 0.1
         # 1) linear warmup for warmup_steps
-        if self.global_progress.epoch < self.config.neuron.warmup_steps:
+        if self.global_progress.epoch < self.warmup_steps:
             return (
-                self.config.neuron.learning_rate
+                self.learning_rate_maximum
                 * (self.global_progress.epoch + 1)
-                / self.config.neuron.warmup_steps
+                / self.warmup_steps
             )
         # 2) if epoch > lr_decay_iters, return learning_rate_minimum
         if self.global_progress.epoch > self.maximum_steps:
             return learning_rate_minimum
         # 3) if in between, use cosine decay down to min learning rate
-        decay_ratio = (self.global_progress.epoch - self.config.neuron.warmup_steps) / (
-            self.maximum_steps - self.config.neuron.warmup_steps
+        decay_ratio = (self.global_progress.epoch - self.warmup_steps) / (
+            self.maximum_steps - self.warmup_steps
         )
         assert 0 <= decay_ratio <= 1
         # coeff starts at 1 and goes to 0
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return (learning_rate_minimum + coeff) * (
-            self.config.neuron.learning_rate - learning_rate_minimum
+            self.learning_rate_maximum - learning_rate_minimum
         )
 
     def get_validator_info(self):

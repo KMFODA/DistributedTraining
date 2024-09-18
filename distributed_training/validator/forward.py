@@ -147,7 +147,8 @@ async def forward(self):
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
                     )
                     bt.logging.info(current_model_weights_sample)
-                    bt.logging.info("Model Gradients Before Optimizer Step")
+
+                    bt.logging.info("Model Gradients Before Clipping")
                     # Copy gradients
                     gradients = tuple(
                         (
@@ -158,9 +159,36 @@ async def forward(self):
                         for param in self.model.parameters()
                     )
                     bt.logging.info(gradients[-1][-10:].tolist())
-                    bt.logging.info("Performing Optimizer Step")
+
+                    bt.logging.info("Clipping Grads")
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                    bt.logging.info(
+                        "Model Gradients After Clipping Before Optimizer Step"
+                    )
+                    # Copy gradients
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:].tolist())
+
+                    bt.logging.info(
+                        f"Updating Optimizer Learning Rate To: {self.learning_rate}"
+                    )
+                    for param_group in self.opt.param_groups:
+                        param_group["lr"] = self.learning_rate
+
                     # Update model parameters using averaged gradients
+                    bt.logging.info("Performing Optimizer Step")
                     self.opt.step()
+
+                    # Reset gradient buffers
+                    self.grad_averager.reset_accumulated_grads_()
 
                 # Log Model Weight After Optimizer Step
                 bt.logging.info("Model Weights After Optimizer Step")
@@ -190,8 +218,7 @@ async def forward(self):
                         )
 
                 else:
-                    # Reset gradients and update local progress
-                    self.grad_averager.reset_accumulated_grads_()
+                    # Update local progress
                     self.local_progress.epoch += 1
                     self.local_progress.samples_accumulated = 0
 
@@ -208,12 +235,15 @@ async def forward(self):
                         while attempt < self.model_upload_retry_limit:
                             try:
                                 bt.logging.info("Pushing New Model Weights To HF Hub.")
-                                self.model.push_to_hub(self.config.neuron.model_name)
+                                self.model.push_to_hub(
+                                    self.config.neuron.model_name,
+                                    commit_message=f"Epoch {self.local_progress.epoch}",
+                                )
                                 create_tag(
                                     self.config.neuron.model_name,
                                     repo_type="model",
                                     tag=str(self.local_progress.epoch),
-                                    tag_message=f"Epcoh {self.local_progress.epoch}",
+                                    tag_message=f"Epoch {self.local_progress.epoch}",
                                 )
                                 refs = list_repo_refs(
                                     self.config.neuron.model_name, repo_type="model"
