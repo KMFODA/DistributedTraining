@@ -208,10 +208,10 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
 
-        # Update mapping of uids to peerids
-        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        # # Update mapping of uids to peerids
+        # self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
+        # self.uids_to_peerids[self.uid] = self.dht.peer_id
+        # bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         try:
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
