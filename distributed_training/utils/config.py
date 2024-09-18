@@ -127,20 +127,6 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
-        "--neuron.learning_rate",
-        type=float,
-        help="The maximum learning rate",
-        default=5e-3,
-    )
-
-    parser.add_argument(
-        "--neuron.warmup_steps",
-        type=float,
-        help="The number of warmup steps",
-        default=12,
-    )
-
-    parser.add_argument(
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",
@@ -228,7 +214,7 @@ def add_args(cls, parser):
             "--neuron.training_examples_per_miner",
             type=int,
             help="The number of rows to train on per miner",
-            default=25,
+            default=500,
         )
 
         parser.add_argument(
