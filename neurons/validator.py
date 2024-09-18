@@ -164,9 +164,22 @@ class Validator(BaseValidatorNeuron):
         self.learning_rate_maximum = 6e-4
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
+        self.weight_decay = 0.1
 
         # Init Optimizer
-        self.opt = LAMB(self.model.parameters(), lr=self.learning_rate)
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": self.weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        self.opt = LAMB(
+            optim_groups, lr=self.learning_rate, betas=(0.9, 0.95), eps=1e-8
+        )
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
