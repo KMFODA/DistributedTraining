@@ -114,26 +114,24 @@ async def get_random_uids(
 
 
 async def map_uid_to_peerid(self, uids):
+    # Get all peers connected to our DHT, their ips and their ports
+    peer_list_dht = await self._p2p.list_peers()
+    peer_list_dht_addrs = [
+        str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
+    ]
+    peer_list_dht_ports = [str(peer.addrs[0]).split("/")[-1] for peer in peer_list_dht]
+
+    # Get only peers connected to the current run id
+    prefix = self.grad_averager.matchmaking_kwargs["prefix"]
+    metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
+        {},
+        None,
+    )
+
     uids_to_peerids = {}
     for uid in uids:
         miner_ip = self.metagraph.axons[uid].ip
         miner_port = self.metagraph.axons[uid].port
-
-        # Get all peers connected to our DHT, their ips and their ports
-        peer_list_dht = await self._p2p.list_peers()
-        peer_list_dht_addrs = [
-            str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
-        ]
-        peer_list_dht_ports = [
-            str(peer.addrs[0]).split("/")[-1] for peer in peer_list_dht
-        ]
-
-        # Get only peers connected to the current run id
-        prefix = self.grad_averager.matchmaking_kwargs["prefix"]
-        metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
-            {},
-            None,
-        )
 
         if metadata is None:
             # return None
