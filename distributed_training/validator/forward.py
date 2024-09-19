@@ -121,7 +121,9 @@ async def forward(self):
         # Query the network
         query_tasks.append(
             self.dendrite_pool.async_forward(
-                self.miner_uids, queries, timeout=self.all_reduce_timeout
+                self.miner_uids,
+                queries,
+                timeout=self.all_reduce_timeout if all_reduce else self.train_timeout,
             )
         )
         bt.logging.info("Query Sent Out")

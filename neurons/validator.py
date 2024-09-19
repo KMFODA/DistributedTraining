@@ -155,7 +155,8 @@ class Validator(BaseValidatorNeuron):
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
         # Init All Reduce Variables
-        self.all_reduce_timeout = 300
+        self.train_timeout = 100
+        self.all_reduce_timeout = 120
         self.step_scheduled = False
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
