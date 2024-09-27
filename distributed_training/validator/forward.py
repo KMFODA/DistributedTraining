@@ -59,7 +59,6 @@ async def forward(self):
             )
             <= 25
         )
-        and (not self.step_scheduled)
         and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # If running an AllReduce synapse, call as many miners as possible
@@ -300,7 +299,66 @@ async def forward(self):
                         self.opt.zero_grad()
                     bt.logging.info("Optimizer Gradients Zeroed")
 
-                self.step_scheduled = False
+                # if failed_gradient_all_reduce: 
+                #     all_reduce = False
+                #     self.event.update({"synapse_type": "train"})
+
+                #     # Get a random layer to check gradients against
+                #     gradient_test_index = random.choice(self.test_layer_indices)
+                #     queries = [
+                #         distributed_training.protocol.Train(
+                #             model_name=self.model.name_or_path,
+                #             gradient_test_index=gradient_test_index,
+                #         )
+                #         for _ in self.miner_uids
+                #     ]
+                    
+                #     query_tasks = []
+                #     # Query the network
+                #     query_tasks.append(
+                #         self.dendrite_pool.async_forward(
+                #             self.miner_uids,
+                #             queries,
+                #             timeout=self.all_reduce_timeout
+                #             if all_reduce
+                #             else self.train_timeout,
+                #         )
+                #     )
+                #     bt.logging.info("Query Sent Out")
+                #     start_time = time.perf_counter()
+                #     responses = await asyncio.gather(*query_tasks)
+                #     bt.logging.info("Query Responses Received")
+
+                #     bt.logging.info(
+                #         "Received Responses: "
+                #         + str(
+                #             [
+                #                 {
+                #                     "Loss": response.loss,
+                #                     "Dataset Indices": (
+                #                         min(response.dataset_indices),
+                #                         max(response.dataset_indices),
+                #                     ),
+                #                     "IP": self.metagraph.axons[uid].ip,
+                #                     "Port": self.metagraph.axons[uid].port,
+                #                     "Hotkey": self.metagraph.axons[uid].hotkey,
+                #                 }
+                #                 for response, uid in zip(responses[0], self.miner_uids)
+                #                 if response.dendrite.status_code == 200
+                #                 and (response.dataset_indices is not None)
+                #             ]
+                #         )
+                #     )
+                #     self.average_loss = np.array(
+                #         [
+                #             response.loss
+                #             for response, uid in zip(responses[0], self.miner_uids)
+                #             if response.dendrite.status_code == 200
+                #             and (response.dataset_indices is not None)
+                #         ]
+                #     ).mean()
+                #     bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
+
             # Process the Train query responses
             else:
                 bt.logging.info(
