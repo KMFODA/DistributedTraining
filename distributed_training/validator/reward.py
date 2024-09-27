@@ -156,7 +156,7 @@ async def get_rewards(
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
     # Score a non-empty AllReduce response
-    if all_reduce and (responses != [[]]):
+    if all_reduce and ((responses != [[]]) or (self.uid != self.master_uid)):
         # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
         # the scoring burden across all validators
         self.miner_uids = await get_random_uids(

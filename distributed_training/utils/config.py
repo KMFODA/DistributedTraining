@@ -130,21 +130,14 @@ def add_args(cls, parser):
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",
-        default=1,
+        default=8,
     )
 
     parser.add_argument(
         "--neuron.global_batch_size_train",
         type=int,
         help="The hivemind global target_batch_size",
-        default=32000,
-    )
-
-    parser.add_argument(
-        "--neuron.local_gradient_accumilation_steps_train",
-        type=int,
-        help="The default batch size",
-        default=4,
+        default=70400,
     )
 
     parser.add_argument(
@@ -186,14 +179,7 @@ def add_args(cls, parser):
             "--neuron.local_batch_size_test",
             type=int,
             help="The default batch size",
-            default=1,
-        )
-
-        parser.add_argument(
-            "--neuron.local_gradient_accumilation_steps_test",
-            type=int,
-            help="The default batch size",
-            default=4,
+            default=8,
         )
 
         parser.add_argument(
@@ -214,7 +200,7 @@ def add_args(cls, parser):
             "--neuron.training_examples_per_miner",
             type=int,
             help="The number of rows to train on per miner",
-            default=500,
+            default=565,
         )
 
         parser.add_argument(
