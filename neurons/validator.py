@@ -162,9 +162,9 @@ class Validator(BaseValidatorNeuron):
         self.all_reduce_timeout = 300
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
-        self.maximum_steps = 19_073  # 10_000_000_000/(512*1024)
-        self.warmup_steps = 715  # 38_146 * 0.03
-        self.learning_rate_maximum = 6e-4
+        self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
+        self.warmup_steps = 62  # 306 / 5
+        self.learning_rate_maximum = 0.0025
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
         self.weight_decay = 0.1
@@ -192,7 +192,13 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            next_chunk_timeout=30.0,
+            min_group_size=10,
+            min_matchmaking_time=30.0,
+            request_timeout=15.0,
+            allreduce_timeout=None,
+            next_chunk_timeout=None,
+            sender_timeout=None,
+            reducer_timeout=None,
         )
 
         self.loop = asyncio.new_event_loop()

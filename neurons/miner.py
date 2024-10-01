@@ -142,7 +142,13 @@ class Miner(BaseMinerNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
-            next_chunk_timeout=30.0,
+            min_group_size=10,
+            min_matchmaking_time=30.0,
+            request_timeout=15.0,
+            allreduce_timeout=None,
+            next_chunk_timeout=None,
+            sender_timeout=None,
+            reducer_timeout=None,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -323,9 +329,6 @@ class Miner(BaseMinerNeuron):
         if failed_gradient_all_reduce:
             gradient_averaging_step.cancel()
             bt.logging.info("Gradient Step Cancelled")
-            with self.grad_averager.use_averaged_gradients():
-                self.opt.zero_grad()
-            bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
 
