@@ -77,13 +77,25 @@ async def forward(self):
         self.event.update({"synapse_type": "train"})
 
     if (self.uid == self.master_uid) or (all_reduce == False):
-        # Get active miners
-        self.miner_uids = await get_random_uids(
-            self,
-            dendrite=self.dendrite,
-            k=sample_size,
-            epoch=self.local_progress.epoch if all_reduce else None,
-        )
+        if all_reduce:
+            # Get active miners
+            while len(self.miner_uids) < 2:
+                bt.logging.info(
+                    f"Only {len(self.miner_uids)} uids found. Attempting to find {4-len(self.miner_uids)} more uids"
+                )
+                self.miner_uids = await get_random_uids(
+                    self,
+                    dendrite=self.dendrite,
+                    k=sample_size,
+                    epoch=self.local_progress.epoch if all_reduce else None,
+                )
+        else:
+            self.miner_uids = await get_random_uids(
+                self,
+                dendrite=self.dendrite,
+                k=sample_size,
+                epoch=self.local_progress.epoch if all_reduce else None,
+            )
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -333,8 +345,12 @@ async def forward(self):
                 bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
 
     else:
+        bt.logging.info(
+            f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
+        )
         time.sleep(self.all_reduce_timeout + 30)
         self.miner_uids = []
+        responses = [[]]
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
