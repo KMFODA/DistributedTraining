@@ -81,7 +81,7 @@ async def forward(self):
             # Get active miners
             while len(self.miner_uids) < 2:
                 bt.logging.info(
-                    f"Only {len(self.miner_uids)} uids found. Attempting to find {4-len(self.miner_uids)} more uids"
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
