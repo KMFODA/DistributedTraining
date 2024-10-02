@@ -154,7 +154,7 @@ async def forward(self):
                 failed_gradient_all_reduce = False
                 # Wait for gradient averaging to finish
                 while (gradient_averaging_step.done() is False) and (
-                    (time.perf_counter() - start_time) <= self.all_reduce_timeout
+                    (time.perf_counter() - start_time) <= (self.all_reduce_timeout)
                 ):
                     time.sleep(1)
 
