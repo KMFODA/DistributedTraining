@@ -151,27 +151,28 @@ async def map_uid_to_peerid(self, uids):
             uids_to_peerids[uid] = None
             continue
         else:
-            if peer_list_dht_addrs.count(miner_ip) > 1:
-                indices = [
-                    i
-                    for i in range(len(peer_list_dht_addrs))
-                    if peer_list_dht_addrs[i] == miner_ip
-                ]
-                peer_id = None
-                for index in indices:
-                    if abs(miner_port - int(peer_list_dht_ports[index])) < 10:
-                        peer_id = peer_list_dht[index].peer_id
-                        break
-                    elif index == indices[-1]:
-                        break
-                    else:
-                        continue
+            # if peer_list_dht_addrs.count(miner_ip) > 1:
+            #     indices = [
+            #         i
+            #         for i in range(len(peer_list_dht_addrs))
+            #         if peer_list_dht_addrs[i] == miner_ip
+            #     ]
+            #     peer_id = None
+            #     for index in indices:
+            #         if abs(miner_port - int(peer_list_dht_ports[index])) < 10:
+            #             peer_id = peer_list_dht[index].peer_id
+            #             break
+            #         elif index == indices[-1]:
+            #             break
+            #         else:
+            #             continue
 
-                if peer_id is None:
-                    uids_to_peerids[uid] = None
-                    continue
-            else:
-                peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
+            #     if peer_id is None:
+            #         uids_to_peerids[uid] = None
+            #         continue
+            # else:
+            #     peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
+            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
 
         # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
         if str(peer_id) not in run_peer_id_list:
