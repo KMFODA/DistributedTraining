@@ -255,12 +255,19 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
         bt.logging.info(
             f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
         )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name,
-            revision=str(self.global_progress.epoch),
-            trust_remote_code=True,
-        )
-        self.model.to(self.device)
+        attempt = 0
+        while True:
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.config.neuron.model_name,
+                    revision=str(self.global_progress.epoch),
+                    trust_remote_code=True,
+                )
+                self.model.to(self.device)
+                break
+            except:
+                attempt += 1
+                bt.logging.warning(f"Failed to fetch data, retrying. Attempt {attempt}")
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
         # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
@@ -277,6 +284,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
         self.grad_averager.parameters = tuple(self.model.parameters())
         # Reset gradient buffers
         self.grad_averager.reset_accumulated_grads_()
+        self.grad_averager.notify_used_averaged_gradients()
         state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
