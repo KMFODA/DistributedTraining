@@ -144,7 +144,8 @@ class Miner(BaseMinerNeuron):
             start=True,
             min_group_size=5,
             min_matchmaking_time=30.0,
-            request_timeout=15.0,
+            request_timeout=10.0,
+            next_chunk_timeout=30.0,
             # allreduce_timeout=None,
             # next_chunk_timeout=None,
             # sender_timeout=None,
@@ -329,6 +330,9 @@ class Miner(BaseMinerNeuron):
         if failed_gradient_all_reduce:
             gradient_averaging_step.cancel()
             bt.logging.info("Gradient Step Cancelled")
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
+            bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
 

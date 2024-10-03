@@ -194,7 +194,7 @@ class Validator(BaseValidatorNeuron):
             start=True,
             min_group_size=5,
             min_matchmaking_time=30.0,
-            request_timeout=15.0,
+            request_timeout=10.0,
             next_chunk_timeout=30.0,
             # allreduce_timeout=None,
             # sender_timeout=None,

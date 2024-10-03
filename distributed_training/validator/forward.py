@@ -79,9 +79,9 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 10:
+            while len(self.miner_uids) < 9:
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {9-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -311,6 +311,9 @@ async def forward(self):
                 if failed_gradient_all_reduce:
                     gradient_averaging_step.cancel()
                     bt.logging.info("Gradient Step Cancelled")
+                    # with self.grad_averager.use_averaged_gradients():
+                    #     self.opt.zero_grad()
+                    bt.logging.info("Optimizer Gradients Zeroed")
 
             # Process the Train query responses
             else:
