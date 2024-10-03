@@ -284,7 +284,6 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
         self.grad_averager.parameters = tuple(self.model.parameters())
         # Reset gradient buffers
         self.grad_averager.reset_accumulated_grads_()
-        self.grad_averager.notify_used_averaged_gradients()
         state_loaded = True
 
         bt.logging.info("Model Weights After Loading State")
