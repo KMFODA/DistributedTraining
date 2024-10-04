@@ -40,7 +40,6 @@ from bitarray import bitarray
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
-from logtail import LogtailHandler
 from loguru import logger as bt_logger
 
 import bittensor as bt
@@ -482,7 +481,7 @@ def init_dht(self):
         for attempt in range(0, buffer):
             for initial_peer in initial_peers_list:
                 try:
-                    # Init DHT
+                   # Init DHT
                     self.dht = hivemind.DHT(
                         host_maddrs=[
                             f"/ip4/0.0.0.0/tcp/{self.config.dht.port}",
@@ -493,9 +492,10 @@ def init_dht(self):
                         start=True,
                     )
                     bt.logging.info(
-                        f"Successfully initialised dht using initial_peer as {initial_peer}"
+                        f"Successfully initialised dht using" #initial_peer#as {initial_peer}"
                     )
                     successful_connection = True
+
                     utils.log_visible_maddrs(
                         self.dht.get_visible_maddrs(), only_p2p=True
                     )
