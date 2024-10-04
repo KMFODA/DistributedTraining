@@ -19,6 +19,7 @@
 import _thread
 import asyncio
 import copy
+import os
 import threading
 from traceback import print_exception
 from typing import List
@@ -335,10 +336,12 @@ class BaseValidatorNeuron(BaseNeuron):
 
     def load_state(self):
         """Loads the state of the validator from a file."""
-        bt.logging.info("Loading validator state.")
-
-        # Load the state of the validator from file.
-        state = torch.load(self.config.neuron.full_path + "/state.pt")
-        self.step = state["step"]
-        self.scores = state["scores"]
-        self.hotkeys = state["hotkeys"]
+        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+            bt.logging.info("Pre-Save validator state found. Loading validator state.")
+            # Load the state of the validator from file.
+            state = torch.load(self.config.neuron.full_path + "/state.pt")
+            self.step = state["step"]
+            self.scores = state["scores"]
+            self.hotkeys = state["hotkeys"]
+        else:
+            bt.logging.info("Pre-Save validator state not found.")

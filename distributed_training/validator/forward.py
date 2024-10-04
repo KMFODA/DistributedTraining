@@ -52,12 +52,10 @@ async def forward(self):
     update_global_tracker_state(self)
     if self.global_progress.epoch is not None:
         if self.local_progress.epoch < self.global_progress.epoch:
-            bt.logging.info(
-                "Local Epoch Behind Global Epoch. Loading Latest Model State."
-            )
+            bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
             load_state_from_peer(self)
 
-    # Evaluate wether to run an AllReduce or a Train synapse based on the global samples accumulated
+    # Evaluate whether to run an AllReduce or a Train synapse based on the global samples accumulated
     if (
         (
             (
@@ -70,10 +68,9 @@ async def forward(self):
         and (self.global_progress.epoch == self.local_progress.epoch)
     ):
         # If running an AllReduce synapse, call as many miners as possible
-        sample_size = int(self.metagraph.n)
+        sample_size = int(self.metagraph.n) # TODO Set allreduce group size
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
-
     else:
         # If running a Train synapse call, only call the sample_size
         sample_size = self.config.neuron.sample_size
@@ -108,7 +105,6 @@ async def forward(self):
             while (
                 (group_peerids is None)
                 or (blacklist_scores is None)
-                # or (blacklist_scores.sum().item() == 0) #TODO
                 or any(
                     scores_ids_tuple[1] is None
                     for index, scores_ids_tuple in enumerate(
@@ -168,10 +164,7 @@ async def forward(self):
             queries = [
                 distributed_training.protocol.AllReduce(
                     group=group,
-                    timeout=self.all_reduce_timeout
-                    - (
-                        time.perf_counter() - start_time
-                    ),  # Subtracting this step from the timeout
+                    timeout=self.all_reduce_timeout - (time.perf_counter() - start_time),
                     learning_rate=learning_rate,
                 )
                 for _ in self.miner_uids
@@ -209,13 +202,12 @@ async def forward(self):
                 await asyncio.sleep(1)
 
             if gradient_averaging_step.done():
-                
                 # Check if there are failed senders
                 averaging_result = gradient_averaging_step.result()
                 if averaging_result is not True:
                     failed_senders = averaging_result
                     bt.logging.info(f"Failed senders detected: {failed_senders}")
-                    
+                
                 # Optimizer Step
                 with self.grad_averager.use_averaged_gradients():
                     # Log Model Weight Before Optimizer Step
@@ -224,6 +216,7 @@ async def forward(self):
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
                     )
                     bt.logging.info(current_model_weights_sample)
+
                     bt.logging.info("Model Gradients Before Optimizer Step")
                     # Copy gradients
                     gradients = tuple(
@@ -235,6 +228,7 @@ async def forward(self):
                         for param in self.model.parameters()
                     )
                     bt.logging.info(gradients[-1][-10:].tolist())
+
                     bt.logging.info("Performing Optimizer Step")
                     # Update model parameters using averaged gradients
                     self.opt.step()
@@ -290,7 +284,7 @@ async def forward(self):
                                     self.config.neuron.model_name,
                                     repo_type="model",
                                     tag=str(self.local_progress.epoch),
-                                    tag_message=f"Epcoh {self.local_progress.epoch}",
+                                    tag_message=f"Epoch {self.local_progress.epoch}",
                                 )
                                 refs = list_repo_refs(
                                     self.config.neuron.model_name, repo_type="model"
@@ -335,6 +329,7 @@ async def forward(self):
                 bt.logging.info("Optimizer Gradients Zeroed")
 
             self.step_scheduled = False
+
         # Process the Train query responses
         else:
             bt.logging.info(

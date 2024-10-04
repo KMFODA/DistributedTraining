@@ -106,18 +106,35 @@ class Miner(BaseMinerNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        # Set up a decentralized optimizer that will average with peers in background
-        self.opt = LAMB(self.model.parameters(), lr=self.config.neuron.learning_rate)
+        # Init Optimizer
+        self.learning_rate_maximum = 6e-4
+        self.weight_decay = 0.1
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": self.weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        self.opt = LAMB(
+            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
+        )
 
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
-            self.model.parameters(),  # TODO Set to optim_groups too?
+            self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            next_chunk_timeout=30.0,
-            barrier_timeout=40.0,
+            accumulate_grads_on=torch.device(self.device),
             start=True,
+            min_group_size=5,
+            min_matchmaking_time=30.0,
+            request_timeout=10.0,
+            next_chunk_timeout=30.0,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -181,86 +198,123 @@ class Miner(BaseMinerNeuron):
         self, synapse: distributed_training.protocol.AllReduce
     ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+        failed_gradient_all_reduce = False
 
         custom_group = GroupInfo(
             base64.b64decode(synapse.group.group_id),
             tuple([PeerID.from_base58(i) for i in synapse.group.peer_ids]),
             gathered=None,
         )
-        failed_gradient_all_reduce = False
 
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+
         # Map uids to peerids
         self.peerids_to_uids = {
             str(value): key for key, value in self.uids_to_peerids.items()
         }
+
         try:
             bt.logging.info("Performing Gradient Averaging")
-            self.grad_averager.step(
+            gradient_averaging_step = self.grad_averager.step(
                 custom_group_info=custom_group,
-                timeout=(synapse.timeout),
+                timeout=(synapse.timeout - 20),
+                wait=False,
                 peerids_to_uids=self.peerids_to_uids,
             )
-            with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
-                bt.logging.info("Model Weights Before Optimizer Step")
-                current_model_weights_sample = copy.copy(
+            start_time = time.perf_counter()
+
+            while (gradient_averaging_step.done() is False) and (
+                (time.perf_counter() - start_time) <= synapse.timeout
+            ):
+                await asyncio.sleep(1)
+
+            if gradient_averaging_step.done():
+                with self.grad_averager.use_averaged_gradients():
+                    bt.logging.info("Model Weights Before Optimizer Step")
+                    current_model_weights_sample = copy.copy(
+                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
+                    )
+                    bt.logging.info(current_model_weights_sample)
+
+                    bt.logging.info("Model Gradients Before Clipping")
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:].tolist())
+
+                    bt.logging.info("Clipping Grads")
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                    bt.logging.info(
+                        "Model Gradients After Clipping Before Optimizer Step"
+                    )
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:].tolist())
+
+                    if synapse.learning_rate is not None:
+                        bt.logging.info(
+                            f"Updating Optimizer Learning Rate To: {synapse.learning_rate}"
+                        )
+                        for param_group in self.opt.param_groups:
+                            param_group["lr"] = synapse.learning_rate
+
+                    bt.logging.info("Performing Optimizer Step")
+                    self.opt.step()
+
+                    # Reset gradient buffers
+                    self.grad_averager.reset_accumulated_grads_()
+
+                bt.logging.info("Model Weights After Optimizer Step")
+                new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-2][-10:].tolist()
                 )
-                bt.logging.info(current_model_weights_sample)
-                bt.logging.info("Model Gradients Before Optimizer Step")
-                # Copy gradients
-                gradients = tuple(
-                    (
-                        param.grad.detach().cpu().clone()
-                        if param.grad is not None
-                        else torch.zeros_like(param)
-                    )
-                    for param in self.model.parameters()
-                )
-                bt.logging.info(gradients[-1][-10:])
-                if synapse.learning_rate is not None:
+                bt.logging.info(new_model_weights_sample)
+
+                if new_model_weights_sample == current_model_weights_sample:
                     bt.logging.info(
-                        f"Updating Optimizer Learning Rate To: {synapse.learning_rate}"
+                        "Averaging Failed. Model Weights Haven't Changed. Loading Latest Model State."
                     )
-                    for param_group in self.opt.param_groups:
-                        param_group["lr"] = synapse.learning_rate
-                bt.logging.info("Performing Optimizer Step")
-                self.opt.step()
+                    failed_gradient_all_reduce = True
+                    load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
 
-            bt.logging.info("Model Weights After Optimizer Step")
-            new_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-2][-10:].tolist()
-            )
-            bt.logging.info(new_model_weights_sample)
-
-            if new_model_weights_sample == current_model_weights_sample:
-                bt.logging.info(
-                    "Averaging Failed. Model Weights Haven't Changed. Loading Latest Model State."
-                )
-                failed_gradient_all_reduce = True
-                load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
-
-            elif sum(np.isnan(new_model_weights_sample)) > 1:
-                bt.logging.info(
-                    "Averaging Failed. Model Weights Corrupted With NaNs After Running The Optimizer Step. Loading Latest Model State."
-                )
-                failed_gradient_all_reduce = True
-                state_loaded = load_state_from_peer(
-                    self, epoch=self.local_progress.epoch + 1
-                )
-                if not state_loaded:
+                elif sum(np.isnan(new_model_weights_sample)) > 1:
+                    bt.logging.info(
+                        "Averaging Failed. Model Weights Corrupted With NaNs After Running The Optimizer Step. Loading Latest Model State."
+                    )
+                    failed_gradient_all_reduce = True
                     state_loaded = load_state_from_peer(
-                        self, epoch=self.local_progress.epoch
+                        self, epoch=self.local_progress.epoch + 1
                     )
+                    if not state_loaded:
+                        state_loaded = load_state_from_peer(
+                            self, epoch=self.local_progress.epoch
+                        )
+
+                else:
+                    # Update local progress
+                    self.local_progress.epoch += 1
+                    self.local_progress.samples_accumulated = 0
+                    synapse.completion = "True"
 
             else:
-                self.grad_averager.reset_accumulated_grads_()  # prepare for next step
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
-                synapse.completion = "True"
+                bt.logging.info("Averaging Failed. Loading Latest Model State.")
+                failed_gradient_all_reduce = True
+                load_state_from_peer(self)
 
         except Exception as e:
             bt.logging.info(
@@ -268,12 +322,14 @@ class Miner(BaseMinerNeuron):
             )
             failed_gradient_all_reduce = True
             update_global_tracker_state(self)
-            load_state_from_peer(self, epoch=self.local_progress.epoch + 1)
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
 
         if failed_gradient_all_reduce:
-            # with self.grad_averager.use_averaged_gradients():
-            self.opt.zero_grad(set_to_none=True)
+            gradient_averaging_step.cancel()
+            bt.logging.info("Gradient Step Cancelled")
+            with self.grad_averager.use_averaged_gradients():
+                self.opt.zero_grad()
             bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
@@ -331,7 +387,6 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         index = 0
-
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
             # Extract inputs and labels
@@ -369,6 +424,7 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
+
         # Copy gradients
         gradients = tuple(
             (

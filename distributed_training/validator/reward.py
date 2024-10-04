@@ -179,14 +179,9 @@ async def get_rewards(
     """
     # Score a non-empty AllReduce response
     if all_reduce and (responses != [[]]):
-        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
-        # the scoring burden across all validators
-        self.miner_uids = await get_random_uids(
-            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-        )
-
+        
         # Set up the scores tensor
-        scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
+        scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
 
         # Update mapping of uids to peerids
         self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
@@ -194,7 +189,7 @@ async def get_rewards(
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+        blacklist_scores = await score_blacklist(self, uids.tolist())
 
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
@@ -206,7 +201,7 @@ async def get_rewards(
         scores *= blacklist_scores
 
         # Score miners bandwidth
-        bandwidth_scores = await score_bandwidth(self, self.miner_uids.tolist())
+        bandwidth_scores = await score_bandwidth(self, uids.tolist())
         bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
         self.event.update(
             {
@@ -217,7 +212,7 @@ async def get_rewards(
         scores *= bandwidth_scores
         
         # Apply penalty to failed senders if any
-        failed_sender_scores = score_failed_senders(self, self.miner_uids.tolist(), failed_senders)
+        failed_sender_scores = score_failed_senders(self, uids.tolist(), failed_senders)
         bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
         self.event.update(
             {
@@ -263,7 +258,7 @@ async def get_rewards(
             bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+            blacklist_scores = await score_blacklist(self, uids.tolist())
 
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
