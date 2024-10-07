@@ -123,14 +123,14 @@ def add_args(cls, parser):
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
-        default="distributed/optimized-gpt2-250m",
+        default="distributed/optimized-gpt2-500m",
     )
 
     parser.add_argument(
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",
-        default=4,
+        default=6,
     )
 
     parser.add_argument(
