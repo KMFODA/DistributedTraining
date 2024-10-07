@@ -160,8 +160,12 @@ async def forward(self):
 
                 if gradient_averaging_step.done():
                     
+                    gathered, failed_senders = gradient_averaging_step.result()
+                    
                     print("\n"*4)
-                    print(f"Gathered {gradient_averaging_step.result()} gradients")
+                    print(f"Gathered {gathered} gradients")
+                    print("\n"*4)
+                    print(f"Failed allreduce: {failed_senders}")
                     print("\n"*4)
                     
                     # Optimizer Step
