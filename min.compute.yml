@@ -31,8 +31,8 @@ compute_spec:
       version: 20.04 
 
 network_spec:
-  bandwidth:  # GBPS. THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER.
-    min_download : 10
-    recommended_download: 10
-    min_upload: 10
-    recommended_upload: 10
+  bandwidth:  # Gbps. THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER.
+    min_download : 15
+    recommended_download: 20
+    min_upload: 15
+    recommended_upload: 20
