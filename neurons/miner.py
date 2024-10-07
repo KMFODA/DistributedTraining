@@ -131,10 +131,10 @@ class Miner(BaseMinerNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
-            min_group_size=5,
             min_matchmaking_time=30.0,
-            request_timeout=10.0,
+            request_timeout=15.0,
             next_chunk_timeout=30.0,
+            barrier_timeout=40.0,
         )
 
         self.loop = asyncio.new_event_loop()

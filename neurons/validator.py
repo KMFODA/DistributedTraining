@@ -174,7 +174,6 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=15.0,
             next_chunk_timeout=30.0,
