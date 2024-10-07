@@ -314,6 +314,9 @@ def add_loki_logger_handler(
     neuron_type,
 ):
     """Configure sending logs to loki server"""
+    
+    def loki_filter(record):
+        return record.levelno > logging.DEBUG
 
     # Use LokiQueueHandler to upload logs in background
     loki_handler = CustomLokiLoggingHandler(
@@ -327,6 +330,8 @@ def add_loki_logger_handler(
         version="1",
     )
 
+    loki_handler.addFilter(loki_filter)
+    
     # Send logs to loki as JSON
     loki_handler.setFormatter(
         JSONFormatter(
@@ -342,7 +347,6 @@ def add_loki_logger_handler(
             neuron_type,
         )
     )
-
     logger.addHandler(loki_handler)
 
 
@@ -365,19 +369,6 @@ def setup_logging(
 
     bt_logger_ = logging.getLogger("bittensor")
     bt_logger_.propagate = False
-    add_loki_logger_handler(
-        bt_logger_,
-        network,
-        netuid,
-        hotkey,
-        version,
-        spec_version,
-        run_id,
-        ip,
-        port,
-        uid,
-        neuron_type,
-    )
 
     use_hivemind_log_handler("nowhere")
 
