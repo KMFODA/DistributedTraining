@@ -111,7 +111,7 @@ async def forward(self):
                     str(value): key for key, value in self.uids_to_peerids.items()
                 }
                 gradient_averaging_step = self.grad_averager.step(
-                    wait=False,
+                    wait=False, gather=0,
                 )
                 # peerids_to_uids = self.peerids_to_uids)
                 self.learning_rate = self.get_learning_rate()
@@ -159,6 +159,11 @@ async def forward(self):
                     time.sleep(1)
 
                 if gradient_averaging_step.done():
+                    
+                    print("\n"*4)
+                    print(f"Gathered {gradient_averaging_step.result()} gradients")
+                    print("\n"*4)
+                    
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
                         # Log Model Weight Before Optimizer Step
