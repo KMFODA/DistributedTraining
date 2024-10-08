@@ -366,7 +366,7 @@ async def forward(self):
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
-        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce
+        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders
     )
 
     # Normalise Rewards
