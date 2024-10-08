@@ -57,6 +57,11 @@ from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
+# Add GPU optimizations
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -142,7 +147,7 @@ class Miner(BaseMinerNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
-            min_group_size=5,
+            # min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=30.0,
@@ -151,6 +156,8 @@ class Miner(BaseMinerNeuron):
             # sender_timeout=None,
             # reducer_timeout=None,
         )
+        
+        self.scaler = torch.cuda.amp.GradScaler()
 
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
@@ -277,7 +284,8 @@ class Miner(BaseMinerNeuron):
                             param_group["lr"] = synapse.learning_rate
 
                     bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()
+                    self.scaler.step(self.opt)
+                    self.scaler.update()
 
                     # Reset gradient buffers
                     self.grad_averager.reset_accumulated_grads_()
@@ -399,23 +407,21 @@ class Miner(BaseMinerNeuron):
             # Zero Gradients
             self.opt.zero_grad()
 
-            # Forward pass
-            outputs = self.model(input_ids=inputs, labels=labels)
-
-            # Normalize loss to account for batch accumulation
-            loss = outputs[1]
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
 
-            # Backward Pass
-            loss.backward()
+            # Backward Pass with gradient scaling
+            self.scaler.scale(loss).backward()
 
             # Accumulate Gradients
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
             # Update Tracker
-            self.local_progress.samples_accumulated += 1
+            self.local_progress.samples_accumulated += len(inputs)
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
