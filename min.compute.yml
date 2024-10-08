@@ -12,8 +12,8 @@ compute_spec:
 
     gpu:
       required: True                       
-      min_vram: 16                             
-      recommended_gpu: "RTX A4000"      
+      min_vram: 20                             
+      recommended_gpu: "RTX A5000"      
 
     os:
       name: "Ubuntu" 
@@ -23,16 +23,16 @@ compute_spec:
 
     gpu:
       required: True                       
-      min_vram: 16                             
-      recommended_gpu: "RTX A4000"      
+      min_vram: 20                             
+      recommended_gpu: "RTX A5000"      
 
     os:
       name: "Ubuntu" 
       version: 20.04 
 
 network_spec:
-  bandwidth:  # GBPS. THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER.
-    min_download : 5
-    recommended_download: 10
-    min_upload: 5
-    recommended_upload: 10
+  bandwidth:  # Gbps. THIS WILL ALSO IMPACT YOUR SCORE. THE QUICKER YOU DOWNLOAD & UPLOAD THE BETTER.
+    min_download : 15
+    recommended_download: 20
+    min_upload: 15
+    recommended_upload: 20
