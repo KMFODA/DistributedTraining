@@ -45,6 +45,7 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
+    failed_senders, participating_peers = None, None
     update_global_tracker_state(self)
     if self.local_progress.epoch < self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
@@ -160,12 +161,14 @@ async def forward(self):
 
                 if gradient_averaging_step.done():
                     
-                    gathered, failed_senders = gradient_averaging_step.result()
+                    gathered, failed_senders, participating_peers = gradient_averaging_step.result()
                     
                     print("\n")
                     print(f"Gathered {gathered} gradients") # Printing a dict of peerIds and their num local samples (int)
                     print("\n")
                     print(f"Failed allreduce: {failed_senders}") # Prining a dict of peerIds that failed the allreduce
+                    print("\n")
+                    print(f"Participating peers: {participating_peers}") # Prining a dict of all participating peers
                     print("\n")
                     
                     # Optimizer Step
@@ -366,7 +369,7 @@ async def forward(self):
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
-        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders
+        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders, participating_peers=participating_peers
     )
 
     # Normalise Rewards
