@@ -366,7 +366,8 @@ class Miner(BaseMinerNeuron):
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-        seed = random.randint(0, 1000)
+        seed = hash(f"{self.local_progress.samples_accumulated}_{self.uid}") & 0xFFFFFFFF
+        
         # Get the pages asynchronously
         pages = await AsyncSubsetFineWebEdu2Loader.next_pages(
             seed=seed,
