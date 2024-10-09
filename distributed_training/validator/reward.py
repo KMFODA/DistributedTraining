@@ -28,10 +28,19 @@ import asyncio
 
 def score_gradients(self, response, uid):
     # Create Dataloader
-    dataloader = DataLoader(
+    seed = hash(f"{self.local_progress.samples_accumulated}_{self.uid}") & 0xFFFFFFFF
+        
+    # Get the pages asynchronously
+    pages = await AsyncSubsetFineWebEdu2Loader.next_pages(
+        seed=response.seed,
+        n_pages=self.config.neuron.training_examples_per_miner
+    )
+
+    dataloader = await AsyncSubsetFineWebEdu2Loader.create(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
-        rows=response.dataset_indices,
+        pages_info=pages,
+        tokenizer=self.tokenizer  # Make sure you have this attribute in your class
     )
 
     index = 0
