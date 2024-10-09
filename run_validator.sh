@@ -11,6 +11,14 @@ version="__version__"
 
 old_args=$@
 
+shopt -s expand_aliases
+
+alias breakpoint='
+    while read -p"Debugging(Ctrl-d to exit)> " debugging_line
+    do
+        eval "$debugging_line"
+    done'
+
 # Check if pm2 is installed
 if ! command -v pm2 &> /dev/null
 then
@@ -24,6 +32,7 @@ fi
 version_less_than_or_equal() {
     [  "$1" = "`echo -e "$1\n$2" | sort -V | head -n1`" ]
 }
+echo -e "$latest_version$\n$current_version" | sort -V | head -n1
 
 # Checks if $1 is smaller than $2
 # If $1 is smaller than $2, then true. 
@@ -106,7 +115,7 @@ check_variable_value_on_github() {
     local file_path="$2"
     local variable_name="$3"
 
-    local url="https://api.github.com/repos/$repo/contents/$file_path"
+    local url="https://api.github.com/repos/$repo/contents/$file_path?ref=fix/auto_update"
     local response=$(curl -s "$url")
 
     # Check if the response contains an error message
@@ -237,7 +246,7 @@ if [ "$?" -eq 1 ]; then
                 echo "latest version $latest_version"
                 echo "current version $current_version"
                 diff=$(get_version_difference $latest_version $current_version)
-                if [ "$diff" -eq 1 ]; then
+                if [ "$diff" -gt 0 ]; then
                     echo "current validator version:" "$current_version" 
                     echo "latest validator version:" "$latest_version" 
 
@@ -283,7 +292,7 @@ if [ "$?" -eq 1 ]; then
         # Wait about 30 minutes
         # This should be plenty of time for validators to catch up
         # and should prevent any rate limitations by GitHub.
-        sleep 1200
+        sleep 60
     done
 else
     echo "Missing package 'jq'. Please install it for your system first."
