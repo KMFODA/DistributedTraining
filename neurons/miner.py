@@ -183,11 +183,6 @@ class Miner(BaseMinerNeuron):
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
-        # Load dataset
-        self.dataset_loader = ()
-        dataset_length = DataLoader.max_pages
-        self.dataset_indices = bitarray(dataset_length)
-
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(
@@ -371,29 +366,18 @@ class Miner(BaseMinerNeuron):
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-        search_start = random.choice(
-            range(
-                len(self.dataset_indices)
-                - self.config.neuron.training_examples_per_miner
-                + 1
-            )
+        seed = random.randint(0, 1000)
+        # Get the pages asynchronously
+        pages = await AsyncSubsetFineWebEdu2Loader.next_pages(
+            seed=seed,
+            n_pages=self.config.neuron.training_examples_per_miner
         )
-        start = self.dataset_indices.index(
-            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
-        )
-        group = [
-            i
-            for i in range(
-                start, start + self.config.neuron.training_examples_per_miner
-            )
-        ]
-        self.dataset_indices[group] = True
-
-        # Create Dataloader
-        dataloader = DataLoader(
+    
+        dataloader = await AsyncSubsetFineWebEdu2Loader.create(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
-            rows=group,
+            pages_info=pages,
+            tokenizer=self.tokenizer  # Make sure you have this attribute in your class
         )
 
         total_loss = 0
@@ -458,7 +442,7 @@ class Miner(BaseMinerNeuron):
 
             average_loss = total_loss / (index + 1)
             synapse.loss = average_loss
-            synapse.dataset_indices = group
+            synapse.dataset_seed = seed
 
             event = {}
             event.update(self.get_miner_info())
