@@ -524,31 +524,19 @@ def warmup(self):
         template.protocol.Train: The synapse object with the 'loss' field set to models loss.
     """
 
-    # Load dataset
-    self.dataset_loader = ()
-    dataset_length = DataLoader.max_pages
-    self.dataset_indices = bitarray(dataset_length)
-
-    search_start = random.choice(
-        range(
-            len(self.dataset_indices)
-            - self.config.neuron.training_examples_per_miner
-            + 1
-        )
+    seed = hash(f"{self.local_progress.samples_accumulated}_{self.uid}") & 0xFFFFFFFF
+        
+    # Get the pages asynchronously
+    pages = await AsyncSubsetFineWebEdu2Loader.next_pages(
+        seed=seed,
+        n_pages=self.config.neuron.training_examples_per_miner
     )
-    start = self.dataset_indices.index(
-        bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
-    )
-    group = [
-        i for i in range(start, start + self.config.neuron.training_examples_per_miner)
-    ]
-    self.dataset_indices[group] = True
 
-    # Create Dataloader
-    dataloader = DataLoader(
+    dataloader = await AsyncSubsetFineWebEdu2Loader.create(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
-        rows=group,
+        pages_info=pages,
+        tokenizer=self.tokenizer  # Make sure you have this attribute in your class
     )
 
     total_loss = 0
@@ -586,7 +574,7 @@ def warmup(self):
         self.opt.zero_grad()
 
         # Update Tracker
-        self.local_progress.samples_accumulated += 1
+        self.local_progress.samples_accumulated += len(inputs)
 
         # Log accumulation status
         bt.logging.info(f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}")
