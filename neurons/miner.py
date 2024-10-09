@@ -24,7 +24,6 @@ import typing
 import bittensor as bt
 import hivemind
 import torch
-from bitarray import bitarray
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
