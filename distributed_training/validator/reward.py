@@ -20,15 +20,13 @@ from typing import List
 
 import bittensor as bt
 import torch
-from distributed_training.data.dataset import DataLoader
+from distributed_training.data.dataset import AsyncSubsetFineWebEdu2Loader
 from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 
 
-def score_gradients(self, response, uid):
-    # Create Dataloader
-    seed = hash(f"{self.local_progress.samples_accumulated}_{self.uid}") & 0xFFFFFFFF
+async def score_gradients(self, response, uid):
         
     # Get the pages asynchronously
     pages = await AsyncSubsetFineWebEdu2Loader.next_pages(
@@ -252,7 +250,7 @@ async def get_rewards(
         gradient_scores = torch.FloatTensor(
             [
                 (
-                    score_gradients(self, response, uids.tolist()[index])
+                    await score_gradients(self, response, uids.tolist()[index])
                     if (response.dendrite.status_code == 200)
                     and (response.gradients is not None)
                     else 0

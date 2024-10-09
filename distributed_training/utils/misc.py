@@ -41,7 +41,7 @@ from ipaddress import ip_address
 import os
 import shutil
 import random
-from distributed_training.data.dataset import DataLoader
+from distributed_training.data.dataset import AsyncSubsetFineWebEdu2Loader
 from bitarray import bitarray
 import wandb
 import os
@@ -513,7 +513,7 @@ def init_dht(self):
                     bt.logging.error(f"Retrying...")
 
 
-def warmup(self):
+async def warmup(self):
     """
     Processes the incoming 'Train' synapse by performing a training run
 

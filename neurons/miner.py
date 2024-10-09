@@ -33,7 +33,7 @@ import distributed_training
 
 # import base miner class which takes care of most of the boilerplate
 from distributed_training.base.miner import BaseMinerNeuron
-from distributed_training.data.dataset import DataLoader
+from distributed_training.data.dataset import AsyncSubsetFineWebEdu2Loader
 from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
