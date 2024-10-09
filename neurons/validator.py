@@ -158,8 +158,9 @@ class Validator(BaseValidatorNeuron):
         )
 
         # Init All Reduce Variables
-        self.train_timeout = 100
-        self.all_reduce_timeout = 300
+        self.train_timeout = 120
+        self.all_reduce_timeout = 360
+        self.load_state_timeout = 120
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
         self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
@@ -196,7 +197,7 @@ class Validator(BaseValidatorNeuron):
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=30.0,
-            # allreduce_timeout=None,
+            allreduce_timeout=self.all_reduce_timeout - 30.0,
             # sender_timeout=None,
             # reducer_timeout=None,
         )
@@ -332,12 +333,12 @@ class Validator(BaseValidatorNeuron):
         }
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
-        if timeout is not None:
-            timeout = (
-                self.next_chunk_timeout
-                if self.next_chunk_timeout is not None
-                else self.request_timeout
-            )
+        # if timeout is not None:
+        #     timeout = (
+        #         self.next_chunk_timeout
+        #         if self.next_chunk_timeout is not None
+        #         else self.request_timeout
+        #     )
 
         metadata = None
         logger.info(f"Downloading parameters from peer {peer}")
