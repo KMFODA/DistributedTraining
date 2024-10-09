@@ -139,6 +139,7 @@ class Miner(BaseMinerNeuron):
         )
 
         # Init Gradient Averager
+        self.all_reduce_timeout = 360
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
             dht=self.dht,
@@ -150,8 +151,7 @@ class Miner(BaseMinerNeuron):
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=30.0,
-            # allreduce_timeout=None,
-            # next_chunk_timeout=None,
+            allreduce_timeout=self.all_reduce_timeout - 30,
             # sender_timeout=None,
             # reducer_timeout=None,
         )
