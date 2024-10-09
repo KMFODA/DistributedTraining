@@ -44,7 +44,7 @@ class Train(bt.Synapse):
     """
 
     # List of indices trained on
-    dataset_indices: list = None
+    dataset_seed: list = None
 
     # Gradient Value of a randomly chosen index
     gradients: float = None
