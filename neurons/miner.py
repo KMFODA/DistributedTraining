@@ -447,9 +447,12 @@ class Miner(BaseMinerNeuron):
             event = {}
             event.update(self.get_miner_info())
             try:
+                start_time = time.time()    
                 event.update(get_bandwidth())
+                print(f" Getting bandwidth data in {time.time() - start_time} seconds")
             except:
                 bt.logging.info("Error getting bandwidth metrics")
+            
             event.update({"steps": index})
 
             if not self.config.neuron.dont_wandb_log:
