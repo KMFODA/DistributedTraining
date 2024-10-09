@@ -657,7 +657,7 @@ class DTAverager(hivemind.DecentralizedAverager):
                             "aux peers should not receive averaged tensors"
                         )
                 
-                return user_gathered, runner.banned_senders
+                return user_gathered, runner.banned_senders, group_info.peer_ids
         except BaseException as e:
             if isinstance(e, Exception):
                 logger.exception(e)
