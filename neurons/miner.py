@@ -57,6 +57,8 @@ from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
+torch.use_deterministic_algorithms(True)
+torch.manual_seed(42)
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -223,6 +225,7 @@ class Miner(BaseMinerNeuron):
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
                 wait=False,
+                gather=self.local_progress.samples_accumulated
             )
             start_time = time.perf_counter()
 

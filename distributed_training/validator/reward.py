@@ -25,6 +25,8 @@ from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 
+torch.use_deterministic_algorithms(True)
+torch.manual_seed(42)
 
 def score_gradients(self, response, uid):
     # Create Dataloader
@@ -136,12 +138,31 @@ async def score_bandwidth(self, uids, timeout=120):
 
     return scores
 
+def score_failed_senders(self, uids, failed_senders, participating_peers):
+    scores = torch.FloatTensor([0.0 for _ in uids]).to(self.device)
+    for i, uid in enumerate(uids):
+        peer_id = self.uids_to_peerids.get(uid)
+        
+        if peer_id in participating_peers:
+            if peer_id in failed_senders:
+                bt.logging.info(f"- Scoring UID {uid} 0.0 (Failed sender)")
+                scores[i] = 0.0
+            else:
+                bt.logging.info(f"- Scoring UID {uid} 1.0 (Successful participating peer)")
+                scores[i] = 1.0
+        else:
+            bt.logging.info(f"- Scoring UID {uid} 0.0 (Not a participating peer)")
+            scores[i] = 0.0
+    
+    return scores
 
 async def get_rewards(
     self,
     uids: List[int],
     responses: list,
     all_reduce: bool,
+    failed_senders=None,
+    participating_peers=None,
 ) -> torch.FloatTensor:
     """
     Returns a tensor of rewards for the given query and responses.
@@ -194,6 +215,17 @@ async def get_rewards(
             }
         )
         scores *= bandwidth_scores
+
+        # Apply penalty to failed senders if any
+        failed_sender_scores = score_failed_senders(self, uids.tolist(), failed_senders, participating_peers)
+        bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
+        self.event.update(
+            {
+                f"rewards.failed_sender_score.uid{uid}": failed_sender_score
+                for uid, failed_sender_score in zip(uids, failed_sender_scores)
+            }
+        )
+        scores *= failed_sender_scores
 
     # Score an empty responses
     elif (responses == [[]]) or (

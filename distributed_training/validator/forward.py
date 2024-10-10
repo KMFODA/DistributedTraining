@@ -45,6 +45,7 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
+    failed_senders, participating_peers = None, None
     update_global_tracker_state(self)
     if self.local_progress.epoch < self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
@@ -111,7 +112,7 @@ async def forward(self):
                     str(value): key for key, value in self.uids_to_peerids.items()
                 }
                 gradient_averaging_step = self.grad_averager.step(
-                    wait=False,
+                    wait=False, gather=0,
                 )
                 # peerids_to_uids = self.peerids_to_uids)
                 self.learning_rate = self.get_learning_rate()
@@ -159,6 +160,23 @@ async def forward(self):
                     time.sleep(1)
 
                 if gradient_averaging_step.done():
+                    
+                    gathered, failed_senders, participating_peers = gradient_averaging_step.result()
+                    
+                    bt.logging.info("\n")
+                    bt.logging.info(f"Gathered {gathered} gradients") 
+                    bt.logging.info(f"Failed allreduce: {failed_senders}")
+                    bt.logging.info(f"Participating peers: {participating_peers}")
+                    bt.logging.info("\n")
+                    
+                    self.event.update(
+                        {
+                            "gathered_gradients_sum": sum(gathered.values()),
+                            "failed_allreduce_count": len(failed_senders),
+                            "participating_peers_count": len(participating_peers)
+                        }
+                    )
+                    
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
                         # Log Model Weight Before Optimizer Step
@@ -357,7 +375,7 @@ async def forward(self):
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
-        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce
+        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders, participating_peers=participating_peers
     )
 
     # Normalise Rewards
