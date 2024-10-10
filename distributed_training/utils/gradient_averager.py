@@ -59,11 +59,8 @@ class DTAllReduceRunner(AllReduceRunner):
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
-        uid = (
-            self.peerids_to_uids[str(peer_id)]
-            if str(peer_id) in self.peerids_to_uids.keys()
-            else ""
-        )
+        uid = self.peerids_to_uids.get(str(peer_id), "")
+
         bt.logging.info(
             f"UID:{uid} - PeerID:{peer_id} - communicate_with_peer started",
         )
@@ -140,59 +137,14 @@ class DTAllReduceRunner(AllReduceRunner):
                         f"Caught {repr(e)} when communicating to {peer_id}",
                         exc_info=True,
                     )
-                logger.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
+                
                 bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Failed reducer")
+                
                 self.tensor_part_container.register_failed_reducer(peer_index)
                 raise
 
-    #! Test fault-tolerance here:
-    async def rpc_aggregate_part(
-        self, stream, context
-    ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        """
-        Handles the aggregation of tensor parts sent by peers. If an error is encountered, such as a timeout
-        or failure in communication, it directly raises an exception.
-        """
-        try:
-            #
-            # # condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE", "CANCEL"])
-            # test_fault = True
-            # if test_fault:
-            #     condition = "FAIL_SENDING"
-
-            #     async for message in super().rpc_aggregate_part(stream, context):
-            #         self.count+=1
-            #         yield message
-            #         if self.count == 2:
-            #             if condition == "FAIL_SENDING":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.INTERNAL_ERROR)
-            #                 break
-            #             elif condition == "SLOW_REDUCE":
-            #                 await asyncio.sleep(10)
-            #             elif condition == "CANCEL":
-            #                 yield averaging_pb2.AveragingData(code=averaging_pb2.CANCELLED)
-            # else:
-            async for message in super().rpc_aggregate_part(stream, context):
-                yield message
-
-        except Exception as e:
-            logger.error(f"RPC aggregation error with peer {context.remote_id}: {e}")
-            raise e
-
     def __aiter__(self):
         return self.run()
-
-    async def _handle_missing_senders(self):
-        """Detect senders that should have sent tensors for averaging, but did not send anything within timeout"""
-        try:
-            await asyncio.wait_for(self.all_senders_started.wait(), self.sender_timeout)
-        except asyncio.TimeoutError:
-            for peer_id in self.sender_peer_ids:
-                if (
-                    peer_id not in self.active_senders
-                    and peer_id not in self.banned_senders
-                ):
-                    await self._ban_sender(peer_id)
 
     async def run(self) -> AsyncIterator[torch.Tensor]:
         """Run all-reduce, return differences between averaged and original tensors as they are computed"""
@@ -283,16 +235,6 @@ class DTAllReduceRunner(AllReduceRunner):
             bt.logging.info(
                 f"UID:{uid} - PeerID:{peer_id} - generate_input_for_peer finished"
             )
-            #! Test Fault-tolerance here:
-            # last_reducer_index = self.group_size - 1 - (self.tensor_part_container.num_parts_by_peer[-1] == 0)
-            # if peer_index == last_reducer_index:
-            #     # Create random condition:
-            #     condition = np.random.choice(["FAIL_SENDING", "SLOW_REDUCE"])
-            #     if condition == "FAIL_SENDING":
-            #         raise Exception("Oops, I failed!")
-            #     else:
-            #         print("Waiting...sloooow...")
-            #         await asyncio.sleep(10)
 
             async for part in parts_aiter:
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
@@ -305,11 +247,8 @@ class DTAllReduceRunner(AllReduceRunner):
             raise e
 
     async def _ban_sender(self, peer_id: PeerID):
-        uid = (
-            self.peerids_to_uids[str(peer_id)]
-            if peer_id in self.peerids_to_uids.keys()
-            else ""
-        )
+        uid = self.peerids_to_uids.get(str(peer_id), "")
+
         bt.logging.info(f"UID:{uid} - PeerID:{peer_id} - Ban sender")
         async with self.banlock:
             if peer_id not in self.banned_senders:
@@ -336,7 +275,6 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
-        peerids_to_uids: dict = {},
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         if self.mode == AveragingMode.AUX and weight is not None:
             logger.warning("Averager is running in auxiliary mode, weight is unused")
@@ -376,6 +314,8 @@ class DTAverager(hivemind.DecentralizedAverager):
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
 
+        peerids_to_uids = kwargs.get("peerids_to_uids", None)
+
         # Default behavior: initiate matchmaking and proceed as originally designed
         self._outer_pipe.send(
             (
@@ -399,7 +339,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         *,
         step: StepControl,
         future_for_init: MPFuture,
-        peerids_to_uids: dict = {},
+        peerids_to_uids: Dict,
     ):
         try:
             trigger, cancel = MPFuture(), MPFuture()
@@ -493,113 +433,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                     )
                 )
 
-    async def _step_custom(
-        self,
-        *,
-        step: StepControl,
-        future_for_init: MPFuture,
-        peerids_to_uids: dict,
-        custom_group_info: GroupInfo,
-    ):
-        try:
-            trigger, cancel = MPFuture(), MPFuture()
-            step.attach(trigger, cancel)
-            future_for_init.set_result((trigger, cancel))
-
-            async def find_peers_or_notify_cancel():
-                group_info = await self._matchmaking.look_for_group(step)
-                if not step.triggered:
-                    step.stage = AveragingStage.AWAITING_TRIGGER
-                    await step.wait_for_trigger()
-                return group_info
-
-            while not step.done():
-                try:
-                    self._pending_groups_registered.clear()
-                    step.stage = AveragingStage.LOOKING_FOR_GROUP
-                    matchmaking_task = asyncio.create_task(
-                        find_peers_or_notify_cancel()
-                    )
-                    check_cancel_task = asyncio.create_task(step.wait_for_cancel())
-
-                    await asyncio.wait(
-                        {matchmaking_task, check_cancel_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if step.cancelled():
-                        bt.logging.info("Step Cancelled")
-                        matchmaking_task.cancel()
-                        raise asyncio.CancelledError()
-                    else:
-                        bt.logging.info("Checking Cancel Task")
-                        check_cancel_task.cancel()
-
-                    group_info = await matchmaking_task
-                    bt.logging.info("Finished matchmaking_task")
-
-                    if group_info is None:
-                        raise AllreduceException(
-                            "Averaging step failed: could not find a group"
-                        )
-
-                    with self._register_allreduce_group(group_info):
-                        bt.logging.info("Running AllReduce")
-                        step.stage = AveragingStage.RUNNING_ALLREDUCE
-                    step.set_result(
-                        await asyncio.wait_for(
-                            self._aggregate_with_group(
-                                group_info,
-                                tensor_infos=self.tensor_infos,
-                                weight=step.weight,
-                                peerids_to_uids=peerids_to_uids
-                                ** self.allreduce_kwargs,
-                            ),
-                            timeout=self._allreduce_timeout,
-                        )
-                    )
-                except (
-                    AllreduceException,
-                    MatchmakingException,
-                    AssertionError,
-                    StopAsyncIteration,
-                    asyncio.CancelledError,
-                    asyncio.InvalidStateError,
-                    P2PHandlerError,
-                    P2PDaemonError,
-                ) as e:
-                    if (
-                        step.done()
-                        or not step.allow_retries
-                        or get_dht_time() >= step.deadline
-                    ):
-                        if not step.cancelled():
-                            logger.exception(e)
-                        if not step.done():
-                            step.set_exception(e)
-                    else:
-                        logger.warning(
-                            f"{self.__class__.__name__} caught {repr(e)}, retrying"
-                        )
-
-        except BaseException as e:
-            if not step.done():
-                step.set_exception(e)
-            raise
-        finally:
-            step.stage = AveragingStage.FINISHED
-            if not step.done():
-                step.set_exception(
-                    RuntimeError(
-                        "Internal sanity check failed: averager.step left future pending."
-                        " Please report this to hivemind issues."
-                    )
-                )
-
     async def _aggregate_with_group(
         self,
         group_info: GroupInfo,
         min_vector_size: int,
-        peerids_to_uids: dict,
+        peerids_to_uids: Dict,
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata"""
