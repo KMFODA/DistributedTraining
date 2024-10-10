@@ -69,3 +69,8 @@ class AllReduce(bt.Synapse):
     )
     # Learning Rate
     learning_rate: float = None
+    next_chunk_timeout: float = None
+    min_group_size: int = None
+    request_timeout: float = None
+    min_matchmaking_time: float = None
+    all_reduce_timeout: float = None

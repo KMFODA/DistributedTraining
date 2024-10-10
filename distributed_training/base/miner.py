@@ -23,6 +23,7 @@ import traceback
 
 import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
+from distributed_training.utils.uids import map_uid_to_peerid
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -127,6 +128,13 @@ class BaseMinerNeuron(BaseNeuron):
                 # Sync metagraph and potentially set weights.
                 self.sync()
                 self.step += 1
+
+                # Update uids_to_peerids dict
+                self.uids_to_peerids = self.loop.run_until_complete(
+                    map_uid_to_peerid(self, range(0, self.metagraph.n))
+                )
+                self.uids_to_peerids[self.uid] = self.dht.peer_id
+                bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
             # Await the training task to ensure it completes before exiting
 

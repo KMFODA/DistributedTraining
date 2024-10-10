@@ -60,6 +60,7 @@ from distributed_training import __version__, __spec_version__
 torch.use_deterministic_algorithms(True)
 torch.manual_seed(42)
 
+
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
@@ -148,10 +149,8 @@ class Miner(BaseMinerNeuron):
             min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
-            next_chunk_timeout=30.0,
-            allreduce_timeout=self.all_reduce_timeout - 30,
-            # sender_timeout=None,
-            # reducer_timeout=None,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -217,15 +216,36 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
 
+        # Update the gradient averaging kwargs
+        if synapse.next_chunk_timeout is not None:
+            self.grad_averager.next_chunk_timeout = synapse.next_chunk_timeout
+            self.grad_averager.allreduce_kwargs[
+                "sender_timeout"
+            ] = self.grad_averager.next_chunk_timeout
+            self.grad_averager.allreduce_kwargs["reducer_timeout"] = (
+                self.grad_averager.next_chunk_timeout * 2
+            )
+        if synapse.all_reduce_timeout is not None:
+            self.grad_averager._allreduce_timeout = synapse.all_reduce_timeout
+        if synapse.min_group_size is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "min_group_size"
+            ] = synapse.min_group_size
+        if synapse.request_timeout is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "request_timeout"
+            ] = synapse.request_timeout
+        if synapse.min_matchmaking_time is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "min_matchmaking_time"
+            ] = synapse.min_matchmaking_time
+
         # # Update mapping of uids to peerids
-        # self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        # self.uids_to_peerids[self.uid] = self.dht.peer_id
-        # bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         try:
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
                 wait=False,
-                gather=self.local_progress.samples_accumulated
+                gather=self.local_progress.samples_accumulated,
             )
             start_time = time.perf_counter()
 

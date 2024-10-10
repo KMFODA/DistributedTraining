@@ -45,9 +45,9 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    failed_senders, participating_peers = None, None
+    gathered, failed_senders, participating_peers = [], [], []
     update_global_tracker_state(self)
-    if self.local_progress.epoch < self.global_progress.epoch:
+    if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
         load_state_from_peer(self)
 
@@ -80,9 +80,9 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 9:
+            while len(self.miner_uids) < 10:
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {9-len(self.miner_uids)} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -90,6 +90,7 @@ async def forward(self):
                     k=sample_size,
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
+
         else:
             self.miner_uids = await get_random_uids(
                 self,
@@ -112,9 +113,8 @@ async def forward(self):
                     str(value): key for key, value in self.uids_to_peerids.items()
                 }
                 gradient_averaging_step = self.grad_averager.step(
-                    wait=False, gather=0,
+                    gather=0, wait=False, peerids_to_uids=self.peerids_to_uids
                 )
-                # peerids_to_uids = self.peerids_to_uids)
                 self.learning_rate = self.get_learning_rate()
                 bt.logging.info(f"Current Learning Rate: {self.learning_rate}")
 
@@ -160,23 +160,24 @@ async def forward(self):
                     time.sleep(1)
 
                 if gradient_averaging_step.done():
-                    
-                    gathered, failed_senders, participating_peers = gradient_averaging_step.result()
-                    
-                    bt.logging.info("\n")
-                    bt.logging.info(f"Gathered {gathered} gradients") 
+                    (
+                        gathered,
+                        failed_senders,
+                        participating_peers,
+                    ) = gradient_averaging_step.result()
+
+                    bt.logging.info(f"Gathered {gathered} gradients")
                     bt.logging.info(f"Failed allreduce: {failed_senders}")
                     bt.logging.info(f"Participating peers: {participating_peers}")
-                    bt.logging.info("\n")
-                    
+
                     self.event.update(
                         {
                             "gathered_gradients_sum": sum(gathered.values()),
                             "failed_allreduce_count": len(failed_senders),
-                            "participating_peers_count": len(participating_peers)
+                            "participating_peers_count": len(participating_peers),
                         }
                     )
-                    
+
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
                         # Log Model Weight Before Optimizer Step
@@ -375,7 +376,12 @@ async def forward(self):
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
-        self, uids=self.miner_uids, responses=responses, all_reduce=all_reduce, failed_senders=failed_senders, participating_peers=participating_peers
+        self,
+        uids=self.miner_uids,
+        responses=responses,
+        all_reduce=all_reduce,
+        failed_senders=failed_senders,
+        participating_peers=participating_peers,
     )
 
     # Normalise Rewards

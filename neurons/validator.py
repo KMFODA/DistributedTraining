@@ -159,7 +159,7 @@ class Validator(BaseValidatorNeuron):
 
         # Init All Reduce Variables
         self.train_timeout = 120
-        self.all_reduce_timeout = 360
+        self.all_reduce_timeout = 420
         self.load_state_timeout = 120
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
@@ -193,15 +193,12 @@ class Validator(BaseValidatorNeuron):
             compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            min_group_size=5,
+            min_group_size=2,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
-            next_chunk_timeout=30.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0,
-            # sender_timeout=None,
-            # reducer_timeout=None,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
         )
-
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
