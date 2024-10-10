@@ -25,6 +25,8 @@ from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 
+torch.use_deterministic_algorithms(True)
+torch.manual_seed(42)
 
 def score_gradients(self, response, uid):
     # Create Dataloader
