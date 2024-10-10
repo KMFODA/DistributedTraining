@@ -163,13 +163,11 @@ async def forward(self):
                     
                     gathered, failed_senders, participating_peers = gradient_averaging_step.result()
                     
-                    print("\n")
-                    print(f"Gathered {gathered} gradients") # Printing a dict of peerIds and their num local samples (int)
-                    print("\n")
-                    print(f"Failed allreduce: {failed_senders}") # Prining a dict of peerIds that failed the allreduce
-                    print("\n")
-                    print(f"Participating peers: {participating_peers}") # Prining a dict of all participating peers
-                    print("\n")
+                    bt.logging.info("\n")
+                    bt.logging.info(f"Gathered {gathered} gradients") 
+                    bt.logging.info(f"Failed allreduce: {failed_senders}")
+                    bt.logging.info(f"Participating peers: {participating_peers}")
+                    bt.logging.info("\n")
                     
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
