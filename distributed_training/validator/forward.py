@@ -169,6 +169,14 @@ async def forward(self):
                     bt.logging.info(f"Participating peers: {participating_peers}")
                     bt.logging.info("\n")
                     
+                    self.event.update(
+                        {
+                            "gathered_gradients_sum": sum(gathered.values()),
+                            "failed_allreduce_count": len(failed_senders),
+                            "participating_peers_count": len(participating_peers)
+                        }
+                    )
+                    
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
                         # Log Model Weight Before Optimizer Step
