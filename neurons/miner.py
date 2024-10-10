@@ -338,6 +338,18 @@ class Miner(BaseMinerNeuron):
             bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
+    
+    def get_current_gradients(self):
+        return tuple(
+            param.grad.detach().cpu().clone() if param.grad is not None else torch.zeros_like(param)
+            for param in self.model.parameters()
+        )
+        
+    def average_gradients(self, gradient_list):
+        return tuple(
+            sum(grads) / len(gradient_list)
+            for grads in zip(*gradient_list)
+        )
 
     async def forward(
         self, synapse: distributed_training.protocol.Train
@@ -389,6 +401,14 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
+        
+        checkpoint_seed = synapse.checkpoint_seed
+        num_checkpoints = synapse.num_checkpoints
+        
+        checkpoint_rng = random.Random(checkpoint_seed)
+        checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), num_checkpoints))
+
+        gradient_checkpoints = []
 
         total_loss = 0
         index = 0
@@ -417,7 +437,12 @@ class Miner(BaseMinerNeuron):
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
             # Update Tracker
-            self.local_progress.samples_accumulated += 1
+            self.local_progress.samples_accumulated += len(inputs)
+            
+            # Get gradients at checkpoints
+            if index in checkpoint_indices:
+                gradient_checkpoints.append(self.get_current_gradients())
+
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
@@ -429,45 +454,39 @@ class Miner(BaseMinerNeuron):
                         "global_epoch": self.global_progress.epoch,
                     }
                 )
+        
+        # Calculate average gradient from checkpoints
+        avg_gradients = self.average_gradients(gradient_checkpoints)
 
-        # Copy gradients
-        gradients = tuple(
-            (
-                param.grad.detach().cpu().clone()
-                if param.grad is not None
-                else torch.zeros_like(param)
-            )
-            for param in self.model.parameters()
-        )
 
-        if synapse.gradient_test_index > len(gradients):
+        if synapse.gradient_test_index > len(avg_gradients):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-        else:
-            # Store summed random gradients in the synapse
-            synapse.gradients = float(
-                torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
-            )
+        
+        # Store average gradients in the synapse
+        synapse.gradients = float(
+            torch.sum(torch.abs(avg_gradients[synapse.gradient_test_index]))
+        )
 
-            average_loss = total_loss / (index + 1)
-            synapse.loss = average_loss
-            synapse.dataset_indices = group
+        average_loss = total_loss / (index + 1)
+        synapse.loss = average_loss
+        synapse.dataset_indices = group
 
-            event = {}
-            event.update(self.get_miner_info())
-            try:
-                event.update(get_bandwidth())
-            except:
-                bt.logging.info("Error getting bandwidth metrics")
-            event.update({"steps": index})
+        event = {}
+        event.update(self.get_miner_info())
+        try:
+            event.update(get_bandwidth())
+        except:
+            bt.logging.info("Error getting bandwidth metrics")
+        event.update({"steps": index})
 
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log(event)
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb.log(event)
 
-            return synapse
+        return synapse
 
     def warmup(
         self,

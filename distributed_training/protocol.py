@@ -51,6 +51,12 @@ class Train(bt.Synapse):
 
     # Gradient Index to be evaluated
     gradient_test_index: int = None
+    
+    # Seed to choose the gradients to checkpoint
+    checkpoint_seed: int = None
+    
+    # Number of checkpoints to checkpoint
+    num_checkpoints: int = None
 
     # Model Name
     model_name: str = "distributed/gpt2-250m"

@@ -127,10 +127,14 @@ async def forward(self):
             else:
                 # Get a random layer to check gradients against
                 gradient_test_index = random.choice(self.test_layer_indices)
+                checkpoint_seed = random.randint(0, 2**32 - 1)
+                num_checkpoints = random.randint(0, 5)
                 queries = [
                     distributed_training.protocol.Train(
                         model_name=self.model.name_or_path,
                         gradient_test_index=gradient_test_index,
+                        checkpoint_seed=checkpoint_seed,
+                        num_checkpoints=num_checkpoints,
                     )
                     for _ in self.miner_uids
                 ]

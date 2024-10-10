@@ -23,7 +23,9 @@ import torch
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
+import itertools
 import asyncio
+import random
 
 torch.use_deterministic_algorithms(True)
 torch.manual_seed(42)
@@ -35,65 +37,71 @@ def score_gradients(self, response, uid):
         sequence_length=1024,
         rows=response.dataset_indices,
     )
+    
+    checkpoint_rng = random.Random(response.checkpoint_seed)
+    checkpoint_indices = sorted(checkpoint_rng.sample(range(len(self.dataloader)), 
+                                                      response.num_checkpoints))
+    
+    gradient_checkpoints = []
+    
 
-    index = 0
     # Train data for on last indices
-    for index, batch in enumerate(dataloader):
-        continue
+    for index in checkpoint_indices:
+        # Get the batch at the checkpoint index
+        batch = list(itertools.islice(dataloader, index, index+1))[0]
+        
+        # Extract inputs and labels
+        inputs = batch[0].to(self.device)
+        labels = batch[1].to(self.device)
 
-    if index == 0:
-        score = 0
-        return score
+        # Zero Gradients
+        self.opt.zero_grad()
 
-    # Extract inputs and labels
-    inputs = batch[0].to(self.device)
-    labels = batch[1].to(self.device)
+        # Forward pass
+        outputs = self.model(input_ids=inputs, labels=labels)
+        loss = outputs[1]
 
-    # Zero Gradients
-    self.opt.zero_grad()
+        # Backward Pass
+        loss.backward()
 
-    # Forward pass
-    outputs = self.model(input_ids=inputs, labels=labels)
-
-    loss = outputs[1]
-
-    # Backward Pass
-    loss.backward()
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Copy gradients
-    gradients = tuple(
-        (
-            param.grad.detach().cpu().clone()
-            if param.grad is not None
-            else torch.zeros_like(param)
+        # Copy gradients at checkpoint
+        checkpoint_gradients = tuple(
+            (
+                param.grad.detach().cpu().clone()
+                if param.grad is not None
+                else torch.zeros_like(param)
+            )
+            for param in self.model.parameters()
         )
-        for param in self.model.parameters()
-    )
+        gradient_checkpoints.append(checkpoint_gradients)
 
-    if response.gradient_test_index > len(gradients):
+    # Calculate average gradients across checkpoints
+    avg_gradients = [
+        sum(grad[i] for grad in gradient_checkpoints) / len(gradient_checkpoints)
+        for i in range(len(gradient_checkpoints[0]))
+    ]
+    
+    if response.gradient_test_index > len(avg_gradients):
         bt.logging.info(
             f"UID {uid} running incorrect model. Assigning it a gradients core of 0."
         )
         score = 0
         return score
-    else:
-        # Store summed random gradients in the synapse
-        gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
+    
+    # Store summed random gradients in the synapse
+    gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
 
-        bt.logging.info(
-            f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
-        )
-        bt.logging.info(
-            f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
-        )
+    bt.logging.info(
+        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
+    )
+    bt.logging.info(
+        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
+    )        
 
-        # TODO Address issue where gradient sum is negative
-        score = 1 - (abs(gradients - response.gradients))
+    relative_diff = abs(gradients - response.gradients) / max(abs(gradients), abs(response.gradients)) 
+    score = 1.0 - min(relative_diff, 1.0) # Normalise score between 0 and 1
 
-        return score
+    return score
 
 
 async def score_blacklist(self, uids):
