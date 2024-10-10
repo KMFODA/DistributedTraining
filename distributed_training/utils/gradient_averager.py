@@ -275,6 +275,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         allow_retries: bool = True,
         require_trigger: bool = False,
         wait: bool = True,
+        **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         if self.mode == AveragingMode.AUX and weight is not None:
             logger.warning("Averager is running in auxiliary mode, weight is unused")
