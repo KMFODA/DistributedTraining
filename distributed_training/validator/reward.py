@@ -148,7 +148,7 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
                 scores[i] = 0.0
             else:
                 bt.logging.info(
-                    f"Scoring UID {uid} 1.0 - Successful participating peer)"
+                    f"Scoring UID {uid} 1.0 - Successful participating peer"
                 )
                 scores[i] = 1.0
         else:
