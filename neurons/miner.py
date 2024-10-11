@@ -437,7 +437,7 @@ class Miner(BaseMinerNeuron):
             self.grad_averager.accumulate_grads_(batch_size=len(inputs))
 
             # Update Tracker
-            self.local_progress.samples_accumulated += 1
+            self.local_progress.samples_accumulated += len(inputs)
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
