@@ -368,6 +368,9 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
+        timeout: float = synapse.timeout
+        start_time: float = time.perf_counter()
+
         update_global_tracker_state(self)
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
@@ -483,6 +486,11 @@ class Miner(BaseMinerNeuron):
 
             if not self.config.neuron.dont_wandb_log:
                 self.wandb.log(event)
+
+            if time.perf_counter() - start_time > timeout:
+                bt.logging.error(
+                    f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
+                )
 
             return synapse
 

@@ -294,13 +294,13 @@ async def forward(self):
                                     )
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
-                                        commit_message=f"Epoch {self.local_progress.epoch}",
+                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
                                     create_tag(
                                         self.config.neuron.model_name,
                                         repo_type="model",
                                         tag=str(self.local_progress.epoch),
-                                        tag_message=f"Epoch {self.local_progress.epoch}",
+                                        tag_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
                                     refs = list_repo_refs(
                                         self.config.neuron.model_name, repo_type="model"

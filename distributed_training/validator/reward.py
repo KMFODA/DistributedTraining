@@ -144,15 +144,13 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
 
         if peer_id in participating_peers:
             if peer_id in failed_peers:
-                bt.logging.info(f"Scoring UID {uid} 0.0 - Failed sender")
+                bt.logging.info(f"UID:{uid} - Failed participating peer")
                 scores[i] = 0.0
             else:
-                bt.logging.info(
-                    f"Scoring UID {uid} 1.0 - Successful participating peer"
-                )
+                bt.logging.info(f"UID:{uid} - Successful participating peer")
                 scores[i] = 1.0
         else:
-            bt.logging.info(f"Scoring UID {uid} - Non participating peer")
+            bt.logging.info(f"UID:{uid} - Non participating peer")
             scores[i] = 0.0
 
     return scores
@@ -184,6 +182,8 @@ async def get_rewards(
             # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
             # the scoring burden across all validators
             self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=2)
+            self.event.update({"uids": self.miner_uids})
+            bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         # Set up the scores tensor
         scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)

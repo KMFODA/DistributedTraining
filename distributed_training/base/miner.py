@@ -134,7 +134,6 @@ class BaseMinerNeuron(BaseNeuron):
                     map_uid_to_peerid(self, range(0, self.metagraph.n))
                 )
                 self.uids_to_peerids[self.uid] = self.dht.peer_id
-                bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
             # Await the training task to ensure it completes before exiting
 
