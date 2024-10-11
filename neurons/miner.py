@@ -57,9 +57,6 @@ from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
-torch.use_deterministic_algorithms(True)
-torch.manual_seed(42)
-
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):

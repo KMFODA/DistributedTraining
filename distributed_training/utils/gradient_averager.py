@@ -145,6 +145,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     f"UID:{uid} - PeerID:{peer_id_abreviated} - Failed to communicate with peers due to error - {e}"
                 )
                 self.tensor_part_container.register_failed_reducer(peer_index)
+                # await self._ban_sender(peer_id)
                 raise
 
     def __aiter__(self):
@@ -251,18 +252,14 @@ class DTAllReduceRunner(AllReduceRunner):
 
     async def _ban_sender(self, peer_id: PeerID):
         uid = self.peerids_to_uids.get(str(peer_id), "'''")
-        uid = ""
-        peer_id_abreviated = peer_id
-        bt.logging.info(f"UID:{uid} - PeerID:{peer_id_abreviated} - Ban sender")
+        peer_id_abreviated = str(self.peer_id)[-3:]
+        bt.logging.info(f"UID:{uid} - PeerID:{peer_id_abreviated} - Banning Peer")
 
         async with self.banlock:
             if peer_id not in self.banned_senders:
                 self.banned_senders.add(peer_id)
                 self.tensor_part_reducer.on_sender_failed(
                     self.sender_peer_ids.index(peer_id)
-                )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - Ban sender due to a failure"
                 )
 
 
@@ -462,8 +459,8 @@ class DTAverager(hivemind.DecentralizedAverager):
                 thr if mode != AveragingMode.CLIENT else 0.0
                 for thr, mode in zip(bandwidths, modes)
             ]
-            bt.logging.info("Donwloaded bandwidths")
-            bt.logging.info(download_bandwidths)
+            # bt.logging.info("Donwloaded bandwidths")
+            # bt.logging.info(download_bandwidths)
             peer_fractions = await asyncio.get_event_loop().run_in_executor(
                 None,
                 load_balance_peers,
@@ -471,7 +468,8 @@ class DTAverager(hivemind.DecentralizedAverager):
                 download_bandwidths,
                 min_vector_size,
             )
-
+            bt.logging.info(group_info.peer_ids)
+            bt.logging.info(peer_fractions)
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
                     peerids_to_uids=peerids_to_uids,

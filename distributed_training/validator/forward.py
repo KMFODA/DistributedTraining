@@ -45,7 +45,7 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    gathered, failed_senders, participating_peers = [], [], []
+    gathered, failed_peers, participating_peers = [], [], []
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
@@ -92,6 +92,11 @@ async def forward(self):
                 )
 
         else:
+            if self.local_progress.samples_accumulated == 0:
+                sample_size = 20
+            else:
+                sample_size = 1
+
             self.miner_uids = await get_random_uids(
                 self,
                 dendrite=self.dendrite,
@@ -162,18 +167,23 @@ async def forward(self):
                 if gradient_averaging_step.done():
                     (
                         gathered,
-                        failed_senders,
+                        failed_peers,
                         participating_peers,
                     ) = gradient_averaging_step.result()
 
                     bt.logging.info(f"Gathered {gathered} gradients")
-                    bt.logging.info(f"Failed allreduce: {failed_senders}")
+                    bt.logging.info(f"Failed allreduce: {failed_peers}")
                     bt.logging.info(f"Participating peers: {participating_peers}")
 
                     self.event.update(
                         {
-                            "gathered_gradients_sum": sum(gathered.values()),
-                            "failed_allreduce_count": len(failed_senders),
+                            "batch_size": sum(
+                                [
+                                    value if value is not None else 0
+                                    for value in gathered.values()
+                                ]
+                            ),
+                            "failed_peers_count": len(failed_peers),
                             "participating_peers_count": len(participating_peers),
                         }
                     )
@@ -297,6 +307,8 @@ async def forward(self):
                                     )
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
+                                    # Wait for other validators to query miners
+                                    time.sleep(120 * 6)
                                     break
 
                                 except HfHubHTTPError:
@@ -380,7 +392,7 @@ async def forward(self):
         uids=self.miner_uids,
         responses=responses,
         all_reduce=all_reduce,
-        failed_senders=failed_senders,
+        failed_peers=failed_peers,
         participating_peers=participating_peers,
     )
 

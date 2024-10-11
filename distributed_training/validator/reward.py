@@ -25,9 +25,6 @@ from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
 
-torch.use_deterministic_algorithms(True)
-torch.manual_seed(42)
-
 
 def score_gradients(self, response, uid):
     # Create Dataloader
@@ -140,22 +137,22 @@ async def score_bandwidth(self, uids, timeout=120):
     return scores
 
 
-def score_failed_senders(self, uids, failed_senders, participating_peers):
+def score_failed_senders(self, uids, failed_peers, participating_peers):
     scores = torch.FloatTensor([0.0 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         peer_id = self.uids_to_peerids.get(uid)
 
         if peer_id in participating_peers:
-            if peer_id in failed_senders:
-                bt.logging.info(f"- Scoring UID {uid} 0.0 (Failed sender)")
+            if peer_id in failed_peers:
+                bt.logging.info(f"Scoring UID {uid} 0.0 - Failed sender")
                 scores[i] = 0.0
             else:
                 bt.logging.info(
-                    f"- Scoring UID {uid} 1.0 (Successful participating peer)"
+                    f"Scoring UID {uid} 1.0 - Successful participating peer)"
                 )
                 scores[i] = 1.0
         else:
-            bt.logging.info(f"- Scoring UID {uid} 0.0 (Not a participating peer)")
+            bt.logging.info(f"Scoring UID {uid} - Non participating peer")
             scores[i] = 0.0
 
     return scores
@@ -166,7 +163,7 @@ async def get_rewards(
     uids: List[int],
     responses: list,
     all_reduce: bool,
-    failed_senders=None,
+    failed_peers=None,
     participating_peers=None,
 ) -> torch.FloatTensor:
     """
@@ -183,11 +180,10 @@ async def get_rewards(
     """
     # Score a non-empty AllReduce response
     if all_reduce and ((responses != [[]]) or (self.uid != self.master_uid)):
-        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
-        # the scoring burden across all validators
-        self.miner_uids = await get_random_uids(
-            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-        )
+        if self.uid != self.master_uid:
+            # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
+            # the scoring burden across all validators
+            self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=2)
 
         # Set up the scores tensor
         scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
@@ -211,7 +207,7 @@ async def get_rewards(
         if self.uid == self.master_uid:
             # Apply penalty to failed senders if any
             failed_sender_scores = score_failed_senders(
-                self, self.miner_uids.tolist(), failed_senders, participating_peers
+                self, self.miner_uids.tolist(), failed_peers, participating_peers
             )
             bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
             self.event.update(
