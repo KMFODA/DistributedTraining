@@ -316,7 +316,7 @@ class DTAverager(hivemind.DecentralizedAverager):
         self._pending_groups_registered = asyncio.Event()
         self._pending_groups_registered.set()
 
-        peerids_to_uids = kwargs.get("peerids_to_uids", None)
+        peerids_to_uids = kwargs.get("peerids_to_uids", {})
 
         # Default behavior: initiate matchmaking and proceed as originally designed
         self._outer_pipe.send(
