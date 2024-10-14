@@ -39,7 +39,8 @@ def score_gradients(self, response, uid):
     )
     
     checkpoint_rng = random.Random(response.checkpoint_seed)
-    checkpoint_indices = sorted(checkpoint_rng.sample(range(len(self.dataloader)), 
+    total_batches = len(list(dataloader))
+    checkpoint_indices = sorted(checkpoint_rng.sample(range(total_batches), 
                                                       response.num_checkpoints))
     
     gradient_checkpoints = []
@@ -73,10 +74,10 @@ def score_gradients(self, response, uid):
             )
             for param in self.model.parameters()
         )
-        gradient_checkpoints.append(checkpoint_gradients)
+        gradient_checkpoints.append(checkpoint_gradients[response.gradient_test_index])
 
     # Calculate average gradients across checkpoints
-    avg_gradients = [
+    gradients = [
         sum(grad[i] for grad in gradient_checkpoints) / len(gradient_checkpoints)
         for i in range(len(gradient_checkpoints[0]))
     ]
@@ -88,9 +89,6 @@ def score_gradients(self, response, uid):
         score = 0
         return score
     
-    # Store summed random gradients in the synapse
-    gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
-
     bt.logging.info(
         f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
     )

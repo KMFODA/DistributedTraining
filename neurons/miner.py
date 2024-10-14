@@ -406,7 +406,8 @@ class Miner(BaseMinerNeuron):
         num_checkpoints = synapse.num_checkpoints
         
         checkpoint_rng = random.Random(checkpoint_seed)
-        checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), num_checkpoints))
+        total_batches = len(list(dataloader))
+        checkpoint_indices = sorted(checkpoint_rng.sample(range(total_batches), num_checkpoints))
 
         gradient_checkpoints = []
 
@@ -441,7 +442,7 @@ class Miner(BaseMinerNeuron):
             
             # Get gradients at checkpoints
             if index in checkpoint_indices:
-                gradient_checkpoints.append(self.get_current_gradients())
+                gradient_checkpoints.append(self.get_current_gradients()[synapse.gradient_test_index])
 
 
             # Log accumulation status
@@ -467,9 +468,7 @@ class Miner(BaseMinerNeuron):
             return synapse
         
         # Store average gradients in the synapse
-        synapse.gradients = float(
-            torch.sum(torch.abs(avg_gradients[synapse.gradient_test_index]))
-        )
+        synapse.gradients = avg_gradients
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
