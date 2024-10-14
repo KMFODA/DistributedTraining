@@ -53,6 +53,9 @@ from distributed_training.utils.misc import (
     load_wandb,
     setup_logging,
 )
+from distributed_training.utils.chain import (
+    log_peerid_to_chain,
+)
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
@@ -188,6 +191,9 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {

@@ -29,6 +29,7 @@ import torch
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
+from distributed_training.utils.chain import log_peerid_to_chain
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -71,6 +72,9 @@ class BaseValidatorNeuron(BaseNeuron):
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
+
+        # Log PeerID to chain flag
+        self.peer_id_logged_to_chain = False
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -149,6 +153,8 @@ class BaseValidatorNeuron(BaseNeuron):
                     self.wandb.log(self.event)
 
                 self.step += 1
+                if self.peer_id_logged_to_chain == False:
+                    log_peerid_to_chain(self)
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:

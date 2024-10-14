@@ -27,6 +27,7 @@ from typing import Optional
 import bittensor as bt
 import hivemind
 import torch
+import threading
 from bitarray import bitarray
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
@@ -58,10 +59,12 @@ from distributed_training.utils.misc import (
     setup_logging,
     warmup,
 )
-
-from distributed_training.utils.uids import (
-    map_uid_to_peerid,
+from distributed_training.utils.chain import (
+    log_peerid_to_chain,
+    UIDIterator,
 )
+
+from distributed_training.utils.uids import map_uid_to_peerid, map_uids_to_peerid
 
 from distributed_training.validator import forward
 from bitsandbytes.optim import LAMB
@@ -229,6 +232,15 @@ class Validator(BaseValidatorNeuron):
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
+
+        # Start UID iterator
+        self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
+        self.stop_event = threading.Event()
+        self.update_thread = threading.Thread(target=map_uids_to_peerid, daemon=True)
+        self.update_thread.start()
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

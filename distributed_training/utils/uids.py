@@ -7,6 +7,8 @@ import asyncio
 import distributed_training
 from hivemind.utils.timed_storage import ValueWithExpiration
 from hivemind.p2p import PeerID
+import time
+import datetime as dt
 
 
 async def check_uid(dendrite, axon, uid, epoch=None):
@@ -185,3 +187,48 @@ async def map_uid_to_peerid(self, uids):
             continue
 
     return uids_to_peerids
+
+
+def map_uids_to_peerid(self):
+    # Track how recently we updated each uid
+    uid_last_checked = dict()
+    # The below loop iterates across all miner uids and checks to see
+    # if they should be updated.
+    while not self.stop_event.is_set():
+        try:
+            # Get the next uid to check
+            next_uid = next(self.uid_iterator)
+            # Confirm that we haven't checked it in the last 5 minutes.
+            time_diff = (
+                dt.datetime.now() - uid_last_checked[next_uid]
+                if next_uid in uid_last_checked
+                else None
+            )
+            if time_diff and time_diff < dt.timedelta(minutes=5):
+                # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
+                time_to_sleep = (dt.timedelta(minutes=5) - time_diff).total_seconds()
+                bt.logging.trace(
+                    f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
+                )
+                time.sleep(time_to_sleep)
+            uid_last_checked[next_uid] = dt.datetime.now()
+            # Get their hotkey from the metagraph.
+            hotkey = "NoHotkey"
+            with self.metagraph_lock:
+                hotkey = self.metagraph.hotkeys[next_uid]
+            # Compare metadata and tracker, syncing new model from remote store to local if necessary.
+            metadata = bt.extrinsics.serving.get_metadata(
+                self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
+            )
+            commitment = metadata["info"]["fields"][0]
+            hex_data = commitment[list(commitment.keys())[0]][2:]
+            chain_str = bytes.fromhex(hex_data).decode()
+            updated = PeerID(chain_str)
+            if self.uids_to_peerids[next_uid] != updated:
+                bt.logging.trace(
+                    f"Updated peerID for UID={next_uid}. Was new = {updated}"
+                )
+                self.uids_to_peerids[next_uid] = updated
+        except Exception as e:
+            bt.logging.error(f"Error in update loop: {e} \n {traceback.format_exc()}")
+    bt.logging.info("Exiting update models loop.")
