@@ -21,7 +21,7 @@ from typing import List
 import bittensor as bt
 import torch
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
+from distributed_training.utils.uids import get_random_uids, update_run_peerid_list
 import time
 import asyncio
 
@@ -99,8 +99,10 @@ async def score_blacklist(self, uids):
     for i, uid in enumerate(uids):
         if self.uids_to_peerids[uid] == None:
             scores[i] = 0.0
-        else:
+        elif self.uids_to_peerids[uid] in self.run_peer_id_list:
             scores[i] = 1.0
+        else:
+            scores[i] = 0.0
 
     return scores
 
@@ -188,12 +190,9 @@ async def get_rewards(
         # Set up the scores tensor
         scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
-        # Update mapping of uids to peerids
-        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        update_run_peerid_list(self)
         blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
@@ -257,14 +256,9 @@ async def get_rewards(
 
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if (self.step % 1) == 0:
-            # Update mapping of uids to peerids
-            self.uids_to_peerids = await map_uid_to_peerid(
-                self, range(0, self.metagraph.n)
-            )
-            self.uids_to_peerids[self.uid] = self.dht.peer_id
-            bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
+            bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+            update_run_peerid_list(self)
             blacklist_scores = await score_blacklist(self, uids.tolist())
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(

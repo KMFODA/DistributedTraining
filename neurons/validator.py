@@ -64,7 +64,7 @@ from distributed_training.utils.chain import (
     UIDIterator,
 )
 
-from distributed_training.utils.uids import map_uid_to_peerid, map_uids_to_peerid
+from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 
 from distributed_training.validator import forward
 from bitsandbytes.optim import LAMB
@@ -224,9 +224,11 @@ class Validator(BaseValidatorNeuron):
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
         self.stop_event = threading.Event()
         self.update_thread = threading.Thread(
-            target=map_uids_to_peerid, args=(self,), daemon=True
+            target=map_uid_to_peerid, args=(self,), daemon=True
         )
         self.update_thread.start()
+
+        update_run_peerid_list(self)
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

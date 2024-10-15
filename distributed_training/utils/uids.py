@@ -115,7 +115,7 @@ async def get_random_uids(
     return uids
 
 
-async def map_uid_to_peerid(self, uids):
+async def map_uid_to_peerid_archive(self, uids):
     # Get all peers connected to our DHT, their ips and their ports
     peer_list_dht = await self._p2p.list_peers()
     peer_list_dht_addrs = [
@@ -189,7 +189,21 @@ async def map_uid_to_peerid(self, uids):
     return uids_to_peerids
 
 
-def map_uids_to_peerid(self):
+def update_run_peerid_list(self):
+    prefix = self.grad_averager.matchmaking_kwargs["prefix"]
+    metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
+        {},
+        None,
+    )
+    self.run_peer_id_list = [
+        str(PeerID(peer_id))
+        for peer_id, info in metadata.items()
+        if isinstance(info, ValueWithExpiration)
+        and isinstance(info.value, (float, int))
+    ]
+
+
+def map_uid_to_peerid(self):
     # Track how recently we updated each uid
     uid_last_checked = dict()
     # The below loop iterates across all miner uids and checks to see
