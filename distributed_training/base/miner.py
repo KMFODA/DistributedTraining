@@ -136,12 +136,6 @@ class BaseMinerNeuron(BaseNeuron):
                 if self.peer_id_logged_to_chain == False:
                     log_peerid_to_chain(self)
 
-                # Update uids_to_peerids dict
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                self.uids_to_peerids[self.uid] = self.dht.peer_id
-
             # Await the training task to ensure it completes before exiting
 
         # If someone intentionally stops the miner, it'll safely terminate operations.

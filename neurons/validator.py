@@ -220,7 +220,9 @@ class Validator(BaseValidatorNeuron):
         log_peerid_to_chain(self)
 
         # Start UID iterator and map_uids_to_peerid background thread
-        self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
+        self.uids_to_peerids = {
+            uid: (None, None) for uid in self.metagraph.uids.tolist()
+        }
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
         self.stop_event = threading.Event()
         self.update_thread = threading.Thread(

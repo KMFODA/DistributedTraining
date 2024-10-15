@@ -235,15 +235,45 @@ def map_uid_to_peerid(self):
                 commitment = metadata["info"]["fields"][0]
                 hex_data = commitment[list(commitment.keys())[0]][2:]
                 chain_str = bytes.fromhex(hex_data).decode()
-                updated = chain_str
+                updated = (chain_str, metadata["block"])
             else:
-                updated = None
+                updated = (None, None)
 
-            if self.uids_to_peerids[next_uid] != updated:
+            if (self.uids_to_peerids[next_uid][0] != updated[0]) and (
+                updated[0]
+                not in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
+            ):
                 bt.logging.info(
-                    f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid]}. Current = {updated}"
+                    f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
                 )
                 self.uids_to_peerids[next_uid] = updated
+            elif (self.uids_to_peerids[next_uid][0] != updated[0]) and (
+                updated[0]
+                in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
+            ):
+                indices = [
+                    index
+                    for index, peerid_info in enumerate(self.uids_to_peerids.values())
+                    if peerid_info[0] == updated[0]
+                ]
+                for index in indices:
+                    if self.uids_to_peerids[index][1] > updated[1]:
+                        self.uids_to_peerids[index] = (None, None)
+                        bt.logging.info(
+                            f"The same peerID was found for UID={index} with a later commit message. Setting the peerID for that UID={index} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
+                        )
+                        self.uids_to_peerids[next_uid] = updated
+                        bt.logging.info(
+                            f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
+                        )
+                        break
+                    else:
+                        updated = (None, None)
+                        bt.logging.info(
+                            f"The same peerID was found for UID={index} with an earlier commit message. Setting the peerID for UID={next_uid} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
+                        )
+                        self.uids_to_peerids[next_uid] = updated
+
         except Exception as e:
             bt.logging.error(f"Error in update loop: {e} \n {traceback.format_exc()}")
     bt.logging.info("Exiting update models loop.")
