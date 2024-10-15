@@ -209,23 +209,6 @@ class Validator(BaseValidatorNeuron):
         self.get_stub = self.grad_averager.get_stub
         self.serializer = self.grad_averager.serializer
 
-        # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
@@ -236,10 +219,13 @@ class Validator(BaseValidatorNeuron):
         # Log PeerID to chain
         log_peerid_to_chain(self)
 
-        # Start UID iterator
+        # Start UID iterator and map_uids_to_peerid background thread
+        self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
         self.stop_event = threading.Event()
-        self.update_thread = threading.Thread(target=map_uids_to_peerid, daemon=True)
+        self.update_thread = threading.Thread(
+            target=map_uids_to_peerid, args=(self,), daemon=True
+        )
         self.update_thread.start()
 
     def update_local_tracker_state(self, rewards, responses):

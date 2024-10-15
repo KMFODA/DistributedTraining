@@ -211,22 +211,23 @@ def map_uids_to_peerid(self):
                     f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
                 )
                 time.sleep(time_to_sleep)
+
             uid_last_checked[next_uid] = dt.datetime.now()
-            # Get their hotkey from the metagraph.
-            hotkey = "NoHotkey"
-            with self.metagraph_lock:
-                hotkey = self.metagraph.hotkeys[next_uid]
             # Compare metadata and tracker, syncing new model from remote store to local if necessary.
             metadata = bt.extrinsics.serving.get_metadata(
                 self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
             )
-            commitment = metadata["info"]["fields"][0]
-            hex_data = commitment[list(commitment.keys())[0]][2:]
-            chain_str = bytes.fromhex(hex_data).decode()
-            updated = PeerID(chain_str)
+            if metadata is not None:
+                commitment = metadata["info"]["fields"][0]
+                hex_data = commitment[list(commitment.keys())[0]][2:]
+                chain_str = bytes.fromhex(hex_data).decode()
+                updated = chain_str
+            else:
+                updated = None
+
             if self.uids_to_peerids[next_uid] != updated:
-                bt.logging.trace(
-                    f"Updated peerID for UID={next_uid}. Was new = {updated}"
+                bt.logging.info(
+                    f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid]}. Current = {updated}"
                 )
                 self.uids_to_peerids[next_uid] = updated
         except Exception as e:
