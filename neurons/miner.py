@@ -53,6 +53,9 @@ from distributed_training.utils.misc import (
     load_wandb,
     setup_logging,
 )
+from distributed_training.utils.chain import (
+    log_peerid_to_chain,
+)
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
@@ -158,21 +161,7 @@ class Miner(BaseMinerNeuron):
         self.serializer = self.grad_averager.serializer
 
         # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
 
         # Load dataset
         self.dataset_loader = ()
@@ -188,6 +177,9 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {

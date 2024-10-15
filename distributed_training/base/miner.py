@@ -24,6 +24,7 @@ import traceback
 import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training.utils.chain import log_peerid_to_chain
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -73,6 +74,9 @@ class BaseMinerNeuron(BaseNeuron):
         self.lock = asyncio.Lock()
 
         self.config.neuron.disable_set_weights = True
+
+        # Log PeerID to chain flag
+        self.peer_id_logged_to_chain = False
 
     def run(self):
         """
@@ -129,11 +133,8 @@ class BaseMinerNeuron(BaseNeuron):
                 self.sync()
                 self.step += 1
 
-                # Update uids_to_peerids dict
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                self.uids_to_peerids[self.uid] = self.dht.peer_id
+                if self.peer_id_logged_to_chain == False:
+                    log_peerid_to_chain(self)
 
             # Await the training task to ensure it completes before exiting
 
