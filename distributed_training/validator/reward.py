@@ -39,65 +39,71 @@ def score_gradients(self, response, uid):
     )
     
     checkpoint_rng = random.Random(response.checkpoint_seed)
-    total_batches = len(list(dataloader))
-    checkpoint_indices = sorted(checkpoint_rng.sample(range(total_batches), 
+    checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), 
                                                       response.num_checkpoints))
-    
-    gradient_checkpoints = []
-    
-
-    # Train data for on last indices
-    for index in checkpoint_indices:
-        # Get the batch at the checkpoint index
-        batch = list(itertools.islice(dataloader, index, index+1))[0]
         
-        # Extract inputs and labels
-        inputs = batch[0].to(self.device)
-        labels = batch[1].to(self.device)
+    checkpoint_indices_set = set(checkpoint_indices)
+    total_gradient_sum = None
+    collected_indices = set()
 
-        # Zero Gradients
-        self.opt.zero_grad()
-
-        # Forward pass
-        outputs = self.model(input_ids=inputs, labels=labels)
-        loss = outputs[1]
-
-        # Backward Pass
-        loss.backward()
-
-        # Copy gradients at checkpoint
-        checkpoint_gradients = tuple(
-            (
-                param.grad.detach().cpu().clone()
-                if param.grad is not None
-                else torch.zeros_like(param)
-            )
-            for param in self.model.parameters()
-        )
-        gradient_checkpoints.append(checkpoint_gradients[response.gradient_test_index])
-
-    # Calculate average gradients across checkpoints
-    gradients = [
-        sum(grad[i] for grad in gradient_checkpoints) / len(gradient_checkpoints)
-        for i in range(len(gradient_checkpoints[0]))
-    ]
     
-    if response.gradient_test_index > len(avg_gradients):
+    # Train data for on last indices
+    for index, batch in enumerate(dataloader):
+        if index in checkpoint_indices_set:
+            
+            # Extract inputs and labels
+            inputs = batch[0].to(self.device)
+            labels = batch[1].to(self.device)
+
+            # Zero Gradients
+            self.opt.zero_grad()
+
+            # Forward pass
+            outputs = self.model(input_ids=inputs, labels=labels)
+            loss = outputs[1]
+
+            # Backward Pass
+            loss.backward()
+
+            # Extract gradient for the test_layer_index
+            test_layer_param = list(self.model.parameters())[response.gradient_test_index]
+            gradient = test_layer_param.grad.detach().cpu()
+
+            # Sum the gradients
+            if total_gradient_sum is None:
+                total_gradient_sum = gradient.clone()
+            else:
+                total_gradient_sum += gradient
+            
+            collected_indices.add(index)
+            if len(collected_indices) == len(checkpoint_indices):
+                break  # All required checkpoints have been processed
+             
+    if response.gradient_test_index >= len(list(self.model.parameters())):
         bt.logging.info(
-            f"UID {uid} running incorrect model. Assigning it a gradients core of 0."
+            f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
         )
         score = 0
         return score
     
+    # Convert gradients to tensors
+    validator_gradient = total_gradient_sum
+    miner_gradient = torch.tensor(response.gradients)
+    
     bt.logging.info(
-        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
+        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {validator_gradient}"
     )
     bt.logging.info(
-        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
-    )        
+        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {miner_gradient}"
+    )         
 
-    relative_diff = abs(gradients - response.gradients) / max(abs(gradients), abs(response.gradients)) 
-    score = 1.0 - min(relative_diff, 1.0) # Normalise score between 0 and 1
+    # Compute relative difference 
+    numerator = torch.norm(validator_gradient - miner_gradient)
+    denominator = max(torch.norm(validator_gradient), torch.norm(miner_gradient), torch.tensor(1e-8))
+    relative_diff = numerator / denominator
+
+    # Normalize score between 0 and 1
+    score = max(0.0, 1.0 - relative_diff.item())
 
     return score
 
