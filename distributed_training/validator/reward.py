@@ -109,7 +109,7 @@ def score_gradients(self, response, uid):
             if len(collected_indices) == len(checkpoint_indices):
                 break  # All required checkpoints have been processed
              
-    if response.gradient_test_index >= len(list(self.model.parameters())):
+    if response.gradient_test_index >= len(gradient):
         bt.logging.info(
             f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
         )
