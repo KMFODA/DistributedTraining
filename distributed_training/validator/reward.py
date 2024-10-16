@@ -93,7 +93,7 @@ def score_gradients(self, response, uid):
             projected_gradient = torch.matmul(R, gradient_flat).cpu()
 
             # Append to validator's list
-            proj_gradient_list.append(projected_gradient.tolist())
+            validator_proj_gradients.append(projected_gradient.tolist())
             
             collected_indices.add(index)
             if len(collected_indices) == len(checkpoint_indices):
