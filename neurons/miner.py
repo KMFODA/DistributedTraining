@@ -58,8 +58,13 @@ from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
-torch.use_deterministic_algorithms(True)
+# GPU optimizations.
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+# Seeds
 torch.manual_seed(42)
+torch.cuda.manual_seed(42)
 
 def get_size(obj, seen=None):
     """Recursively calculate size of objects"""

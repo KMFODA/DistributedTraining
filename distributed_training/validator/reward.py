@@ -28,8 +28,13 @@ import itertools
 import asyncio
 import random
 
-torch.use_deterministic_algorithms(True)
+# GPU optimizations.
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+# Seeds
 torch.manual_seed(42)
+torch.cuda.manual_seed(42)
 
 def score_gradients(self, response, uid):
     # Create DataLoader
