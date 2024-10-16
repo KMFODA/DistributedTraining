@@ -38,12 +38,13 @@ def score_gradients(self, response, uid):
         rows=response.dataset_indices,
     )
     
+    num_checks = 10
     checkpoint_rng = random.Random(response.checkpoint_seed)
     checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), 
-                                                      response.num_checkpoints))
+                                                      num_checks))
         
     checkpoint_indices_set = set(checkpoint_indices)
-    total_gradient_sum = None
+    validator_gradient_sums = []
     collected_indices = set()
 
     
@@ -68,12 +69,7 @@ def score_gradients(self, response, uid):
             # Extract gradient for the test_layer_index
             test_layer_param = list(self.model.parameters())[response.gradient_test_index]
             gradient = test_layer_param.grad.detach().cpu()
-
-            # Sum the gradients
-            if total_gradient_sum is None:
-                total_gradient_sum = gradient.clone()
-            else:
-                total_gradient_sum += gradient
+            validator_gradient_sums.append(gradient.sum().item())
             
             collected_indices.add(index)
             if len(collected_indices) == len(checkpoint_indices):
@@ -86,24 +82,29 @@ def score_gradients(self, response, uid):
         score = 0
         return score
     
-    # Convert gradients to tensors
-    validator_gradient = total_gradient_sum
-    miner_gradient = torch.tensor(response.gradients)
+    miner_gradient_sums = [response.gradient_sums[idx] for idx in checkpoint_indices]
     
     bt.logging.info(
-        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {validator_gradient}"
+        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {validator_gradient_sums}"
     )
     bt.logging.info(
-        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {miner_gradient}"
+        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {miner_gradient_sums}"
     )         
 
-    # Compute relative difference 
-    numerator = torch.norm(validator_gradient - miner_gradient)
-    denominator = max(torch.norm(validator_gradient), torch.norm(miner_gradient), torch.tensor(1e-8))
-    relative_diff = numerator / denominator
+    # Compute the differences between the miner's and validator's gradient sums
+    differences = [abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)]
+
+    # Compute relative differences
+    relative_diffs = [
+        diff / max(abs(m), abs(v), 1e-8)
+        for diff, m, v in zip(differences, miner_gradient_sums, validator_gradient_sums)
+    ]
+
+    # Compute average relative difference
+    average_relative_diff = sum(relative_diffs) / len(relative_diffs)
 
     # Normalize score between 0 and 1
-    score = max(0.0, 1.0 - relative_diff.item())
+    score = max(0.0, 1.0 - average_relative_diff)
 
     return score
 

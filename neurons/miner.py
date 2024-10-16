@@ -392,7 +392,7 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         index = 0
-        total_gradient_sum = None 
+        gradient_sum_list = []
 
         # Train data for one epoch
         for index, batch in enumerate(dataloader):
@@ -424,12 +424,7 @@ class Miner(BaseMinerNeuron):
             # Extract gradient for the test_layer_index
             test_layer_param = list(self.model.parameters())[synapse.gradient_test_index]
             gradient = test_layer_param.grad.detach().cpu()
-
-            # Sum the gradients
-            if total_gradient_sum is None:
-                total_gradient_sum = gradient.clone()
-            else:
-                total_gradient_sum += gradient
+            gradient_sum_list.append(gradient.sum().item())
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
@@ -449,8 +444,8 @@ class Miner(BaseMinerNeuron):
             synapse.model_name = self.model.name_or_path
             return synapse
         
-        # Store average gradients in the synapse
-        synapse.gradients = total_gradient_sum.numpy().tolist()
+        # Store the list of gradient sums in the synapse
+        synapse.gradient_sums = gradient_sum_list
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
