@@ -47,10 +47,10 @@ class Train(bt.Synapse):
     dataset_indices: list = None
 
     # Gradient sums of a randomly chosen index
-    gradient_sums: float = None
+    gradient_sums: list = None
     
     # Projected gradients of a randomly chosen index
-    projected_gradients: float = None
+    projected_gradients: list = None
 
     # Gradient Index to be evaluated
     gradient_test_index: int = None
