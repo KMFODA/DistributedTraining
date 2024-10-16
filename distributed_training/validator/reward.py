@@ -49,7 +49,7 @@ def score_gradients(self, response, uid):
     
     # Generate random projection matrix
     projection_seed = response.projection_seed
-    original_dim = self.get_parameter_size(self.model.parameters()[response.gradient_test_index])
+    original_dim = self.model.parameters()[response.gradient_test_index].numel()
     projected_dim = response.projected_dim
     R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
 

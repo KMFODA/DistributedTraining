@@ -61,6 +61,32 @@ from distributed_training import __version__, __spec_version__
 torch.use_deterministic_algorithms(True)
 torch.manual_seed(42)
 
+def get_size(obj, seen=None):
+    """Recursively calculate size of objects"""
+    import sys
+    from numbers import Number
+    from collections import abc
+    from sys import getsizeof
+
+    if seen is None:
+        seen = set()
+
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+
+    size = getsizeof(obj)
+
+    if isinstance(obj, (str, bytes, Number, range, bytearray)):
+        pass
+    elif isinstance(obj, (tuple, list, set, frozenset)):
+        size += sum(get_size(item, seen) for item in obj)
+    elif isinstance(obj, abc.Mapping):
+        size += sum(get_size(key, seen) + get_size(value, seen) for key, value in obj.items())
+
+    return size
+
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
@@ -395,7 +421,7 @@ class Miner(BaseMinerNeuron):
         gradient_sum_list = []
 
         projection_seed = synapse.projection_seed
-        original_dim = self.get_parameter_size(self.model.parameters()[synapse.gradient_test_index])
+        original_dim = self.model.parameters()[synapse.gradient_test_index].numel()
         projected_dim = synapse.projected_dim
         R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
 
@@ -455,6 +481,18 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
+        
+        # Log the shape and size of gradient_sums and projected_gradients
+        bt.logging.info(f"Shape of gradient_sums: {len(synapse.gradient_sums)}")
+        bt.logging.info(f"Shape of projected_gradients: {len(synapse.projected_gradients)} x {len(synapse.projected_gradients[0])}")
+
+        
+        gradient_sums_size = get_size(synapse.gradient_sums)
+        projected_gradients_size = get_size(synapse.projected_gradients)
+        
+        bt.logging.info(f"Size of gradient_sums: {gradient_sums_size} bytes")
+        bt.logging.info(f"Size of projected_gradients: {projected_gradients_size} bytes")
+        bt.logging.info(f"Total size: {gradient_sums_size + projected_gradients_size} bytes")
 
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
