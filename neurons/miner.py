@@ -436,7 +436,7 @@ class Miner(BaseMinerNeuron):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
-            print(intputs, labels)
+
             # Zero Gradients
             self.opt.zero_grad()
 
