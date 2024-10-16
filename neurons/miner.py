@@ -494,7 +494,7 @@ class Miner(BaseMinerNeuron):
                     }
                 )
 
-        if synapse.gradient_test_index >= len(gradient)):
+        if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
             )
