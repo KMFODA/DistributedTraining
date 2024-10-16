@@ -52,7 +52,7 @@ def score_gradients(self, response, uid):
     validator_gradient_sums = []
     collected_indices = set()
     
-    target_param = list(self.model.parameters())[synapse.gradient_test_index]
+    target_param = list(self.model.parameters())[response.gradient_test_index]
         
     # Generate random projection matrix
     original_dim = target_param.numel()
