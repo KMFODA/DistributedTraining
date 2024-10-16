@@ -139,6 +139,7 @@ class Miner(BaseMinerNeuron):
                 revision=str(self.global_progress.epoch),
                 trust_remote_code=True,
             )
+        
             if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name, trust_remote_code=True
@@ -424,15 +425,15 @@ class Miner(BaseMinerNeuron):
 
         total_loss = 0
         gradient_sum_list = []
-
-        for i, param in enumerate(self.model.parameters()):
-            if i == synapse.gradient_test_index:
-                original_dim = param.numel()
-                break
+        
+        target_param = list(self.model.parameters())[synapse.gradient_test_index]
+        
+        # Generate random projection matrix
+        original_dim = target_param.numel()
         projection_seed = synapse.projection_seed
         projected_dim = synapse.projected_dim
-        print(original_dim, projected_dim)            
-        R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+
+        R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim).to(self.device)
 
         proj_gradient_list = []  # List to store projected gradients per batch
 
@@ -456,29 +457,21 @@ class Miner(BaseMinerNeuron):
             loss.backward()
 
             # Accumulate Gradients
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+            self.grad_averager.accumulate_grads_(batch_size=inputs.size(0))
 
             # Update Tracker
-            self.local_progress.samples_accumulated += len(inputs)
+            self.local_progress.samples_accumulated += inputs.size(0)
             
             # Extract gradient for the test_layer_index
-            gradient = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
-            gradient = gradient[synapse.gradient_test_index]
+            gradient = target_param.grad.detach()
             
-            gradient_sum_list.append( float(
-                torch.sum(torch.abs(gradient[synapse.gradient_test_index])))
-            )
+            gradient_sum_list.append(
+                torch.sum(torch.abs(gradient)).item()
+                )
             
             # Project the gradient
-            gradient_flat = gradient.numpy().flatten()
-            projected_gradient = np.dot(R, gradient_flat)  # Shape: (projected_dim,)
+            gradient_flat = gradient.detach().clone().view(-1)
+            projected_gradient = torch.matmul(R, gradient_flat).cpu()
 
             # Append the projected gradient to the list
             proj_gradient_list.append(projected_gradient.tolist())

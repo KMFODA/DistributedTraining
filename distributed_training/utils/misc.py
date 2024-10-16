@@ -37,7 +37,7 @@ import json
 from hivemind import utils
 import re
 from ipaddress import ip_address
-import numpy as np
+import torch
 
 import os
 import shutil
@@ -162,8 +162,8 @@ class AsyncDendritePool:
         return await query_async()
 
 def generate_random_projection_matrix(seed, original_dim, projected_dim):
-    random_state = np.random.RandomState(seed)
-    R = random_state.normal(0, 1/np.sqrt(projected_dim), size=(projected_dim, original_dim))
+    torch.manual_seed(seed)
+    R = torch.randn(projected_dim, original_dim) / torch.sqrt(torch.tensor(projected_dim))
     return R
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):

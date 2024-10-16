@@ -52,16 +52,14 @@ def score_gradients(self, response, uid):
     validator_gradient_sums = []
     collected_indices = set()
     
+    target_param = list(self.model.parameters())[synapse.gradient_test_index]
+        
     # Generate random projection matrix
+    original_dim = target_param.numel()
     projection_seed = response.projection_seed
-    for i, param in enumerate(self.model.parameters()):
-            if i == synapse.gradient_test_index:
-                original_dim = param.numel()
-                break
     projected_dim = response.projected_dim
-    print(original_dim, projected_dim)            
 
-    R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+    R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim).to(self.device)
 
     # Validator's projected gradients at checkpoint indices
     validator_proj_gradients = []
@@ -84,26 +82,18 @@ def score_gradients(self, response, uid):
             loss.backward()
 
             # Extract gradient for the test_layer_index
-            gradient = tuple(
-                (
-                    param.grad.detach().cpu().clone()
-                    if param.grad is not None
-                    else torch.zeros_like(param)
-                )
-                for param in self.model.parameters()
-            )
-            gradient = gradient[synapse.gradient_test_index]
+            gradient = target_param.grad.detach()
             
-            validator_gradient_sums.append( float(
-                torch.sum(torch.abs(gradient)))
-            )
+            validator_gradient_sums.append(
+                torch.sum(torch.abs(gradient)).item()
+                )
             
             # Project the gradient
-            gradient_flat = gradient.numpy().flatten()
-            projected_gradient = np.dot(R, gradient_flat)  # Shape: (projected_dim,)
+            gradient_flat = gradient.view(-1)
+            projected_gradient = torch.matmul(R, gradient_flat).cpu()
 
             # Append to validator's list
-            validator_proj_gradients.append(projected_gradient)
+            proj_gradient_list.append(projected_gradient.tolist())
             
             collected_indices.add(index)
             if len(collected_indices) == len(checkpoint_indices):
@@ -298,10 +288,10 @@ async def get_rewards(
     # Score an empty responses
     elif (responses == [[]]) or (
         [
-            response.gradients
+            response.gradient_sums
             for response in responses[0]
             if (response.dendrite.status_code == 200)
-            and (response.gradients is not None)
+            and (response.gradient_sums is not None)
         ]
         == []
     ):
@@ -345,7 +335,7 @@ async def get_rewards(
                 (
                     score_gradients(self, response, uids.tolist()[index])
                     if (response.dendrite.status_code == 200)
-                    and (response.gradients is not None)
+                    and (response.gradient_sums is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])
