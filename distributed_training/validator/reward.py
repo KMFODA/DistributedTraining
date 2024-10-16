@@ -45,7 +45,7 @@ def score_gradients(self, response, uid):
     )
     
     num_checks = 10
-    checkpoint_rng = random.Random(response.checkpoint_seed)
+    checkpoint_rng = random.Random(response.projection_seed)
     checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), num_checks))
         
     checkpoint_indices_set = set(checkpoint_indices)
