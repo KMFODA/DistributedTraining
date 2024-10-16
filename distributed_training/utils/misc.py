@@ -160,6 +160,10 @@ class AsyncDendritePool:
 
         return await query_async()
 
+def generate_random_projection_matrix(self, seed, original_dim, projected_dim):
+    random_state = np.random.RandomState(seed)
+    R = random_state.normal(0, 1/np.sqrt(projected_dim), size=(projected_dim, original_dim))
+    return R
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"

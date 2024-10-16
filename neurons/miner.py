@@ -52,6 +52,7 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
+    generate_random_projection_matrix
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
@@ -391,10 +392,16 @@ class Miner(BaseMinerNeuron):
         )
 
         total_loss = 0
-        index = 0
         gradient_sum_list = []
 
-        # Train data for one epoch
+        projection_seed = synapse.projection_seed
+        original_dim = self.get_parameter_size(self.model.parameters()[synapse.gradient_test_index])
+        projected_dim = synapse.projected_dim
+        R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+
+        proj_gradient_list = []  # List to store projected gradients per batch
+
+        # Training loop
         for index, batch in enumerate(dataloader):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
@@ -405,8 +412,6 @@ class Miner(BaseMinerNeuron):
 
             # Forward pass
             outputs = self.model(input_ids=inputs, labels=labels)
-
-            # Normalize loss to account for batch accumulation
             loss = outputs[1]
 
             # Accumulate Total Loss
@@ -425,6 +430,13 @@ class Miner(BaseMinerNeuron):
             test_layer_param = list(self.model.parameters())[synapse.gradient_test_index]
             gradient = test_layer_param.grad.detach().cpu()
             gradient_sum_list.append(gradient.sum().item())
+            
+            # Project the gradient
+            gradient_flat = gradient.numpy().flatten()
+            projected_gradient = np.dot(R, gradient_flat)  # Shape: (projected_dim,)
+
+            # Append the projected gradient to the list
+            proj_gradient_list.append(projected_gradient.tolist())
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
@@ -443,9 +455,10 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-        
-        # Store the list of gradient sums in the synapse
+
+        # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
+        synapse.projected_gradients = proj_gradient_list
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss

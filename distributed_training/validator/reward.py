@@ -22,6 +22,7 @@ import bittensor as bt
 import torch
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
+from distributed_training.utils.misc import generate_random_projection_matrix
 import time
 import itertools
 import asyncio
@@ -31,7 +32,7 @@ torch.use_deterministic_algorithms(True)
 torch.manual_seed(42)
 
 def score_gradients(self, response, uid):
-    # Create Dataloader
+    # Create DataLoader
     dataloader = DataLoader(
         batch_size=self.config.neuron.local_batch_size_train,
         sequence_length=1024,
@@ -40,18 +41,24 @@ def score_gradients(self, response, uid):
     
     num_checks = 10
     checkpoint_rng = random.Random(response.checkpoint_seed)
-    checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), 
-                                                      num_checks))
+    checkpoint_indices = sorted(checkpoint_rng.sample(range(len(dataloader)), num_checks))
         
     checkpoint_indices_set = set(checkpoint_indices)
     validator_gradient_sums = []
     collected_indices = set()
-
     
-    # Train data for on last indices
+    # Generate random projection matrix
+    projection_seed = response.projection_seed
+    original_dim = self.get_parameter_size(self.model.parameters()[response.gradient_test_index])
+    projected_dim = response.projected_dim
+    R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+
+    # Validator's projected gradients at checkpoint indices
+    validator_proj_gradients = []
+
+    # Process data at checkpoint indices
     for index, batch in enumerate(dataloader):
         if index in checkpoint_indices_set:
-            
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
@@ -71,6 +78,13 @@ def score_gradients(self, response, uid):
             gradient = test_layer_param.grad.detach().cpu()
             validator_gradient_sums.append(gradient.sum().item())
             
+            # Project the gradient
+            gradient_flat = gradient.numpy().flatten()
+            projected_gradient = np.dot(R, gradient_flat)  # Shape: (projected_dim,)
+
+            # Append to validator's list
+            validator_proj_gradients.append(projected_gradient)
+            
             collected_indices.add(index)
             if len(collected_indices) == len(checkpoint_indices):
                 break  # All required checkpoints have been processed
@@ -82,13 +96,30 @@ def score_gradients(self, response, uid):
         score = 0
         return score
     
+    # Extract miner's projected gradients and gradient sums at checkpoint indices
+    miner_proj_gradients = [np.array(response.projected_gradients[idx]) for idx in checkpoint_indices]
     miner_gradient_sums = [response.gradient_sums[idx] for idx in checkpoint_indices]
     
+    # Compare the projected gradients at the selected indices
+    similarities = []
+    for v_grad, m_grad in zip(validator_proj_gradients, miner_proj_gradients):
+        # Compute cosine similarity
+        numerator = np.dot(v_grad, m_grad)
+        denominator = np.linalg.norm(v_grad) * np.linalg.norm(m_grad)
+        cosine_similarity = numerator / (denominator + 1e-8)
+        similarities.append(cosine_similarity)
+
+    # Compute average similarity
+    average_similarity = sum(similarities) / len(similarities)
+
+    # Normalize the score to [0, 1] for random projection method
+    score_proj = (average_similarity + 1) / 2  # Cosine similarity ranges from -1 to 1
+    
     bt.logging.info(
-        f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {validator_gradient_sums}"
+        f"Local Validator Gradient Sums at checkpoints: {validator_gradient_sums}"
     )
     bt.logging.info(
-        f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {miner_gradient_sums}"
+        f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
     )         
 
     # Compute the differences between the miner's and validator's gradient sums
@@ -103,10 +134,14 @@ def score_gradients(self, response, uid):
     # Compute average relative difference
     average_relative_diff = sum(relative_diffs) / len(relative_diffs)
 
-    # Normalize score between 0 and 1
-    score = max(0.0, 1.0 - average_relative_diff)
-
-    return score
+    # Normalize score between 0 and 1 for gradient sum method
+    score_sum = max(0.0, 1.0 - average_relative_diff)
+    
+    
+    bt.logging.info(
+        f"UID {uid} Gradient Sums scores: {score_sum} \n Projected gradient scores: {score_proj}"
+    )   
+    return score_sum, score_proj
 
 
 async def score_blacklist(self, uids):

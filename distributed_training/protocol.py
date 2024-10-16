@@ -46,18 +46,21 @@ class Train(bt.Synapse):
     # List of indices trained on
     dataset_indices: list = None
 
-    # Gradient Value of a randomly chosen index
-    gradients: float = None
+    # Gradient sums of a randomly chosen index
+    gradient_sums: float = None
+    
+    # Projected gradients of a randomly chosen index
+    projected_gradients: float = None
 
     # Gradient Index to be evaluated
     gradient_test_index: int = None
     
-    # Seed to choose the gradients to checkpoint
-    checkpoint_seed: int = None
+    # Seed to choose the projection of the gradients
+    projection_seed: int = None
     
-    # Number of checkpoints to checkpoint
-    num_checkpoints: int = None
-
+    # Dim to project gradients to
+    projected_dim: int = None
+    
     # Model Name
     model_name: str = "distributed/gpt2-250m"
 
