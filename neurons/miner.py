@@ -502,12 +502,11 @@ class Miner(BaseMinerNeuron):
             return synapse
         
         # Log the shape and size of gradient_sums and projected_gradients
-        bt.logging.info(f"Shape of gradient_sums: {len(synapse.gradient_sums)}")
-        bt.logging.info(f"Shape of projected_gradients: {len(synapse.projected_gradients)} x {len(synapse.projected_gradients[0])}")
+        bt.logging.info(f"Shape of gradient_sums: {len(gradient_sum_list)}")
+        bt.logging.info(f"Shape of projected_gradients: {len(proj_gradient_list)} x {len(proj_gradient_list[0])}")
 
-        
-        gradient_sums_size = get_size(synapse.gradient_sums)
-        projected_gradients_size = get_size(synapse.projected_gradients)
+        gradient_sums_size = get_size(gradient_sum_list)
+        projected_gradients_size = get_size(proj_gradient_list)
         
         bt.logging.info(f"Size of gradient_sums: {gradient_sums_size} bytes")
         bt.logging.info(f"Size of projected_gradients: {projected_gradients_size} bytes")
