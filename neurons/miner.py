@@ -420,7 +420,7 @@ class Miner(BaseMinerNeuron):
         total_loss = 0
         gradient_sum_list = []
 
-        for i, param in enumerate(model.parameters()):
+        for i, param in enumerate(self.model.parameters()):
             if i == synapse.gradient_test_index:
                 original_dim = param.numel()
                 break
