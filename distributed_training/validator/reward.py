@@ -49,8 +49,13 @@ def score_gradients(self, response, uid):
     
     # Generate random projection matrix
     projection_seed = response.projection_seed
-    original_dim = self.model.parameters()[response.gradient_test_index].numel()
+    for i, param in enumerate(model.parameters()):
+            if i == synapse.gradient_test_index:
+                original_dim = param.numel()
+                break
     projected_dim = response.projected_dim
+    print(original_dim, projected_dim)            
+
     R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
 
     # Validator's projected gradients at checkpoint indices
@@ -74,9 +79,19 @@ def score_gradients(self, response, uid):
             loss.backward()
 
             # Extract gradient for the test_layer_index
-            test_layer_param = list(self.model.parameters())[response.gradient_test_index]
-            gradient = test_layer_param.grad.detach().cpu()
-            validator_gradient_sums.append(gradient.sum().item())
+            gradient = tuple(
+                (
+                    param.grad.detach().cpu().clone()
+                    if param.grad is not None
+                    else torch.zeros_like(param)
+                )
+                for param in self.model.parameters()
+            )
+            gradient = gradient[synapse.gradient_test_index]
+            
+            validator_gradient_sums.append( float(
+                torch.sum(torch.abs(gradient)))
+            )
             
             # Project the gradient
             gradient_flat = gradient.numpy().flatten()
