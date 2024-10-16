@@ -132,6 +132,12 @@ def score_gradients(self, response, uid):
     bt.logging.info(
         f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
     )         
+    bt.logging.info(
+        f"Local Validator Projected Gradients at checkpoints: {validator_proj_gradients}"
+    )
+    bt.logging.info(
+        f"UID {uid} Projected Gradients at checkpoints: {miner_proj_gradients}"
+    )         
 
     # Compute the differences between the miner's and validator's gradient sums
     differences = [abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)]
@@ -150,9 +156,9 @@ def score_gradients(self, response, uid):
     
     
     bt.logging.info(
-        f"UID {uid} Gradient Sums scores: {score_sum} \n Projected gradient scores: {score_proj}"
+        f"UID {uid} Gradient Sums scores: {score_sum} -- Projected gradient scores: {score_proj}"
     )   
-    return score_sum, score_proj
+    return (score_sum + score_proj) / 2
 
 
 async def score_blacklist(self, uids):
