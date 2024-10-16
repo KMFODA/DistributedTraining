@@ -27,6 +27,7 @@ import time
 import itertools
 import asyncio
 import random
+import numpy as np
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
