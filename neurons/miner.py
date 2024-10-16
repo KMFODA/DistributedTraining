@@ -427,7 +427,7 @@ class Miner(BaseMinerNeuron):
         projection_seed = synapse.projection_seed
         projected_dim = synapse.projected_dim
         print(original_dim, projected_dim)            
-        R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+        R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
 
         proj_gradient_list = []  # List to store projected gradients per batch
 

@@ -56,7 +56,7 @@ def score_gradients(self, response, uid):
     projected_dim = response.projected_dim
     print(original_dim, projected_dim)            
 
-    R = self.generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
+    R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim)
 
     # Validator's projected gradients at checkpoint indices
     validator_proj_gradients = []
