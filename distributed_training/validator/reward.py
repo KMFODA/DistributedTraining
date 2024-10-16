@@ -49,7 +49,7 @@ def score_gradients(self, response, uid):
     
     # Generate random projection matrix
     projection_seed = response.projection_seed
-    for i, param in enumerate(model.parameters()):
+    for i, param in enumerate(self.model.parameters()):
             if i == synapse.gradient_test_index:
                 original_dim = param.numel()
                 break
