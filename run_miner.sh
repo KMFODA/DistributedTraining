@@ -237,7 +237,7 @@ if [ "$?" -eq 1 ]; then
                 echo "latest version $latest_version"
                 echo "current version $current_version"
                 diff=$(get_version_difference $latest_version $current_version)
-                if [ "$diff" -eq 1 ]; then
+                if [ "$diff" -gt 0 ]; then
                     echo "current validator version:" "$current_version" 
                     echo "latest validator version:" "$latest_version" 
 

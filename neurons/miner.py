@@ -66,32 +66,6 @@ torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
-def get_size(obj, seen=None):
-    """Recursively calculate size of objects"""
-    import sys
-    from numbers import Number
-    from collections import abc
-    from sys import getsizeof
-
-    if seen is None:
-        seen = set()
-
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    seen.add(obj_id)
-
-    size = getsizeof(obj)
-
-    if isinstance(obj, (str, bytes, Number, range, bytearray)):
-        pass
-    elif isinstance(obj, (tuple, list, set, frozenset)):
-        size += sum(get_size(item, seen) for item in obj)
-    elif isinstance(obj, abc.Mapping):
-        size += sum(get_size(key, seen) + get_size(value, seen) for key, value in obj.items())
-
-    return size
-
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
@@ -181,10 +155,8 @@ class Miner(BaseMinerNeuron):
             min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
-            next_chunk_timeout=30.0,
-            allreduce_timeout=self.all_reduce_timeout - 30,
-            # sender_timeout=None,
-            # reducer_timeout=None,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
         )
 
         self.loop = asyncio.new_event_loop()
@@ -250,15 +222,36 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
 
+        # Update the gradient averaging kwargs
+        if synapse.next_chunk_timeout is not None:
+            self.grad_averager.next_chunk_timeout = synapse.next_chunk_timeout
+            self.grad_averager.allreduce_kwargs[
+                "sender_timeout"
+            ] = self.grad_averager.next_chunk_timeout
+            self.grad_averager.allreduce_kwargs["reducer_timeout"] = (
+                self.grad_averager.next_chunk_timeout * 2
+            )
+        if synapse.all_reduce_timeout is not None:
+            self.grad_averager._allreduce_timeout = synapse.all_reduce_timeout
+        if synapse.min_group_size is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "min_group_size"
+            ] = synapse.min_group_size
+        if synapse.request_timeout is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "request_timeout"
+            ] = synapse.request_timeout
+        if synapse.min_matchmaking_time is not None:
+            self.grad_averager.matchmaking_kwargs[
+                "min_matchmaking_time"
+            ] = synapse.min_matchmaking_time
+
         # # Update mapping of uids to peerids
-        # self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        # self.uids_to_peerids[self.uid] = self.dht.peer_id
-        # bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         try:
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
                 wait=False,
-                gather=self.local_progress.samples_accumulated
+                gather=self.local_progress.samples_accumulated,
             )
             start_time = time.perf_counter()
 
@@ -384,6 +377,9 @@ class Miner(BaseMinerNeuron):
         Returns:
             template.protocol.Train: The synapse object with the 'loss' field set to models loss.
         """
+        timeout: float = synapse.timeout
+        start_time: float = time.perf_counter()
+
         update_global_tracker_state(self)
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
@@ -493,17 +489,6 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-        
-        # Log the shape and size of gradient_sums and projected_gradients
-        bt.logging.info(f"Shape of gradient_sums: {len(gradient_sum_list)}")
-        bt.logging.info(f"Shape of projected_gradients: {len(proj_gradient_list)} x {len(proj_gradient_list[0])}")
-
-        gradient_sums_size = get_size(gradient_sum_list)
-        projected_gradients_size = get_size(proj_gradient_list)
-        
-        bt.logging.info(f"Size of gradient_sums: {gradient_sums_size} bytes")
-        bt.logging.info(f"Size of projected_gradients: {projected_gradients_size} bytes")
-        bt.logging.info(f"Total size: {gradient_sums_size + projected_gradients_size} bytes")
 
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
@@ -523,6 +508,11 @@ class Miner(BaseMinerNeuron):
 
         if not self.config.neuron.dont_wandb_log:
             self.wandb.log(event)
+
+        if time.perf_counter() - start_time > timeout:
+            bt.logging.error(
+                f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
+            )
 
         return synapse
 

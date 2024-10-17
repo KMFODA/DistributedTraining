@@ -319,7 +319,7 @@ def add_loki_logger_handler(
     neuron_type,
 ):
     """Configure sending logs to loki server"""
-    
+
     def loki_filter(record):
         return record.levelno > logging.DEBUG
 
@@ -336,7 +336,7 @@ def add_loki_logger_handler(
     )
 
     loki_handler.addFilter(loki_filter)
-    
+
     # Send logs to loki as JSON
     loki_handler.setFormatter(
         JSONFormatter(
