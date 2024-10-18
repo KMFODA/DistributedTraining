@@ -65,7 +65,7 @@ def score_gradients(self, response, uid):
             self.opt.zero_grad()
 
             # Forward pass
-            with torch.autocast(dtype=torch.bfloat16):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
                 loss = outputs[1]
 
