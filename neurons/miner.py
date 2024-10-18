@@ -52,7 +52,7 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
-    generate_random_projection_matrix
+    generate_random_projection_matrix,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
@@ -65,6 +65,7 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -113,7 +114,6 @@ class Miner(BaseMinerNeuron):
                 revision=str(self.global_progress.epoch),
                 trust_remote_code=True,
             )
-        
             if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name, trust_remote_code=True
@@ -418,12 +418,13 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
+        synapse.batch_size = self.config.neuron.local_batch_size_train
 
         total_loss = 0
         gradient_sum_list = []
-        
+
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
-        
+
         # Training loop
         for index, batch in enumerate(dataloader):
             # Extract inputs and labels
@@ -449,13 +450,11 @@ class Miner(BaseMinerNeuron):
 
             # Update Tracker
             self.local_progress.samples_accumulated += inputs.size(0)
-            
+
             # Extract gradient for the test_layer_index
             gradient = target_param.grad.detach()
-            
-            gradient_sum_list.append(
-                torch.sum(torch.abs(gradient)).item()
-                )
+
+            gradient_sum_list.append(torch.sum(torch.abs(gradient)).item())
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")

@@ -91,9 +91,11 @@ async def forward(self):
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
         else:
-            if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
+            if self.local_progress.samples_accumulated == 0 and (
+                self.uid == self.master_uid
+            ):
                 sample_size = 20
-            elif (self.uid == self.master_uid):
+            elif self.uid == self.master_uid:
                 sample_size = 1
 
             self.miner_uids = await get_random_uids(
@@ -131,14 +133,10 @@ async def forward(self):
             else:
                 # Get a random layer to check gradients against
                 gradient_test_index = random.choice(self.test_layer_indices)
-                projection_seed = random.randint(0, 2**32 - 1)
-                projected_dim = 100
                 queries = [
                     distributed_training.protocol.Train(
                         model_name=self.model.name_or_path,
                         gradient_test_index=gradient_test_index,
-                        projection_seed=projection_seed,
-                        projected_dim=projected_dim,
                     )
                     for _ in self.miner_uids
                 ]

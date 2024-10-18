@@ -161,10 +161,6 @@ class AsyncDendritePool:
 
         return await query_async()
 
-def generate_random_projection_matrix(seed, original_dim, projected_dim):
-    torch.manual_seed(seed)
-    R = torch.randn(projected_dim, original_dim) / torch.sqrt(torch.tensor(projected_dim))
-    return R
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"

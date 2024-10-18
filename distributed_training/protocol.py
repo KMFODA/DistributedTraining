@@ -48,24 +48,21 @@ class Train(bt.Synapse):
 
     # Gradient sums of a randomly chosen index
     gradient_sums: list = None
-    
+
     # Projected gradients of a randomly chosen index
     projected_gradients: list = None
 
     # Gradient Index to be evaluated
     gradient_test_index: int = None
-    
-    # Seed to choose the projection of the gradients
-    projection_seed: int = None
-    
-    # Dim to project gradients to
-    projected_dim: int = None
-    
+
     # Model Name
     model_name: str = "distributed/gpt2-250m"
 
     # Model Loss
     loss: float = 0.0
+
+    # Batch Size
+    batch_size: int = 8
 
 
 class AllReduce(bt.Synapse):
