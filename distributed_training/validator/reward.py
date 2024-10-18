@@ -65,8 +65,9 @@ def score_gradients(self, response, uid):
             self.opt.zero_grad()
 
             # Forward pass
-            outputs = self.model(input_ids=inputs, labels=labels)
-            loss = outputs[1]
+            with torch.autocast(dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
 
             # Backward Pass
             loss.backward()

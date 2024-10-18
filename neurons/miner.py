@@ -434,8 +434,9 @@ class Miner(BaseMinerNeuron):
             self.opt.zero_grad()
 
             # Forward pass
-            outputs = self.model(input_ids=inputs, labels=labels)
-            loss = outputs[1]
+            with torch.autocast(dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
