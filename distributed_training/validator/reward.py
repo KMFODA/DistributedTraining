@@ -24,74 +24,115 @@ from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
 import time
 import asyncio
+import random
+import numpy as np
+
+# GPU optimizations.
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+# Seeds
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
 
 
 def score_gradients(self, response, uid):
-    # Create Dataloader
+    # Create DataLoader
     dataloader = DataLoader(
-        batch_size=self.config.neuron.local_batch_size_train,
+        batch_size=response.batch_size
+        if "batch_size" in response.__dict__
+        else self.config.neuron.local_batch_size_train,
         sequence_length=1024,
         rows=response.dataset_indices,
     )
 
-    index = 0
-    # Train data for on last indices
-    for index, batch in enumerate(dataloader):
-        continue
-
-    if index == 0:
-        score = 0
-        return score
-
-    # Extract inputs and labels
-    inputs = batch[0].to(self.device)
-    labels = batch[1].to(self.device)
-
-    # Zero Gradients
-    self.opt.zero_grad()
-
-    # Forward pass
-    outputs = self.model(input_ids=inputs, labels=labels)
-
-    loss = outputs[1]
-
-    # Backward Pass
-    loss.backward()
-
-    # Accumulate Gradients
-    self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-    # Copy gradients
-    gradients = tuple(
-        (
-            param.grad.detach().cpu().clone()
-            if param.grad is not None
-            else torch.zeros_like(param)
-        )
-        for param in self.model.parameters()
+    num_checks = 10
+    seed = random.randint(0, 2**32 - 1)
+    checkpoint_rng = random.Random(seed)
+    checkpoint_indices = sorted(
+        checkpoint_rng.sample(range(len(dataloader)), num_checks)
     )
 
-    if response.gradient_test_index > len(gradients):
+    checkpoint_indices_set = set(checkpoint_indices)
+    validator_gradient_sums = []
+    collected_indices = set()
+
+    target_param = list(self.model.parameters())[response.gradient_test_index]
+
+    # Process data at checkpoint indices
+    for index, batch in enumerate(dataloader):
+        if index in checkpoint_indices_set:
+            # Extract inputs and labels
+            inputs = batch[0].to(self.device)
+            labels = batch[1].to(self.device)
+
+            # Zero Gradients
+            self.opt.zero_grad()
+
+            # Forward pass
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
+
+            # Backward Pass
+            loss.backward()
+
+            # Extract gradient for the test_layer_index
+            gradient = target_param.grad.detach()
+
+            validator_gradient_sums.append(torch.sum(torch.abs(gradient)).item())
+
+            collected_indices.add(index)
+            if len(collected_indices) == len(checkpoint_indices):
+                break  # All required checkpoints have been processed
+
+    if response.gradient_test_index >= len(gradient):
         bt.logging.info(
-            f"UID {uid} running incorrect model. Assigning it a gradients core of 0."
+            f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
         )
         score = 0
         return score
+
+    if "gradient_sums" not in response.__dict__:
+        bt.logging.info(f"gradient_sums not found in UID{uid}'s response")
+        score_sum = 0
+
+        return score_sum
+
     else:
-        # Store summed random gradients in the synapse
-        gradients = float(torch.sum(torch.abs(gradients[response.gradient_test_index])))
+        # Extract miner's projected gradients and gradient sums at checkpoint indices
+        miner_gradient_sums = [
+            response.gradient_sums[idx] for idx in checkpoint_indices
+        ]
 
         bt.logging.info(
-            f"Local Validator Sum of Layer {response.gradient_test_index}'s Gradients are: {gradients}"
+            f"Local Validator Gradient Sums at checkpoints: {validator_gradient_sums}"
         )
         bt.logging.info(
-            f"UID {uid} Sum of Layer {response.gradient_test_index}'s Gradients are: {response.gradients}"
+            f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
         )
 
-        # TODO Address issue where gradient sum is negative
-        score = 1 - (abs(gradients - response.gradients))
+        # Compute the differences between the miner's and validator's gradient sums
+        differences = [
+            abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)
+        ]
 
-        return score
+        # Compute relative differences
+        relative_diffs = [
+            diff / max(abs(m), abs(v), 1e-8)
+            for diff, m, v in zip(
+                differences, miner_gradient_sums, validator_gradient_sums
+            )
+        ]
+
+        # Compute average relative difference
+        average_relative_diff = sum(relative_diffs) / len(relative_diffs)
+
+        # Normalize score between 0 and 1 for gradient sum method
+        score_sum = max(0.0, 1.0 - average_relative_diff)
+
+        return score_sum
 
 
 async def score_blacklist(self, uids):
@@ -234,10 +275,10 @@ async def get_rewards(
     # Score an empty responses
     elif (responses == [[]]) or (
         [
-            response.gradients
+            response.gradient_sums
             for response in responses[0]
             if (response.dendrite.status_code == 200)
-            and (response.gradients is not None)
+            and (response.gradient_sums is not None)
         ]
         == []
     ):
@@ -281,7 +322,7 @@ async def get_rewards(
                 (
                     score_gradients(self, response, uids.tolist()[index])
                     if (response.dendrite.status_code == 200)
-                    and (response.gradients is not None)
+                    and (response.gradient_sums is not None)
                     else 0
                 )
                 for index, response in enumerate(responses[0])

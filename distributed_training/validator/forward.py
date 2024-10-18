@@ -91,9 +91,11 @@ async def forward(self):
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
         else:
-            if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
+            if self.local_progress.samples_accumulated == 0 and (
+                self.uid == self.master_uid
+            ):
                 sample_size = 20
-            elif (self.uid == self.master_uid):
+            elif self.uid == self.master_uid:
                 sample_size = 1
 
             self.miner_uids = await get_random_uids(

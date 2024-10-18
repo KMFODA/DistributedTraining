@@ -37,6 +37,7 @@ import json
 from hivemind import utils
 import re
 from ipaddress import ip_address
+import torch
 
 import os
 import shutil
