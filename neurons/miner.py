@@ -424,15 +424,6 @@ class Miner(BaseMinerNeuron):
         
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
         
-        # # Generate random projection matrix
-        # original_dim = target_param.numel()
-        # projection_seed = synapse.projection_seed
-        # projected_dim = synapse.projected_dim
-
-        # R = generate_random_projection_matrix(projection_seed, original_dim, projected_dim).to(self.device)
-
-        # proj_gradient_list = []  # List to store projected gradients per batch
-
         # Training loop
         for index, batch in enumerate(dataloader):
             # Extract inputs and labels
@@ -464,13 +455,6 @@ class Miner(BaseMinerNeuron):
             gradient_sum_list.append(
                 torch.sum(torch.abs(gradient)).item()
                 )
-            
-            # # Project the gradient
-            # gradient_flat = gradient.detach().clone().view(-1)
-            # projected_gradient = torch.matmul(R, gradient_flat).cpu()
-
-            # # Append the projected gradient to the list
-            # proj_gradient_list.append(projected_gradient.tolist())
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
@@ -492,7 +476,6 @@ class Miner(BaseMinerNeuron):
 
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
-        # synapse.projected_gradients = proj_gradient_list
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
