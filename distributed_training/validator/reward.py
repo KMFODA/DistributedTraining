@@ -70,6 +70,10 @@ def score_gradients(self, response, uid):
                     f"Gradient score = 0. Local dataloader length is {len(dataloader)}. UID{uid}'s gradinet_sums list length is {len(response.gradient_sums)}."
                 )
 
+                score_sum = 0
+
+                return score_sum
+
             checkpoint_indices_set = set(checkpoint_indices)
             validator_gradient_sums = []
             collected_indices = set()

@@ -52,7 +52,6 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
-    generate_random_projection_matrix,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
