@@ -80,7 +80,7 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 10:
+            while len(self.miner_uids) < 30:
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
@@ -91,9 +91,11 @@ async def forward(self):
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
         else:
-            if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
+            if self.local_progress.samples_accumulated == 0 and (
+                self.uid == self.master_uid
+            ):
                 sample_size = 20
-            elif (self.uid == self.master_uid):
+            elif self.uid == self.master_uid:
                 sample_size = 1
 
             self.miner_uids = await get_random_uids(
@@ -170,22 +172,19 @@ async def forward(self):
                         participating_peers,
                     ) = gradient_averaging_step.result()
 
+                    batch_size = sum(
+                        [
+                            value
+                            if (value is not None) and (key not in failed_peers)
+                            else 0
+                            for key, value in gathered.items()
+                        ]
+                    )
+
                     bt.logging.info(f"Gathered {gathered} gradients")
                     bt.logging.info(f"Failed allreduce: {failed_peers}")
                     bt.logging.info(f"Participating peers: {participating_peers}")
-
-                    self.event.update(
-                        {
-                            "batch_size": sum(
-                                [
-                                    value if value is not None else 0
-                                    for value in gathered.values()
-                                ]
-                            ),
-                            "failed_peers_count": len(failed_peers),
-                            "participating_peers_count": len(participating_peers),
-                        }
-                    )
+                    bt.logging.info(f"Batch Size: {batch_size}")
 
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
@@ -293,8 +292,24 @@ async def forward(self):
                                     )
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
-                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
+                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}.",
                                     )
+
+                                    # Log batch size to wandb
+                                    self.event.update(
+                                        {
+                                            "batch_size": batch_size,
+                                            "failed_peers_count": len(failed_peers),
+                                            "participating_peers_count": len(
+                                                participating_peers
+                                            ),
+                                            "succesfull_peers_count": len(
+                                                participating_peers
+                                            )
+                                            - len(failed_peers),
+                                        }
+                                    )
+
                                     create_tag(
                                         self.config.neuron.model_name,
                                         repo_type="model",
@@ -306,6 +321,7 @@ async def forward(self):
                                     )
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
+
                                     # Wait for other validators to query miners
                                     time.sleep(120 * 6)
                                     break
