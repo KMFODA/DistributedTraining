@@ -38,99 +38,117 @@ torch.cuda.manual_seed(42)
 
 
 def score_gradients(self, response, uid):
-    # Create DataLoader
-    dataloader = DataLoader(
-        batch_size=response.batch_size
-        if "batch_size" in response.__dict__
-        else self.config.neuron.local_batch_size_train,
-        sequence_length=1024,
-        rows=response.dataset_indices,
-    )
-
-    num_checks = 10
-    seed = random.randint(0, 2**32 - 1)
-    checkpoint_rng = random.Random(seed)
-    checkpoint_indices = sorted(
-        checkpoint_rng.sample(range(len(dataloader)), num_checks)
-    )
-
-    checkpoint_indices_set = set(checkpoint_indices)
-    validator_gradient_sums = []
-    collected_indices = set()
-
-    target_param = list(self.model.parameters())[response.gradient_test_index]
-
-    # Process data at checkpoint indices
-    for index, batch in enumerate(dataloader):
-        if index in checkpoint_indices_set:
-            # Extract inputs and labels
-            inputs = batch[0].to(self.device)
-            labels = batch[1].to(self.device)
-
-            # Zero Gradients
-            self.opt.zero_grad()
-
-            # Forward pass
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[1]
-
-            # Backward Pass
-            loss.backward()
-
-            # Extract gradient for the test_layer_index
-            gradient = target_param.grad.detach()
-
-            validator_gradient_sums.append(torch.sum(torch.abs(gradient)).item())
-
-            collected_indices.add(index)
-            if len(collected_indices) == len(checkpoint_indices):
-                break  # All required checkpoints have been processed
-
-    if response.gradient_test_index >= len(gradient):
-        bt.logging.info(
-            f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
-        )
-        score = 0
-        return score
-
-    if "gradient_sums" not in response.__dict__:
-        bt.logging.info(f"gradient_sums not found in UID{uid}'s response")
-        score_sum = 0
-
-        return score_sum
-
-    else:
-        # Extract miner's projected gradients and gradient sums at checkpoint indices
-        miner_gradient_sums = [
-            response.gradient_sums[idx] for idx in checkpoint_indices
-        ]
-
-        bt.logging.info(
-            f"Local Validator Gradient Sums at checkpoints: {validator_gradient_sums}"
-        )
-        bt.logging.info(
-            f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
-        )
-
-        # Compute the differences between the miner's and validator's gradient sums
-        differences = [
-            abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)
-        ]
-
-        # Compute relative differences
-        relative_diffs = [
-            diff / max(abs(m), abs(v), 1e-8)
-            for diff, m, v in zip(
-                differences, miner_gradient_sums, validator_gradient_sums
+    try:
+        if "gradient_sums" not in response.__dict__:
+            bt.logging.info(
+                f"Gradient score = 0. Gradient sums not found in UID{uid}'s response"
             )
-        ]
 
-        # Compute average relative difference
-        average_relative_diff = sum(relative_diffs) / len(relative_diffs)
+            score_sum = 0
 
-        # Normalize score between 0 and 1 for gradient sum method
-        score_sum = max(0.0, 1.0 - average_relative_diff)
+            return score_sum
+
+        else:
+            # Create DataLoader
+            dataloader = DataLoader(
+                batch_size=response.batch_size
+                if "batch_size" in response.__dict__
+                else self.config.neuron.local_batch_size_train,
+                sequence_length=1024,
+                rows=response.dataset_indices,
+            )
+
+            num_checks = 10
+            seed = random.randint(0, 2**32 - 1)
+            checkpoint_rng = random.Random(seed)
+            checkpoint_indices = sorted(
+                checkpoint_rng.sample(range(len(dataloader)), num_checks)
+            )
+
+            if len(dataloader) != len(response.gradient_sums):
+                bt.logging.info(
+                    f"Gradient score = 0. Local dataloader length is {len(dataloader)}. UID{uid}'s gradinet_sums list length is {len(response.gradient_sums)}."
+                )
+
+            checkpoint_indices_set = set(checkpoint_indices)
+            validator_gradient_sums = []
+            collected_indices = set()
+
+            target_param = list(self.model.parameters())[response.gradient_test_index]
+
+            # Process data at checkpoint indices
+            for index, batch in enumerate(dataloader):
+                if index in checkpoint_indices_set:
+                    # Extract inputs and labels
+                    inputs = batch[0].to(self.device)
+                    labels = batch[1].to(self.device)
+
+                    # Zero Gradients
+                    self.opt.zero_grad()
+
+                    # Forward pass
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        outputs = self.model(input_ids=inputs, labels=labels)
+                        loss = outputs[1]
+
+                    # Backward Pass
+                    loss.backward()
+
+                    # Extract gradient for the test_layer_index
+                    gradient = target_param.grad.detach()
+
+                    validator_gradient_sums.append(
+                        torch.sum(torch.abs(gradient)).item()
+                    )
+
+                    collected_indices.add(index)
+                    if len(collected_indices) == len(checkpoint_indices):
+                        break  # All required checkpoints have been processed
+
+            if response.gradient_test_index >= len(gradient):
+                bt.logging.info(
+                    f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
+                )
+                score = 0
+                return score
+
+            # Extract miner's projected gradients and gradient sums at checkpoint indices
+            miner_gradient_sums = [
+                response.gradient_sums[idx] for idx in checkpoint_indices
+            ]
+
+            bt.logging.info(
+                f"Local Validator Gradient Sums at checkpoints: {validator_gradient_sums}"
+            )
+            bt.logging.info(
+                f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
+            )
+
+            # Compute the differences between the miner's and validator's gradient sums
+            differences = [
+                abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)
+            ]
+
+            # Compute relative differences
+            relative_diffs = [
+                diff / max(abs(m), abs(v), 1e-8)
+                for diff, m, v in zip(
+                    differences, miner_gradient_sums, validator_gradient_sums
+                )
+            ]
+
+            # Compute average relative difference
+            average_relative_diff = sum(relative_diffs) / len(relative_diffs)
+
+            # Normalize score between 0 and 1 for gradient sum method
+            score_sum = max(0.0, 1.0 - average_relative_diff)
+
+            return score_sum
+    except Exception as e:
+        bt.logging.info(
+            f"Gradient score = 0. Gradient scoring failed for UID {uid} with error {e}."
+        )
+        score_sum = 0
 
         return score_sum
 
