@@ -48,7 +48,6 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.misc import (
-    get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
@@ -196,6 +195,9 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+        # Init Tracking event
+        self.event = {}
 
     def get_miner_info(self):
         return {
@@ -457,14 +459,6 @@ class Miner(BaseMinerNeuron):
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log(
-                    {
-                        "loss": loss.detach().item(),
-                        "local_epoch": self.local_progress.epoch,
-                        "global_epoch": self.global_progress.epoch,
-                    }
-                )
 
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
@@ -480,16 +474,15 @@ class Miner(BaseMinerNeuron):
         synapse.loss = average_loss
         synapse.dataset_indices = group
 
-        event = {}
-        event.update(self.get_miner_info())
-        try:
-            event.update(get_bandwidth())
-        except:
-            bt.logging.info("Error getting bandwidth metrics")
-        event.update({"steps": index})
-
         if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(event)
+            self.event.update(
+                {
+                    "loss": synapse.loss,
+                    "local_epoch": self.local_progress.epoch,
+                    "global_epoch": self.global_progress.epoch,
+                    "steps": index,
+                }
+            )
 
         if time.perf_counter() - start_time > timeout:
             bt.logging.error(
