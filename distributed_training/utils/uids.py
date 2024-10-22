@@ -7,7 +7,7 @@ import asyncio
 import distributed_training
 from hivemind.utils.timed_storage import ValueWithExpiration
 from hivemind.p2p import PeerID
-
+import numpy as np
 
 async def check_uid(dendrite, axon, uid, epoch=None):
     try:
@@ -31,17 +31,13 @@ async def check_uid(dendrite, axon, uid, epoch=None):
             bt.logging.trace(f"UID {uid} is not active.")
             return False
     except Exception as e:
+        print("NOW deing deaong....")
         bt.logging.error(f"Error checking UID {uid}: {e}\n{traceback.format_exc()}")
         # loop.close()
         return False
 
-
-async def check_uid_availability(
-    dendrite,
-    metagraph: "bt.metagraph.Metagraph",
-    uid: int,
-    vpermit_tao_limit: int,
-    epoch: int = None,
+def check_uid_availability(
+    metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int
 ) -> bool:
     """Check if uid is available. The UID should be available if it is serving and has less than vpermit_tao_limit stake
     Args:
@@ -58,58 +54,44 @@ async def check_uid_availability(
     if metagraph.validator_permit[uid]:
         if metagraph.S[uid] > vpermit_tao_limit:
             return False
-    # Filter for miners that are processing other responses
-    if not await check_uid(dendrite, metagraph.axons[uid], uid, epoch):
-        return False
+    # if not await check_uid(dendrite, metagraph.axons[uid], uid):#, epoch):
+#     #     return False
     # Available otherwise.
     return True
 
-
-async def get_random_uids(
-    self, dendrite, k: int, exclude: List[int] = None, epoch: int = None
-) -> torch.LongTensor:
+def get_random_uids(self, k: int, exclude: List[int] = None) -> np.ndarray:
     """Returns k available random uids from the metagraph.
     Args:
         k (int): Number of uids to return.
         exclude (List[int]): List of uids to exclude from the random sampling.
     Returns:
-        uids (torch.LongTensor): Randomly sampled available uids.
+        uids (np.ndarray): Randomly sampled available uids.
     Notes:
         If `k` is larger than the number of available `uids`, set `k` to the number of available `uids`.
     """
-
     candidate_uids = []
     avail_uids = []
 
-    tasks = []
     for uid in range(self.metagraph.n.item()):
-        # The dendrite client queries the network.
-        tasks.append(
-            check_uid_availability(
-                dendrite,
-                self.metagraph,
-                uid,
-                self.config.neuron.vpermit_tao_limit,
-                epoch,
-            )
+        uid_is_available = check_uid_availability(
+            self.metagraph, uid, vpermit_tao_limit=1
         )
-
-    responses = await asyncio.gather(*tasks)
-
-    for uid, uid_is_available in zip(range(self.metagraph.n.item()), (responses)):
         uid_is_not_excluded = exclude is None or uid not in exclude
+
         if uid_is_available:
             avail_uids.append(uid)
             if uid_is_not_excluded:
                 candidate_uids.append(uid)
-
+    # If k is larger than the number of available uids, set k to the number of available uids.
+    k = min(k, len(avail_uids))
     # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
     available_uids = candidate_uids
     if len(candidate_uids) < k:
-        uids = torch.tensor(available_uids)
-    else:
-        uids = torch.tensor(random.sample(available_uids, k))
-
+        available_uids += random.sample(
+            [uid for uid in avail_uids if uid not in candidate_uids],
+            k - len(candidate_uids),
+        )
+    uids = np.array(random.sample(available_uids, k))
     return uids
 
 

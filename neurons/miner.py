@@ -20,7 +20,8 @@ import asyncio
 import random
 import time
 import typing
-
+import os
+os.environ["NEST_ASYNCIO"] = "0"
 import bittensor as bt
 import hivemind
 import torch
@@ -102,7 +103,7 @@ class Miner(BaseMinerNeuron):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name,
-                revision=str(self.global_progress.epoch),
+                revision=str(12),
                 trust_remote_code=True,
             )
             if self.global_progress.epoch
@@ -173,7 +174,7 @@ class Miner(BaseMinerNeuron):
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
+        print("-----------------", self.uid)
         # Load dataset
         self.dataset_loader = ()
         dataset_length = DataLoader.max_pages
@@ -204,7 +205,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
-        synapse.epoch = self.local_progress.epoch
+        # synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(

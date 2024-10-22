@@ -451,19 +451,19 @@ def init_dht(self):
         announce_maddrs = [f"/ip{version}/{address}/tcp/{self.config.dht.port}"]
 
     # Init list of available DHT addresses from wandb
-    api = wandb.Api()
+    # api = wandb.Api()
     initial_peers_list = self.config.neuron.initial_peers
-    runs = api.runs(
-        f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
-    )
-    for ru in runs:
-        if ru.state == "running":
-            if "dht_addresses" not in ru.config["neuron"].keys():
-                continue
-            else:
-                for peer in ru.config["neuron"]["dht_addresses"]:
-                    if peer not in initial_peers_list:
-                        initial_peers_list.append(peer)
+    # runs = api.runs(
+    #     f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
+    # )
+    # for ru in runs:
+    #     if ru.state == "running":
+    #         if "dht_addresses" not in ru.config["neuron"].keys():
+    #             continue
+    #         else:
+    #             for peer in ru.config["neuron"]["dht_addresses"]:
+    #                 if peer not in initial_peers_list:
+    #                     initial_peers_list.append(peer)
 
     # Init DHT
     retries = 0

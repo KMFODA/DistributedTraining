@@ -84,12 +84,13 @@ async def forward(self):
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
-                self.miner_uids = await get_random_uids(
-                    self,
-                    dendrite=self.dendrite,
-                    k=sample_size,
-                    epoch=self.local_progress.epoch if all_reduce else None,
-                )
+                # self.miner_uids = get_random_uids(
+                #     self,
+                #     # dendrite=self.dendrite,
+                #     k=sample_size,
+                #     # epoch=self.local_progress.epoch if all_reduce else None,
+                # )
+                self.miner_uids = [27]
         else:
             if self.local_progress.samples_accumulated == 0 and (
                 self.uid == self.master_uid
@@ -98,17 +99,18 @@ async def forward(self):
             elif self.uid == self.master_uid:
                 sample_size = 1
 
-            self.miner_uids = await get_random_uids(
-                self,
-                dendrite=self.dendrite,
-                k=sample_size,
-                epoch=self.local_progress.epoch if all_reduce else None,
-            )
+            # self.miner_uids = get_random_uids(
+            #     self,
+            #     # dendrite=self.dendrite,
+            #     k=sample_size,
+            #     # epoch=self.local_progress.epoch if all_reduce else None,
+            # )
+            self.miner_uids = [27]
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-        if self.miner_uids.tolist() == []:
+        if self.miner_uids == []:
             responses = [[]]
             bt.logging.info("No Active Miners Found This Step.")
         else:

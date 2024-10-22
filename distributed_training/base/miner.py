@@ -23,7 +23,7 @@ import traceback
 
 import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
-from distributed_training.utils.uids import map_uid_to_peerid
+# from distributed_training.utils.uids import map_uid_to_peerid
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -45,10 +45,16 @@ class BaseMinerNeuron(BaseNeuron):
             bt.logging.warning(
                 "You are allowing non-registered entities to send requests to your miner. This is a security risk."
             )
-
+        
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bt.axon(wallet=self.wallet, config=self.config)
-
+        self.axon = bt.axon(wallet=self.wallet, 
+                            config=self.config, 
+                            port=self.config.axon.port,
+                            ip=self.config.axon.ip,
+                            external_ip=self.config.axon.external_ip,
+                            external_port=self.config.axon.external_port)
+        print(self.axon)
+        print(self.axon.port)
         # Attach determiners which functions are called when servicing a request.
         bt.logging.info(f"Attaching forward function to miner axon.")
         self.axon.attach(
@@ -72,7 +78,7 @@ class BaseMinerNeuron(BaseNeuron):
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
 
-        self.config.neuron.disable_set_weights = True
+        # self.config.neuron.disable_set_weights = True
 
     def run(self):
         """
@@ -103,7 +109,7 @@ class BaseMinerNeuron(BaseNeuron):
         # Serve passes the axon information to the network + netuid we are hosting on.
         # This will auto-update if the axon port of external ip have changed.
         bt.logging.info(
-            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid} and port {self.axon.port}"
         )
         self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
@@ -130,18 +136,18 @@ class BaseMinerNeuron(BaseNeuron):
                 self.step += 1
 
                 # Update uids_to_peerids dict
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                self.uids_to_peerids[self.uid] = self.dht.peer_id
+                # self.uids_to_peerids = self.loop.run_until_complete(
+                #     map_uid_to_peerid(self, range(0, self.metagraph.n))
+                # )
+                # self.uids_to_peerids[self.uid] = self.dht.peer_id
 
             # Await the training task to ensure it completes before exiting
 
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
             self.should_exit = True
-            self.opt.shutdown()
-            self.dht.shutdown()
+            # self.opt.shutdown()
+            # self.dht.shutdown()
             self.axon.stop()
             bt.logging.success("Miner killed by keyboard interrupt.")
             exit()
@@ -198,47 +204,9 @@ class BaseMinerNeuron(BaseNeuron):
         """
         self.stop_run_thread()
 
-    def set_weights(self):
-        """
-        Self-assigns a weight of 1 to the current miner (identified by its UID) and
-        a weight of 0 to all other peers in the network. The weights determine the trust level the miner assigns to other nodes on the network.
-
-        Raises:
-            Exception: If there's an error while setting weights, the exception is logged for diagnosis.
-        """
-        try:
-            # --- query the chain for the most current number of peers on the network
-            chain_weights = torch.zeros(
-                self.subtensor.subnetwork_n(netuid=self.metagraph.netuid)
-            )
-            chain_weights[self.uid] = 1
-
-            # --- Set weights.
-            self.subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.metagraph.netuid,
-                uids=torch.arange(0, len(chain_weights)),
-                weights=chain_weights.to("cpu"),
-                wait_for_inclusion=False,
-                version_key=self.spec_version,
-            )
-
-        except Exception as e:
-            bt.logging.error(f"Failed to set weights on chain with exception: { e }")
-
-        bt.logging.info(f"Set weights: {chain_weights}")
-
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
         bt.logging.info("resync_metagraph()")
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
-
-    def save_state(self):
-        """Saves the state of the validator to a file."""
-        ...
-
-    def load_state(self):
-        """Loads the state of the validator from a file."""
-        ...
