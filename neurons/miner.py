@@ -495,6 +495,10 @@ class Miner(BaseMinerNeuron):
             bt.logging.error(
                 f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
             )
+        else:
+            bt.logging.info(
+                f"Succesfully responded to request from {synapse.dendrite.hotkey} in {time.perf_counter() - start_time} seconds."
+            )
 
         return synapse
 
