@@ -59,8 +59,8 @@ class DTAllReduceRunner(AllReduceRunner):
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
-        uid = self.peerids_to_uids.get(str(peer_id), "'''")
-        peer_id_abreviated = str(peer_id)[-3:]
+        uid = self.peerids_to_uids.get(str(peer_id), "")
+        peer_id_abreviated = str(peer_id)
 
         bt.logging.info(
             f"UID:{uid} - PeerID:{peer_id_abreviated} - communicate_with_peer started",
@@ -145,7 +145,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     f"UID:{uid} - PeerID:{peer_id_abreviated} - Failed to communicate with peers due to error - {e}"
                 )
                 self.tensor_part_container.register_failed_reducer(peer_index)
-                # await self._ban_sender(peer_id)
+                await self._ban_sender(peer_id)
                 raise
 
     def __aiter__(self):
@@ -175,7 +175,7 @@ class DTAllReduceRunner(AllReduceRunner):
 
             elif self.peer_id in self.sender_peer_ids:
                 uid = self.peerids_to_uids.get(str(self.peer_id), "'''")
-                peer_id_abreviated = str(self.peer_id)[-3:]
+                peer_id_abreviated = str(self.peer_id)
 
                 bt.logging.info(
                     f"UID:{uid} - PeerID:{peer_id_abreviated} peer_id in sender_peer_ids"
@@ -226,7 +226,7 @@ class DTAllReduceRunner(AllReduceRunner):
     async def _generate_input_for_peer(
         self, peer_index: int, uid: str, peer_id: PeerID
     ) -> AsyncIterator[averaging_pb2.AveragingData]:
-        peer_id_abreviated = str(self.peer_id)[-3:]
+        peer_id_abreviated = str(peer_id)
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
             first_part = await anext(parts_aiter)
@@ -251,8 +251,8 @@ class DTAllReduceRunner(AllReduceRunner):
             raise e
 
     async def _ban_sender(self, peer_id: PeerID):
-        uid = self.peerids_to_uids.get(str(peer_id), "'''")
-        peer_id_abreviated = str(self.peer_id)[-3:]
+        uid = self.peerids_to_uids.get(str(peer_id), "")
+        peer_id_abreviated = str(peer_id)
         bt.logging.info(f"UID:{uid} - PeerID:{peer_id_abreviated} - Banning Peer")
 
         async with self.banlock:
