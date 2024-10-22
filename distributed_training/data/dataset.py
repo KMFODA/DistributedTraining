@@ -54,6 +54,10 @@ class DataLoader(IterableDataset):
         self.retry_delay = 5  # Seconds to wait between retries
         self.fetch_data_for_page(min(self.rows), len(self.rows))
 
+        self.total_batches = len(self.buffer) // (
+            self.sequence_length * self.batch_size
+        )
+
     def fetch_data_for_page(self, offset, length):
         iterations = math.ceil(length / 100)
         for iteration in range(iterations):
@@ -84,6 +88,9 @@ class DataLoader(IterableDataset):
                             "Maximum retry limit reached. Unable to fetch data."
                         )
                         raise
+
+    def __len__(self):
+        return self.total_batches
 
     def __iter__(self):
         while len(self.buffer) >= self.sequence_length * self.batch_size:

@@ -161,3 +161,4 @@ cython_debug/
 bittensor-subnet-template/
 wandb/
 .vscode/
+bittensor/

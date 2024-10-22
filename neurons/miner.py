@@ -48,7 +48,6 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.misc import (
-    get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
@@ -56,6 +55,14 @@ from distributed_training.utils.misc import (
 from distributed_training.utils.uids import map_uid_to_peerid
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
+
+# GPU optimizations.
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+# Seeds
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
 
 
 class Miner(BaseMinerNeuron):
@@ -188,6 +195,9 @@ class Miner(BaseMinerNeuron):
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+        # Init Tracking event
+        self.event = {}
 
     def get_miner_info(self):
         return {
@@ -409,10 +419,14 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
+        synapse.batch_size = self.config.neuron.local_batch_size_train
 
         total_loss = 0
-        index = 0
-        # Train data for one epoch
+        gradient_sum_list = []
+
+        target_param = list(self.model.parameters())[synapse.gradient_test_index]
+
+        # Training loop
         for index, batch in enumerate(dataloader):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
@@ -422,10 +436,9 @@ class Miner(BaseMinerNeuron):
             self.opt.zero_grad()
 
             # Forward pass
-            outputs = self.model(input_ids=inputs, labels=labels)
-
-            # Normalize loss to account for batch accumulation
-            loss = outputs[1]
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
 
             # Accumulate Total Loss
             total_loss += loss.detach().item()
@@ -434,65 +447,53 @@ class Miner(BaseMinerNeuron):
             loss.backward()
 
             # Accumulate Gradients
-            self.grad_averager.accumulate_grads_(batch_size=len(inputs))
+            self.grad_averager.accumulate_grads_(batch_size=inputs.size(0))
 
             # Update Tracker
-            self.local_progress.samples_accumulated += len(inputs)
+            self.local_progress.samples_accumulated += inputs.size(0)
+
+            # Extract gradient for the test_layer_index
+            gradient = target_param.grad.detach()
+
+            gradient_sum_list.append(torch.sum(torch.abs(gradient)).item())
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log(
-                    {
-                        "loss": loss.detach().item(),
-                        "local_epoch": self.local_progress.epoch,
-                        "global_epoch": self.global_progress.epoch,
-                    }
-                )
 
-        # Copy gradients
-        gradients = tuple(
-            (
-                param.grad.detach().cpu().clone()
-                if param.grad is not None
-                else torch.zeros_like(param)
-            )
-            for param in self.model.parameters()
-        )
-
-        if synapse.gradient_test_index > len(gradients):
+        if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-        else:
-            # Store summed random gradients in the synapse
-            synapse.gradients = float(
-                torch.sum(torch.abs(gradients[synapse.gradient_test_index]))
+
+        # Store the list of gradient sums and projected gradients in the synapse
+        synapse.gradient_sums = gradient_sum_list
+
+        average_loss = total_loss / (index + 1)
+        synapse.loss = average_loss
+        synapse.dataset_indices = group
+
+        if not self.config.neuron.dont_wandb_log:
+            self.event.update(
+                {
+                    "loss": synapse.loss,
+                    "local_epoch": self.local_progress.epoch,
+                    "global_epoch": self.global_progress.epoch,
+                    "steps": index,
+                }
             )
 
-            average_loss = total_loss / (index + 1)
-            synapse.loss = average_loss
-            synapse.dataset_indices = group
+        if time.perf_counter() - start_time > timeout:
+            bt.logging.error(
+                f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
+            )
+        else:
+            bt.logging.info(
+                f"Succesfully responded to request from {synapse.dendrite.hotkey} in {time.perf_counter() - start_time} seconds."
+            )
 
-            event = {}
-            event.update(self.get_miner_info())
-            try:
-                event.update(get_bandwidth())
-            except:
-                bt.logging.info("Error getting bandwidth metrics")
-            event.update({"steps": index})
-
-            if not self.config.neuron.dont_wandb_log:
-                self.wandb.log(event)
-
-            if time.perf_counter() - start_time > timeout:
-                bt.logging.error(
-                    f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
-                )
-
-            return synapse
+        return synapse
 
     def warmup(
         self,
