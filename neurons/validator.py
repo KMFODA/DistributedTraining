@@ -156,9 +156,7 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.metagraph.hotkeys.index(
-            "5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP"
-        )
+        self.master_uid = self.uid
 
         # Init All Reduce Variables
         self.train_timeout = 120

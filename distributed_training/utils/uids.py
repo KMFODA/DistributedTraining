@@ -210,7 +210,7 @@ def map_uid_to_peerid(self):
 
             uid_last_checked[next_uid] = dt.datetime.now()
             # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-            metadata = bt.extrinsics.serving.get_metadata(
+            metadata = bt.core.extrinsics.serving.get_metadata(
                 self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
             )
             if metadata is not None:
