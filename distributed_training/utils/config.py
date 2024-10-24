@@ -21,7 +21,9 @@ import os
 
 import bittensor as bt
 import torch
-from loguru import logger
+# from loguru import logger
+from .logging import setup_events_logger
+
 from distributed_training import __version__, __run__
 
 
@@ -45,17 +47,24 @@ def check_config(cls, config: "bt.Config"):
 
     if not config.neuron.dont_save_events:
         # Add custom event logger for the events.
-        logger.level("EVENTS", no=38, icon="📝")
-        logger.add(
-            os.path.join(config.neuron.full_path, "events.log"),
-            rotation=config.neuron.events_retention_size,
-            serialize=True,
-            enqueue=True,
-            backtrace=False,
-            diagnose=False,
-            level="EVENTS",
-            format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
+        events_logger = setup_events_logger(
+            config.neuron.full_path, config.neuron.events_retention_size
         )
+        bt.logging.register_primary_logger(events_logger.name)
+        
+    # if not config.neuron.dont_save_events:
+    #     # Add custom event logger for the events.
+    #     logger.level("EVENTS", no=38, icon="📝")
+    #     logger.add(
+    #         os.path.join(config.neuron.full_path, "events.log"),
+    #         rotation=config.neuron.events_retention_size,
+    #         serialize=True,
+    #         enqueue=True,
+    #         backtrace=False,
+    #         diagnose=False,
+    #         level="EVENTS",
+    #         format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
+    #     )
 
 
 def add_args(cls, parser):
