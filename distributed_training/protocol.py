@@ -44,19 +44,19 @@ class Train(bt.Synapse):
     """
 
     # List of indices trained on
-    dataset_indices: list = None
+    dataset_indices: typing.Optional[list] = None
 
     # Gradient Value of a randomly chosen index
-    gradients: float = None
+    gradients: typing.Optional[float] = 0.0
 
     # Gradient Index to be evaluated
-    gradient_test_index: int = None
+    gradient_test_index: int
 
     # Model Name
-    model_name: str = "distributed/gpt2-250m"
+    model_name: typing.Optional[str] = "distributed/gpt2-250m"
 
     # Model Loss
-    loss: float = 0.0
+    loss: typing.Optional[float] = 0.0
 
 
 class AllReduce(bt.Synapse):
