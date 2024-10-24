@@ -46,6 +46,7 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
+    update_global_tracker_state
 )
 from distributed_training.utils.misc import (
     init_dht,
@@ -395,14 +396,13 @@ class Miner(BaseMinerNeuron):
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-        training_examples_per_miner = 550
         search_start = random.choice(
-            range(len(self.dataset_indices) - training_examples_per_miner + 1)
+            range(len(self.dataset_indices) - self.config.neuron.training_examples_per_miner + 1)
         )
         start = self.dataset_indices.index(
-            bitarray("0" * training_examples_per_miner), search_start
+            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
         )
-        group = [i for i in range(start, start + training_examples_per_miner)]
+        group = [i for i in range(start, start + self.config.neuron.training_examples_per_miner)]
         self.dataset_indices[group] = True
 
         # Create Dataloader
@@ -478,7 +478,7 @@ class Miner(BaseMinerNeuron):
 
         if time.perf_counter() - start_time > timeout:
             bt.logging.error(
-                f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.training_examples_per_miner or upgrading to a faster GPU."
+                f"Timed out responding to request from {synapse.dendrite.hotkey}. Try decreasing config.neuron.self.config.neuron.training_examples_per_miner or upgrading to a faster GPU."
             )
         else:
             bt.logging.info(
