@@ -21,13 +21,18 @@ class LocalTrainingProgress(BaseModel):
     client_mode: StrictBool
 
 
+def get_global_epoch(self):
+    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+    global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+    return global_epoch
+
+
 def update_global_tracker_state(self):
     try:
         runs = wandb.Api().runs(
             f"{self.config.neuron.wandb_entity}/{self.config.neuron.wandb_project}"
         )
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        global_epoch = get_global_epoch(self)
         global_progress = 0
 
         for run in runs:

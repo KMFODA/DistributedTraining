@@ -45,7 +45,7 @@ from distributed_training.utils.state_loader import (
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
-    update_global_tracker_state,
+    get_global_epoch,
 )
 from distributed_training.utils.misc import (
     init_dht,
@@ -381,7 +381,7 @@ class Miner(BaseMinerNeuron):
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
 
-        update_global_tracker_state(self)
+        self.global_progress.epoch = get_global_epoch(self)
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
@@ -395,22 +395,14 @@ class Miner(BaseMinerNeuron):
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
+        training_examples_per_miner = 550
         search_start = random.choice(
-            range(
-                len(self.dataset_indices)
-                - self.config.neuron.training_examples_per_miner
-                + 1
-            )
+            range(len(self.dataset_indices) - training_examples_per_miner + 1)
         )
         start = self.dataset_indices.index(
-            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+            bitarray("0" * training_examples_per_miner), search_start
         )
-        group = [
-            i
-            for i in range(
-                start, start + self.config.neuron.training_examples_per_miner
-            )
-        ]
+        group = [i for i in range(start, start + training_examples_per_miner)]
         self.dataset_indices[group] = True
 
         # Create Dataloader
