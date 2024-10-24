@@ -21,7 +21,7 @@ from bitsandbytes.optim import LAMB
 
 from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
-    update_global_tracker_state,
+    get_global_epoch,
 )
 
 logger = get_logger(__name__)
@@ -240,7 +240,7 @@ def load_optimizer_state(
 def load_state_from_peer(self, epoch=None, keep_recent=5):
     state_loaded = False
     if epoch == None:
-        update_global_tracker_state(self)
+        self.global_progress.epoch = get_global_epoch(self)
         epoch = self.global_progress.epoch
 
     bt.logging.info("Model Weights Before Loading State")

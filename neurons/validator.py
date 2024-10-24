@@ -56,7 +56,6 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
-    warmup,
 )
 
 from distributed_training.utils.uids import (
@@ -191,6 +190,7 @@ class Validator(BaseValidatorNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
+            state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
             min_group_size=5,
@@ -201,11 +201,6 @@ class Validator(BaseValidatorNeuron):
         )
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        self.peer_id = self.dht.peer_id
-        self.get_stub = self.grad_averager.get_stub
-        self.serializer = self.grad_averager.serializer
-
         # Create mapping between uids to peerids
         self.uids_to_peerids = self.loop.run_until_complete(
             map_uid_to_peerid(self, range(0, self.metagraph.n))
@@ -221,7 +216,7 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids[114]}")
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -271,28 +266,23 @@ class Validator(BaseValidatorNeuron):
         }
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
-        # if timeout is not None:
-        #     timeout = (
-        #         self.next_chunk_timeout
-        #         if self.next_chunk_timeout is not None
-        #         else self.request_timeout
-        #     )
-
         metadata = None
         logger.info(f"Downloading parameters from peer {peer}")
         try:
-            stub = self.get_stub(
+            stub = self.grad_averager.get_stub(
                 self._p2p,
                 peer,
                 namespace=self.grad_averager.matchmaking_kwargs["prefix"],
             )
-            stream = await stub.rpc_download_state(averaging_pb2.DownloadRequest())
+            stream = await stub.rpc_download_state_partial(
+                averaging_pb2.DownloadRequest()
+            )
             current_tensor_parts, tensors = [], []
 
             # TODO merge this with hivemind.compression.deserialize_tensor_stream
             async for message in aiter_with_timeout(stream, timeout=timeout):
                 if message.metadata:
-                    metadata = self.serializer.loads(message.metadata)
+                    metadata = self.grad_averager.serializer.loads(message.metadata)
                 if message.tensor_part.dtype and current_tensor_parts:
                     # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
                     tensors.append(
@@ -321,11 +311,6 @@ class Validator(BaseValidatorNeuron):
 
     async def forward(self):
         return await forward(self)
-
-    def warmup(
-        self,
-    ):
-        warmup(self)
 
 
 # The main function parses the configuration and runs the validator.
