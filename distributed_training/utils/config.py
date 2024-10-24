@@ -82,6 +82,13 @@ def add_args(cls, parser):
         help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
         default=8009,
     )
+    
+    parser.add_argument(
+        "--neuron.events_retention_size",
+        type=str,
+        help="Events retention size.",
+        default=2 * 1024 * 1024 * 1024,  # 2 GB
+    )
 
     parser.add_argument(
         "--neuron.name",
