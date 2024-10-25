@@ -517,11 +517,11 @@ class DTAverager(hivemind.DecentralizedAverager):
          - serialized_metadata is a small serialized bytestring meant to store scalars and hyperparameters
          - tensors is a sequence of pytorch tensors that represent model parameters or optimizer statistics
         """
-        logger.info("TEST")
+        logger.info("rpc_download_state_partial")
         if not self.allow_state_sharing:
             return  # deny request and direct peer to the next prospective averager
         metadata, tensors, infos = await self._get_current_state_from_host_process()
-        logger.info(tensors)
+        logger.info(len(tensors))
         if infos is None:
             infos = [
                 CompressionInfo.from_tensor(tensor, key=i)
