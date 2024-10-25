@@ -149,6 +149,7 @@ class Miner(BaseMinerNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
+            state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
             min_group_size=5,
