@@ -291,7 +291,7 @@ async def get_rewards(
             self.event.update(
                 {
                     f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                    for uid, bandwidth_score in zip(uids, bandwidth_scores)
+                    for uid, bandwidth_score in zip(self.miner_uids.tolist(), bandwidth_scores)
                 }
             )
             scores *= bandwidth_scores
