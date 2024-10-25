@@ -244,7 +244,9 @@ async def get_rewards(
         if self.uid != self.master_uid:
             # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
             # the scoring burden across all validators
-            self.miner_uids = await get_random_uids(self, dendrite=self.dendrite, k=2)
+            self.miner_uids = await get_random_uids(
+                self, dendrite=self.dendrite, k=self.config.neuron.sample_size
+            )
             self.event.update({"uids": self.miner_uids})
             bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -289,7 +291,7 @@ async def get_rewards(
             self.event.update(
                 {
                     f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                    for uid, bandwidth_score in zip(uids, bandwidth_scores)
+                    for uid, bandwidth_score in zip(self.miner_uids.tolist(), bandwidth_scores)
                 }
             )
             scores *= bandwidth_scores

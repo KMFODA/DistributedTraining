@@ -45,6 +45,7 @@ from distributed_training.utils.state_loader import (
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
+    get_global_epoch,
     update_global_tracker_state,
 )
 from distributed_training.utils.misc import (
@@ -148,6 +149,7 @@ class Miner(BaseMinerNeuron):
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
+            state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
             min_group_size=5,
@@ -381,7 +383,7 @@ class Miner(BaseMinerNeuron):
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
 
-        update_global_tracker_state(self)
+        self.global_progress.epoch = get_global_epoch(self)
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
