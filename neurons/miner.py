@@ -65,7 +65,7 @@ from distributed_training import __version__, __spec_version__
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
-
+        
         # Init Logging
         setup_logging(
             network=self.config.subtensor.network,
