@@ -46,12 +46,14 @@ async def forward(self):
 
     """
     gathered, failed_peers, participating_peers = [], [], []
+
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
         load_state_from_peer(self)
 
-    # Evaluate wether to run an AllReduce or a Train synapse based on the global samples accumulated
+    # Evaluate wether to run an AllReduce or a Train synapse based 
+    # on the global samples accumulated
     if (
         (
             (
@@ -87,9 +89,8 @@ async def forward(self):
                 self.miner_uids = get_random_uids(
                     self,
                     k=sample_size,
-                    #epoch=self.local_progress.epoch if all_reduce else None,
+                    # epoch=self.local_progress.epoch if all_reduce else None,
                 )
-                self.miner_uids = [36] # Put your miner uid here for now as the above is not working properly
 
         else:
             if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
@@ -100,15 +101,13 @@ async def forward(self):
             self.miner_uids = get_random_uids(
                 self,
                 k=sample_size,
-                #epoch=self.local_progress.epoch if all_reduce else None,
+                # epoch=self.local_progress.epoch if all_reduce else None,
             )
-            self.miner_uids = [36] # Put your miner uid here for now as the above is not working properly
 
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-        # if self.miner_uids.tolist() == []:
         if self.miner_uids == []:
             responses = [[]]
             bt.logging.info("No Active Miners Found This Step.")
@@ -134,38 +133,28 @@ async def forward(self):
             else:
                 # Get a random layer to check gradients against
                 gradient_test_index = random.choice(self.test_layer_indices)
-                # queries = [
-                #     distributed_training.protocol.Train(
-                #         model_name=self.model.name_or_path,
-                #         gradient_test_index=gradient_test_index,
-                #     )
-                #     for _ in self.miner_uids
-                # ]
-
-            # # Query the network
-            # query_tasks.append(
-            #     self.dendrite_pool.async_forward(
-            #         self.miner_uids,
-            #         queries,
-            #         timeout=self.all_reduce_timeout
-            #         if all_reduce
-            #         else self.train_timeout,
-            #     )
-            # )
-            
-            responses = await self.dendrite(
-                # Send the query to selected miner axons in the network.
-                axons=[self.metagraph.axons[uid] for uid in self.miner_uids],
-                # Construct a dummy query. This simply contains a single integer.
-                synapse=distributed_training.protocol.Train(
+                queries = [
+                    distributed_training.protocol.Train(
                         model_name=self.model.name_or_path,
                         gradient_test_index=gradient_test_index,
-                    ),
+                    )
+                    for _ in self.miner_uids
+                ]
+
+            # # Query the network
+            query_tasks.append(
+                self.dendrite_pool.async_forward(
+                    self.miner_uids,
+                    queries,
+                    timeout=self.all_reduce_timeout
+                    if all_reduce
+                    else self.train_timeout,
+                )
             )
             
-            #bt.logging.info("Query Sent Out")
-            #start_time = time.perf_counter()
-            #responses = await asyncio.gather(*query_tasks)
+            bt.logging.info("Query Sent Out")
+            start_time = time.perf_counter()
+            responses = await asyncio.gather(*query_tasks)
             bt.logging.info("Query Responses Received")
 
             # Process the AllReduce query responses
@@ -376,8 +365,8 @@ async def forward(self):
                                 "Hotkey": self.metagraph.axons[uid].hotkey,
                             }
                             for response, uid in zip(responses[0], self.miner_uids)
-                            if response.dendrite.status_code == 200
-                            and (response.dataset_indices is not None)
+                            # if response.dendrite.status_code == 200
+                            # and (response.dataset_indices is not None)
                         ]
                     )
                 )
@@ -385,8 +374,8 @@ async def forward(self):
                     [
                         response.loss
                         for response, uid in zip(responses[0], self.miner_uids)
-                        if response.dendrite.status_code == 200
-                        and (response.dataset_indices is not None)
+                        # if response.dendrite.status_code == 200
+                        # and (response.dataset_indices is not None)
                     ]
                 ).mean()
                 bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")

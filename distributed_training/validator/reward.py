@@ -193,7 +193,7 @@ async def get_rewards(
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
         update_run_peerid_list(self)
-        blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+        blacklist_scores = await score_blacklist(self, self.miner_uids)
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
             {
@@ -206,7 +206,7 @@ async def get_rewards(
         if self.uid == self.master_uid:
             # Apply penalty to failed senders if any
             failed_sender_scores = score_failed_senders(
-                self, self.miner_uids.tolist(), failed_peers, participating_peers
+                self, self.miner_uids, failed_peers, participating_peers
             )
             bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
             self.event.update(
@@ -219,7 +219,7 @@ async def get_rewards(
         else:
             # Score miners bandwidth
             bandwidth_scores = await score_bandwidth(
-                self, self.miner_uids.tolist(), self.load_state_timeout
+                self, self.miner_uids, self.load_state_timeout
             )
             bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
             self.event.update(
@@ -259,7 +259,7 @@ async def get_rewards(
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
             update_run_peerid_list(self)
-            blacklist_scores = await score_blacklist(self, uids.tolist())
+            blacklist_scores = await score_blacklist(self, uids)
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
                 {
@@ -273,7 +273,7 @@ async def get_rewards(
         gradient_scores = torch.FloatTensor(
             [
                 (
-                    score_gradients(self, response, uids.tolist()[index])
+                    score_gradients(self, response, uids[index])
                     if (response.dendrite.status_code == 200)
                     and (response.gradients is not None)
                     else 0
@@ -285,7 +285,7 @@ async def get_rewards(
         self.event.update(
             {
                 f"rewards.gradient.uid{uid}": gradient_score
-                for uid, gradient_score in zip(uids.tolist(), gradient_scores)
+                for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
         scores *= gradient_scores
