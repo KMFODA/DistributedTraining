@@ -168,7 +168,7 @@ async def score_blacklist(self, uids):
     return scores
 
 
-async def score_bandwidth(self, uids, timeout=120):
+async def score_bandwidth(self, uids, timeout=30):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
         peer = self.uids_to_peerids[uid]
@@ -291,7 +291,9 @@ async def get_rewards(
             self.event.update(
                 {
                     f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                    for uid, bandwidth_score in zip(self.miner_uids.tolist(), bandwidth_scores)
+                    for uid, bandwidth_score in zip(
+                        self.miner_uids.tolist(), bandwidth_scores
+                    )
                 }
             )
             scores *= bandwidth_scores

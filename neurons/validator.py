@@ -216,7 +216,7 @@ class Validator(BaseValidatorNeuron):
                 )
                 time.sleep(1)
         self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids[114]}")
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
