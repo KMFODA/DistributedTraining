@@ -12,8 +12,8 @@ compute_spec:
 
     gpu:
       required: True                       
-      min_vram: 20                             
-      recommended_gpu: "RTX A5000"      
+      min_vram: 48
+      recommended_gpu: "RTX A6000"  
 
     os:
       name: "Ubuntu" 
