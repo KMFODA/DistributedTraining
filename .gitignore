@@ -162,3 +162,4 @@ bittensor-subnet-template/
 wandb/
 .vscode/
 logs*
+bittensor/

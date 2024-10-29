@@ -50,7 +50,7 @@ async def forward(self):
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
-        load_state_from_peer(self)
+        load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     # Evaluate wether to run an AllReduce or a Train synapse based 
     # on the global samples accumulated

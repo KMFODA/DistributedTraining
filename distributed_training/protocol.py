@@ -46,8 +46,8 @@ class Train(bt.Synapse):
     # List of indices trained on
     dataset_indices: Optional[list] = None
 
-    # Gradient Value of a randomly chosen index
-    gradients: Optional[float] = 0.0
+    # Gradient sums of a randomly chosen index
+    gradient_sums: Optional[list] = None
 
     # Gradient Index to be evaluated
     gradient_test_index: int
@@ -57,6 +57,9 @@ class Train(bt.Synapse):
 
     # Model Loss
     loss: Optional[float] = 0.0
+
+    # Batch Size
+    batch_size: int = 8
 
 
 class AllReduce(bt.Synapse):

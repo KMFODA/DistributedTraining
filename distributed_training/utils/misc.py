@@ -37,6 +37,7 @@ import json
 from hivemind import utils
 import re
 from ipaddress import ip_address
+import torch
 
 import os
 import shutil
@@ -550,91 +551,3 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error(f"Retrying...")
-
-
-def warmup(self):
-    """
-    Processes the incoming 'Train' synapse by performing a training run
-
-    Args:
-        synapse (template.protocol.Train): The synapse object containing the 'dataset_indices' data.
-
-    Returns:
-        template.protocol.Train: The synapse object with the 'loss' field set to models loss.
-    """
-
-    # Load dataset
-    self.dataset_loader = ()
-    dataset_length = DataLoader.max_pages
-    self.dataset_indices = bitarray(dataset_length)
-
-    search_start = random.choice(
-        range(
-            len(self.dataset_indices)
-            - self.config.neuron.training_examples_per_miner
-            + 1
-        )
-    )
-    start = self.dataset_indices.index(
-        bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
-    )
-    group = [
-        i for i in range(start, start + self.config.neuron.training_examples_per_miner)
-    ]
-    self.dataset_indices[group] = True
-
-    # Create Dataloader
-    dataloader = DataLoader(
-        batch_size=self.config.neuron.local_batch_size_train,
-        sequence_length=1024,
-        rows=group,
-    )
-
-    total_loss = 0
-    index = 0
-    # Train data for one epoch
-    for index, batch in enumerate(dataloader):
-        inputs = batch.to(self.device)
-
-        # Forward pass
-        outputs = self.model(input_ids=inputs, labels=inputs)
-
-        # Normalize loss to account for batch accumulation
-        loss = outputs.loss
-
-        # Accumulate Total Loss
-        total_loss += outputs.loss.detach().item()
-
-        # Backward Pass
-        loss.backward()
-
-        # Copy gradients
-        gradients = tuple(
-            (
-                param.grad.detach().cpu().clone()
-                if param.grad is not None
-                else torch.zeros_like(param)
-            )
-            for param in self.model.parameters()
-        )
-
-        # Accumulate Gradients
-        self.grad_averager.accumulate_grads_(batch_size=len(inputs))
-
-        # Zero Gradients
-        self.opt.zero_grad()
-
-        # Update Tracker
-        self.local_progress.samples_accumulated += 1
-
-        # Log accumulation status
-        bt.logging.info(f"Index: {index} | Loss: {outputs.loss.detach().item():.2f}")
-
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb.log(
-                {
-                    "loss": outputs.loss.detach().item(),
-                    "local_epoch": self.local_progress.local_epoch,
-                    "global_epoch": self.global_progress.epoch,
-                }
-            )

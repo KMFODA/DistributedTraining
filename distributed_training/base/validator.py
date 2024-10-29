@@ -191,6 +191,7 @@ class BaseValidatorNeuron(BaseNeuron):
             Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
         """
         # Check that validator is registered on the network.
+        self.event = {}
         self.sync()
 
         bt.logging.info(
@@ -205,7 +206,8 @@ class BaseValidatorNeuron(BaseNeuron):
                 bt.logging.info(f"step({self.step}) block({self.block})")
 
                 # Init Wandb Event For Step
-                self.event = {}
+                if self.event != {}:
+                    self.event = {}
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())

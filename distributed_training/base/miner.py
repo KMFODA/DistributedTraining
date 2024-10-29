@@ -23,8 +23,8 @@ import traceback
 
 import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
-from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.utils.chain import log_peerid_to_chain
+from distributed_training.utils.misc import get_bandwidth
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -128,6 +128,16 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
+                    if not self.config.neuron.dont_wandb_log:
+                        if self.event != {}:
+                            self.event.update(self.get_miner_info())
+                            try:
+                                self.event.update(get_bandwidth())
+                            except:
+                                bt.logging.info("Error getting bandwidth metrics")
+                            self.wandb.log(self.event)
+                            self.event = {}
+
                     # Wait before checking again.
                     time.sleep(1)
 

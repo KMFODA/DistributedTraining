@@ -24,9 +24,9 @@ from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import deserialize_torch_tensor
+from hivemind.compression import deserialize_torch_tensor, CompressionInfo
 from hivemind.dht import DHT
-from hivemind.p2p import P2PDaemonError, P2PHandlerError, PeerID
+from hivemind.p2p import P2PDaemonError, P2PHandlerError, PeerID, P2PContext
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
 from hivemind.utils.asyncio import (
@@ -37,6 +37,7 @@ from hivemind.utils.asyncio import (
     azip,
     enter_asynchronously,
 )
+from hivemind.utils.streaming import split_for_streaming
 from hivemind.utils.timed_storage import (
     DHTExpiration,
     get_dht_time,
@@ -505,6 +506,42 @@ class DTAverager(hivemind.DecentralizedAverager):
             if isinstance(e, Exception):
                 logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
+
+    async def rpc_download_state_partial(
+        self, _request: averaging_pb2.DownloadRequest, _context: P2PContext
+    ) -> AsyncIterator[averaging_pb2.DownloadData]:
+        """
+        Get the up-to-date trainer state from a peer.
+        The state consists of two parts: (serialized_metadata, tensors)
+
+         - serialized_metadata is a small serialized bytestring meant to store scalars and hyperparameters
+         - tensors is a sequence of pytorch tensors that represent model parameters or optimizer statistics
+        """
+        logger.info("rpc_download_state_partial")
+        if not self.allow_state_sharing:
+            return  # deny request and direct peer to the next prospective averager
+        metadata, tensors, infos = await self._get_current_state_from_host_process()
+        logger.info(len(tensors))
+        if infos is None:
+            infos = [
+                CompressionInfo.from_tensor(tensor, key=i)
+                for i, tensor in enumerate(tensors)
+            ]
+        assert len(tensors) == len(infos)
+
+        # for tensor, info in zip([tensors[0]], infos):
+        for tensor, info in zip([tensors[0]], infos):
+            for part in split_for_streaming(
+                self.state_compression.compress(tensor, info, allow_inplace=False)
+            ):
+                if metadata is not None:
+                    yield averaging_pb2.DownloadData(
+                        tensor_part=part, metadata=metadata
+                    )
+                    metadata = None
+                else:
+                    yield averaging_pb2.DownloadData(tensor_part=part)
+            break
 
 
 class DTGradientAverager(DTAverager):
