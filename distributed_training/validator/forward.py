@@ -82,32 +82,32 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 10:
+            while len(self.miner_uids) < 2:
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = get_random_uids(
                     self,
                     k=sample_size,
-                    # epoch=self.local_progress.epoch if all_reduce else None,
+                    epoch=self.local_progress.epoch if all_reduce else None,
                 )
 
         else:
             if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
-                sample_size = 20
+                sample_size = 2
             elif (self.uid == self.master_uid):
-                sample_size = 1
+                sample_size = 2
 
             self.miner_uids = get_random_uids(
                 self,
                 k=sample_size,
-                # epoch=self.local_progress.epoch if all_reduce else None,
+                epoch=self.local_progress.epoch if all_reduce else None,
             )
 
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
-
+        print(self.miner_uids)
         if self.miner_uids == []:
             responses = [[]]
             bt.logging.info("No Active Miners Found This Step.")

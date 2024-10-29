@@ -23,8 +23,7 @@ import os
 import threading
 from traceback import print_exception
 from typing import List, Tuple
-import os
-os.environ["NEST_ASYNCIO"] = "0"
+
 import bittensor as bt
 import numpy as np
 from distributed_training.base.neuron import BaseNeuron
