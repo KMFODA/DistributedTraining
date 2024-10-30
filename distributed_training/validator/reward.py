@@ -21,7 +21,9 @@ from typing import List
 import bittensor as bt
 import torch
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import get_random_uids, update_run_peerid_list
+from distributed_training.utils.uids import (get_random_uids, 
+                                             update_run_peerid_list, 
+                                             map_uid_to_peerid)
 import time
 import asyncio
 import random

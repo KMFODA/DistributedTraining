@@ -35,6 +35,7 @@ from huggingface_hub.utils import HfHubHTTPError
 import torch
 
 
+
 async def forward(self):
     """
     The forward function is called by the validator every time step.
@@ -46,7 +47,7 @@ async def forward(self):
 
     """
     gathered, failed_peers, participating_peers = [], [], []
-
+    
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
@@ -54,6 +55,7 @@ async def forward(self):
 
     # Evaluate wether to run an AllReduce or a Train synapse based 
     # on the global samples accumulated
+
     if (
         (
             (
@@ -86,8 +88,9 @@ async def forward(self):
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
-                self.miner_uids = get_random_uids(
+                self.miner_uids = await get_random_uids(
                     self,
+                    dendrite=self.dendrite,
                     k=sample_size,
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
@@ -98,8 +101,9 @@ async def forward(self):
             elif (self.uid == self.master_uid):
                 sample_size = 2
 
-            self.miner_uids = get_random_uids(
+            self.miner_uids = await get_random_uids(
                 self,
+                dendrite=self.dendrite,
                 k=sample_size,
                 epoch=self.local_progress.epoch if all_reduce else None,
             )
@@ -107,8 +111,8 @@ async def forward(self):
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
-        print(self.miner_uids)
-        if self.miner_uids == []:
+
+        if len(self.miner_uids) == 0:
             responses = [[]]
             bt.logging.info("No Active Miners Found This Step.")
         else:

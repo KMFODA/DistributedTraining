@@ -54,8 +54,7 @@ class BaseMinerNeuron(BaseNeuron):
                             ip=self.config.axon.ip,
                             external_ip=self.config.axon.external_ip,
                             external_port=self.config.axon.external_port)
-        print(self.axon)
-        print(self.axon.port)
+       
         # Attach determiners which functions are called when servicing a request.
         bt.logging.info(f"Attaching forward function to miner axon.")
         self.axon.attach(
