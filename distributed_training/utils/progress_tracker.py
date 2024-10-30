@@ -78,13 +78,15 @@ def update_global_tracker_state(self):
             else:
                 continue
 
+        # Update global epoch
+        self.global_progress.epoch = global_epoch
+
         # Add local samples
         if self.global_progress.epoch == self.local_progress.epoch:
             global_progress += self.local_progress.samples_accumulated
 
         # Update global progress
         self.global_progress.samples_accumulated = global_progress
-        self.global_progress.epoch = global_epoch
 
         # Log new porgress
         bt.logging.info(
