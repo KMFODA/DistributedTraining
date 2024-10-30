@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import pandas as pd
 import bittensor as bt
 from huggingface_hub import list_repo_refs
+from tqdm import tqdm
 
 
 @dataclass(frozen=False)
@@ -35,7 +36,7 @@ def update_global_tracker_state(self):
         global_epoch = get_global_epoch(self)
         global_progress = 0
 
-        for run in runs:
+        for run in tqdm(runs):
             if (
                 ("validator" in run.name)  # Filter our any miner runs
                 and (run.state == "running")  # Filter out any idle wandb runs

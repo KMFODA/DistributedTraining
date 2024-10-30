@@ -22,8 +22,8 @@ import datetime as dt
 import time
 import traceback
 from typing import Optional
-
-
+import os
+os.environ["NEST_ASYNCIO"] = "0"
 import bittensor as bt
 import hivemind
 import torch
@@ -155,7 +155,7 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.uid
+        self.master_uid = self.uid # TODO FIX HERE @Karim!!
 
         # Init All Reduce Variables
         self.train_timeout = 120
@@ -194,7 +194,7 @@ class Validator(BaseValidatorNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            min_group_size=5,
+            # min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
@@ -217,15 +217,16 @@ class Validator(BaseValidatorNeuron):
         # Log PeerID to chain
         log_peerid_to_chain(self)
 
-        # Start UID iterator and map_uids_to_peerid background thread
-        self.uids_to_peerids = {
-            uid: (None, None) for uid in self.metagraph.uids.tolist()
-        }
-        self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
-        self.stop_event = threading.Event()
-        self.update_thread = threading.Thread(
-            target=map_uid_to_peerid, args=(self,), daemon=True
-        )
+        # # Start UID iterator and map_uids_to_peerid background thread
+        # self.uids_to_peerids = {
+        #     uid: (None, None) for uid in self.metagraph.uids.tolist()
+        # }
+        # self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
+        # self.stop_event = threading.Event()
+        # self.update_thread = threading.Thread(
+        #     target=map_uid_to_peerid, args=(self,), daemon=True
+        # )
+        map_uid_to_peerid(self)
         self.update_thread.start()
 
         update_run_peerid_list(self)
