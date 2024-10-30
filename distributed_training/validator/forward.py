@@ -378,8 +378,11 @@ async def forward(self):
                                 "Hotkey": self.metagraph.axons[uid].hotkey,
                             }
                             for response, uid in zip(responses[0], self.miner_uids)
-                            if response.dendrite.status_code == 200
-                            and (response.dataset_indices is not None)
+                            if (
+                                (response.dendrite.status_code == 200)
+                                and (response.dataset_indices is not None)
+                                and (type(response.dataset_indices) == list)
+                            )
                         ]
                     )
                 )

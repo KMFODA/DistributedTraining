@@ -37,7 +37,7 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
 
-def score_gradients(self, response, uid):
+def score_gradients(self, response, uid, threshold=0.85):
     try:
         if "gradient_sums" not in response.__dict__:
             bt.logging.info(
@@ -146,6 +146,13 @@ def score_gradients(self, response, uid):
 
             # Normalize score between 0 and 1 for gradient sum method
             score_sum = max(0.0, 1.0 - average_relative_diff)
+
+            # Zero out scores below threshold
+            if score_sum < threshold:
+                bt.logging.info(
+                    f"Gradient score = {score_sum} for UID {uid} below threshold of {threshold}. Setting to score to 0."
+                )
+                score_sum = 0
 
             return score_sum
     except Exception as e:
@@ -367,9 +374,12 @@ async def get_rewards(
         steps_scores = torch.FloatTensor(
             [
                 (
-                    len(response.dataset_indices)
-                    if (response.dendrite.status_code == 200)
-                    and (response.dataset_indices is not None)
+                    len(set(response.dataset_indices))
+                    if (
+                        (response.dendrite.status_code == 200)
+                        and (response.dataset_indices is not None)
+                        and (type(response.dataset_indices) == list)
+                    )
                     else 0
                 )
                 for index, response in enumerate(responses[0])
