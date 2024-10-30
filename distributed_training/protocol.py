@@ -59,7 +59,7 @@ class Train(bt.Synapse):
     loss: Optional[float] = 0.0
 
     # Batch Size
-    batch_size: int = 8
+    batch_size: Optional[int] = 8
 
 
 class AllReduce(bt.Synapse):
