@@ -18,56 +18,38 @@
 
 
 import asyncio
-import datetime as dt
-import time
-import traceback
-from typing import Optional
 import os
+import time
+from typing import Optional
+
 os.environ["NEST_ASYNCIO"] = "0"
+import math
+
 import bittensor as bt
-import hivemind
 import torch
-import threading
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB
+from transformers import AutoModelForCausalLM
+
+import hivemind
+from distributed_training import __spec_version__, __version__
+from distributed_training.base.validator import BaseValidatorNeuron
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
+from distributed_training.utils.gradient_averager import DTGradientAverager
+from distributed_training.utils.misc import (AsyncDendritePool, init_dht,
+                                             load_wandb, setup_logging)
+from distributed_training.utils.progress_tracker import (
+    GlobalTrainingProgress, LocalTrainingProgress, update_global_tracker_state)
+from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.uids import (map_uid_to_peerid,
+                                             update_run_peerid_list)
+from distributed_training.validator import forward
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
-from huggingface_hub import list_repo_refs
-from transformers import AutoModelForCausalLM
-import math
-
-from distributed_training.base.validator import BaseValidatorNeuron
-from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.gradient_averager import (
-    DTGradientAverager,
-)
-from distributed_training.utils.state_loader import (
-    load_state_from_peer,
-)
-
-from distributed_training.utils.progress_tracker import (
-    GlobalTrainingProgress,
-    LocalTrainingProgress,
-    update_global_tracker_state,
-)
-from distributed_training.utils.misc import (
-    AsyncDendritePool,
-    init_dht,
-    load_wandb,
-    setup_logging,
-)
-from distributed_training.utils.chain import (
-    log_peerid_to_chain,
-    UIDIterator,
-)
-
-from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
-
-from distributed_training.validator import forward
-from bitsandbytes.optim import LAMB
-from distributed_training import __version__, __spec_version__
 
 logger = get_logger(__name__)
 
@@ -84,9 +66,11 @@ class Validator(BaseValidatorNeuron):
             version=__version__,
             spec_version=__spec_version__,
             run_id=None,
-            ip=self.config.axon.ip
-            if self.config.axon.ip != "[::]"
-            else bt.utils.networking.get_external_ip(),
+            ip=(
+                self.config.axon.ip
+                if self.config.axon.ip != "[::]"
+                else bt.utils.networking.get_external_ip()
+            ),
             port=self.config.axon.port,
             uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
             neuron_type="validator",
@@ -155,7 +139,7 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.uid # TODO FIX HERE @Karim!!
+        self.master_uid = self.uid  # TODO FIX HERE @Karim!!
 
         # Init All Reduce Variables
         self.train_timeout = 120
@@ -218,7 +202,9 @@ class Validator(BaseValidatorNeuron):
         log_peerid_to_chain(self)
 
         # Start UID iterator and map_uids_to_peerid
-        self.uids_to_peerids = {uid: (None, None) for uid in self.metagraph.uids.tolist()}
+        self.uids_to_peerids = {
+            uid: (None, None) for uid in self.metagraph.uids.tolist()
+        }
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
         map_uid_to_peerid(self)
 

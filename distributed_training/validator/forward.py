@@ -17,23 +17,23 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import copy
 import random
 import time
 
 import bittensor as bt
+import numpy as np
+import torch
 from huggingface_hub import create_tag, list_repo_refs
+from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
-from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.misc import get_bandwidth
-from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.progress_tracker import \
+    update_global_tracker_state
+from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
-import copy
-import numpy as np
-from huggingface_hub.utils import HfHubHTTPError
-import torch
-
 
 
 async def forward(self):
@@ -47,13 +47,13 @@ async def forward(self):
 
     """
     gathered, failed_peers, participating_peers = [], [], []
-    
+
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
         load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-    # Evaluate wether to run an AllReduce or a Train synapse based 
+    # Evaluate wether to run an AllReduce or a Train synapse based
     # on the global samples accumulated
 
     if (
@@ -96,9 +96,11 @@ async def forward(self):
                 )
 
         else:
-            if self.local_progress.samples_accumulated == 0 and (self.uid == self.master_uid):
+            if self.local_progress.samples_accumulated == 0 and (
+                self.uid == self.master_uid
+            ):
                 sample_size = 2
-            elif (self.uid == self.master_uid):
+            elif self.uid == self.master_uid:
                 sample_size = 2
 
             self.miner_uids = await get_random_uids(
@@ -107,7 +109,6 @@ async def forward(self):
                 k=sample_size,
                 epoch=self.local_progress.epoch if all_reduce else None,
             )
-
 
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -150,12 +151,12 @@ async def forward(self):
                 self.dendrite_pool.async_forward(
                     self.miner_uids,
                     queries,
-                    timeout=self.all_reduce_timeout
-                    if all_reduce
-                    else self.train_timeout,
+                    timeout=(
+                        self.all_reduce_timeout if all_reduce else self.train_timeout
+                    ),
                 )
             )
-            
+
             bt.logging.info("Query Sent Out")
             start_time = time.perf_counter()
             responses = await asyncio.gather(*query_tasks)
@@ -386,8 +387,6 @@ async def forward(self):
                     ]
                 ).mean()
                 bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
-
-
 
     else:
         bt.logging.info(

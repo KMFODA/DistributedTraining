@@ -163,3 +163,4 @@ wandb/
 .vscode/
 logs*
 bittensor/
+hivemind/

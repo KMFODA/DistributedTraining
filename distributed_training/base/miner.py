@@ -15,13 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-import torch
 import asyncio
 import threading
+import time
 import traceback
 
 import bittensor as bt
+
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import get_bandwidth
@@ -46,15 +46,17 @@ class BaseMinerNeuron(BaseNeuron):
             bt.logging.warning(
                 "You are allowing non-registered entities to send requests to your miner. This is a security risk."
             )
-        
+
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bt.axon(wallet=self.wallet, 
-                            config=self.config, 
-                            port=self.config.axon.port,
-                            ip=self.config.axon.ip,
-                            external_ip=self.config.axon.external_ip,
-                            external_port=self.config.axon.external_port)
-       
+        self.axon = bt.axon(
+            wallet=self.wallet,
+            config=self.config,
+            port=self.config.axon.port,
+            ip=self.config.axon.ip,
+            external_ip=self.config.axon.external_ip,
+            external_port=self.config.axon.external_port,
+        )
+
         # Attach determiners which functions are called when servicing a request.
         bt.logging.info(f"Attaching forward function to miner axon.")
         self.axon.attach(

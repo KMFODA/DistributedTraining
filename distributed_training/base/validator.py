@@ -16,19 +16,20 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import _thread
 import asyncio
 import copy
-import os
 import threading
 from traceback import print_exception
-from typing import List, Tuple
+from typing import List
 
 import bittensor as bt
 import numpy as np
+
 from distributed_training.base.neuron import BaseNeuron
-from distributed_training.utils.weight_utils import convert_weights_and_uids_for_emit
 from distributed_training.utils.chain import log_peerid_to_chain
+from distributed_training.utils.weight_utils import \
+    convert_weights_and_uids_for_emit
+
 
 class BaseValidatorNeuron(BaseNeuron):
     """
@@ -77,12 +78,14 @@ class BaseValidatorNeuron(BaseNeuron):
 
         bt.logging.info("serving ip to chain...")
         try:
-            self.axon = bt.axon(wallet=self.wallet, 
-                                config=self.config, 
-                                port=self.config.axon.port,
-                                ip=self.config.axon.ip,
-                                external_ip=self.config.axon.external_ip,
-                                external_port=self.config.axon.external_port)
+            self.axon = bt.axon(
+                wallet=self.wallet,
+                config=self.config,
+                port=self.config.axon.port,
+                ip=self.config.axon.ip,
+                external_ip=self.config.axon.external_ip,
+                external_port=self.config.axon.external_port,
+            )
             try:
                 self.subtensor.serve_axon(
                     netuid=self.config.netuid,
@@ -238,10 +241,10 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check if the norm is zero or contains NaN values
         if np.any(norm == 0) or np.isnan(norm).any():
             norm = np.ones_like(norm)  # Avoid division by zero or NaN
-            
+
         # Compute raw_weights safely
         raw_weights = self.scores / norm
-        
+
         bt.logging.debug("raw_weights", raw_weights)
         bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
         # Process the raw weights to final_weights via subtensor limitations.
@@ -259,7 +262,7 @@ class BaseValidatorNeuron(BaseNeuron):
         )
         bt.logging.info("processed_weights", processed_weights)
         bt.logging.info("processed_weight_uids", processed_weight_uids)
-        
+
         # Convert to uint16 weights and uids.
         (
             uint_uids,
@@ -267,7 +270,7 @@ class BaseValidatorNeuron(BaseNeuron):
         ) = convert_weights_and_uids_for_emit(
             uids=processed_weight_uids, weights=processed_weights
         )
-        
+
         bt.logging.debug("uint_weights", uint_weights)
         bt.logging.debug("uint_uids", uint_uids)
 
@@ -373,9 +376,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: np.ndarray = (
-            alpha * scattered_rewards + (1 - alpha) * self.scores
-        )
+        self.scores: np.ndarray = alpha * scattered_rewards + (1 - alpha) * self.scores
         bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):

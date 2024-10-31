@@ -16,18 +16,19 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
+import random
+import time
 from typing import List
 
 import bittensor as bt
-import torch
-from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import (get_random_uids, 
-                                             update_run_peerid_list, 
-                                             map_uid_to_peerid)
-import time
-import asyncio
-import random
 import numpy as np
+import torch
+
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.uids import (get_random_uids,
+                                             map_uid_to_peerid,
+                                             update_run_peerid_list)
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -53,9 +54,11 @@ def score_gradients(self, response, uid, threshold=0.85):
         else:
             # Create DataLoader
             dataloader = DataLoader(
-                batch_size=response.batch_size
-                if "batch_size" in response.__dict__
-                else self.config.neuron.local_batch_size_train,
+                batch_size=(
+                    response.batch_size
+                    if "batch_size" in response.__dict__
+                    else self.config.neuron.local_batch_size_train
+                ),
                 sequence_length=1024,
                 rows=response.dataset_indices,
             )
@@ -324,9 +327,11 @@ async def get_rewards(
     else:
         scores = torch.FloatTensor(
             [
-                1
-                if response.dendrite.status_code == 200 and response.loss != 0.0
-                else 0
+                (
+                    1
+                    if response.dendrite.status_code == 200 and response.loss != 0.0
+                    else 0
+                )
                 for _, response in zip(uids, responses[0])
             ]
         ).to(self.device)

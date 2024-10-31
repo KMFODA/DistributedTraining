@@ -6,8 +6,14 @@ from itertools import chain
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import bittensor as bt
-import hivemind
 import torch
+from bitsandbytes.optim import LAMB
+from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
+from transformers import AutoModelForCausalLM
+
+import hivemind
+from distributed_training.utils.progress_tracker import (LocalTrainingProgress,
+                                                         get_global_epoch)
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
@@ -15,14 +21,6 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
-from transformers import AutoModelForCausalLM
-from bitsandbytes.optim import LAMB
-
-from distributed_training.utils.progress_tracker import (
-    LocalTrainingProgress,
-    get_global_epoch,
-)
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)

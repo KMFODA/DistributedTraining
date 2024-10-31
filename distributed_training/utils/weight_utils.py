@@ -6,6 +6,7 @@ import numpy as np
 U32_MAX = 4294967295
 U16_MAX = 65535
 
+
 def convert_weights_and_uids_for_emit(
     uids: np.ndarray, weights: np.ndarray
 ) -> Tuple[List[int], List[int]]:
@@ -37,14 +38,10 @@ def convert_weights_and_uids_for_emit(
 
     if np.min(weights) < 0:
         raise ValueError(
-            "Passed weight is negative cannot exist on chain {}".format(
-                weights
-            )
+            "Passed weight is negative cannot exist on chain {}".format(weights)
         )
     if np.min(uids) < 0:
-        raise ValueError(
-            "Passed uid is negative cannot exist on chain {}".format(uids)
-        )
+        raise ValueError("Passed uid is negative cannot exist on chain {}".format(uids))
     if len(uids) != len(weights):
         raise ValueError(
             "Passed weights and uids must have the same length, got {} and {}".format(
@@ -59,9 +56,7 @@ def convert_weights_and_uids_for_emit(
         weights = [
             float(value) / max_weight for value in weights
         ]  # max-upscale values (max_weight = 1).
-        bt.logging.debug(
-            f"setting on chain max: {max_weight} and weights: {weights}"
-        )
+        bt.logging.debug(f"setting on chain max: {max_weight} and weights: {weights}")
 
     weight_vals = []
     weight_uids = []

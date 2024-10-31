@@ -1,15 +1,17 @@
-import random
-import bittensor as bt
-from typing import List
-import traceback
 import asyncio
-import distributed_training
-from hivemind.utils.timed_storage import ValueWithExpiration
-from hivemind.p2p import PeerID
-import time
 import datetime as dt
+import random
+import time
+import traceback
+from typing import List
 
+import bittensor as bt
 import numpy as np
+
+import distributed_training
+from hivemind.p2p import PeerID
+from hivemind.utils.timed_storage import ValueWithExpiration
+
 
 async def check_uid(dendrite, axon, uid, epoch=None):
     try:
@@ -37,6 +39,7 @@ async def check_uid(dendrite, axon, uid, epoch=None):
         bt.logging.error(f"Error checking UID {uid}: {e}\n{traceback.format_exc()}")
         # loop.close()
         return False
+
 
 async def check_uid_availability(
     dendrite,
@@ -66,9 +69,10 @@ async def check_uid_availability(
     # Available otherwise.
     return True
 
+
 async def get_random_uids(
-     self, dendrite, k: int, exclude: List[int] = None, epoch: int = None
-    ) -> np.ndarray:
+    self, dendrite, k: int, exclude: List[int] = None, epoch: int = None
+) -> np.ndarray:
     """Returns k available random uids from the metagraph.
     Args:
         k (int): Number of uids to return.
@@ -80,7 +84,7 @@ async def get_random_uids(
     """
     candidate_uids = []
     avail_uids = []
-    
+
     tasks = []
     for uid in range(self.metagraph.n.item()):
         # The dendrite client queries the network.
@@ -102,8 +106,7 @@ async def get_random_uids(
             avail_uids.append(uid)
             if uid_is_not_excluded:
                 candidate_uids.append(uid)
-    
-    
+
     # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
     available_uids = candidate_uids
     if len(candidate_uids) < k:

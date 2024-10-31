@@ -17,15 +17,14 @@
 
 import copy
 import typing
+from abc import ABC, abstractmethod
 
 import bittensor as bt
 
-from abc import ABC, abstractmethod
-
-# Sync calls set weights and also resyncs the metagraph.
-from distributed_training.utils.config import check_config, add_args, config
-from distributed_training.utils.misc import ttl_get_block, load_wandb
 from distributed_training import __spec_version__ as spec_version
+# Sync calls set weights and also resyncs the metagraph.
+from distributed_training.utils.config import add_args, check_config, config
+from distributed_training.utils.misc import ttl_get_block
 
 
 class BaseNeuron(ABC):
@@ -100,12 +99,10 @@ class BaseNeuron(ABC):
         self.step = 0
 
     @abstractmethod
-    async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
-        ...
+    async def forward(self, synapse: bt.Synapse) -> bt.Synapse: ...
 
     @abstractmethod
-    def run(self):
-        ...
+    def run(self): ...
 
     def sync(self):
         """

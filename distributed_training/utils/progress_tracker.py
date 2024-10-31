@@ -1,9 +1,10 @@
-import wandb
-from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from dataclasses import dataclass
-import pandas as pd
+
 import bittensor as bt
+import pandas as pd
+import wandb
 from huggingface_hub import list_repo_refs
+from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from tqdm import tqdm
 
 

@@ -16,39 +16,31 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-from math import floor
-from typing import Callable, Any
-from functools import lru_cache, update_wrapper
-import bittensor as bt
-from typing import Any, List
-from distributed_training.protocol import Train
 import asyncio
-import wandb
-import logging
-from loguru import logger as bt_logger
-from hivemind.utils.logging import use_hivemind_log_handler
-import speedtest
-import hivemind
-import logging_loki
-from logging.handlers import QueueHandler, QueueListener
-from multiprocessing import Queue
 import json
-from hivemind import utils
+import logging
+import os
 import re
-from ipaddress import ip_address
-import torch
-
-import os
 import shutil
-import random
-from distributed_training.data.dataset import DataLoader
-from bitarray import bitarray
+import time
+from functools import lru_cache, update_wrapper
+from ipaddress import ip_address
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from math import floor
+from multiprocessing import Queue
+from typing import Any, Callable, List
+
+import bittensor as bt
+import logging_loki
+import speedtest
 import wandb
-import os
 from dotenv import load_dotenv
-import asyncio
-from logging.handlers import RotatingFileHandler
+from loguru import logger as bt_logger
+
+import hivemind
+from distributed_training.protocol import Train
+from hivemind import utils
+from hivemind.utils.logging import use_hivemind_log_handler
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -368,12 +360,12 @@ def setup_logging(
     ip=None,
     port=None,
     local_logfile="logs_mylogfile.txt",
-    config=None  # Add config parameter
+    config=None,  # Add config parameter
 ):
     """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
     # Initialize bittensor logging
     _ = bt.logging()
-    
+
     # Setup formatters
     formatter = logging.Formatter("%(message)s")
 
@@ -381,18 +373,18 @@ def setup_logging(
     bt_logger = logging.getLogger("bittensor")
     bt_logger.setLevel(level)
     bt_logger.propagate = False
-    
+
     use_hivemind_log_handler("nowhere")
-    
+
     # Setup root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
-    
+
     # Setup BittensorLogHandler
     bt_handler = BittensorLogHandler()
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
-    
+
     # Add Loki handler
     add_loki_logger_handler(
         root_logger,
@@ -407,18 +399,18 @@ def setup_logging(
         uid,
         neuron_type,
     )
-    
+
     # Handle local file logging
     if os.path.exists(local_logfile):
         shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
         os.remove(local_logfile)
-    
+
     # Setup hivemind logger
     hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.handlers.clear()
     hivemind_logger.setLevel(logging.DEBUG)
     hivemind_logger.propagate = False
-    
+
     file_handler = logging.FileHandler(local_logfile)
     file_handler.setLevel(logging.DEBUG)
     file_handler.addFilter(logging_filter)
@@ -436,13 +428,13 @@ def setup_logging(
         events_logger = logging.getLogger("event")
         events_logger.handlers.clear()
         events_logger.setLevel(logging.INFO)
-        
+
         def event(self, message, *args, **kws):
             if self.isEnabledFor(EVENTS_LEVEL_NUM):
                 self._log(EVENTS_LEVEL_NUM, message, args, **kws)
-        
+
         logging.Logger.event = event
-        
+
         # Create events file handler
         events_file = os.path.join(config.neuron.full_path, "events.log")
         events_handler = RotatingFileHandler(
@@ -454,10 +446,9 @@ def setup_logging(
         events_handler.setLevel(logging.INFO)
         events_logger.addHandler(events_handler)
         events_logger.propagate = False
-        
+
         # Register as primary logger
         bt.logging.register_primary_logger(events_logger.name)
-
 
 
 def get_bandwidth():

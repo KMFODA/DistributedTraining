@@ -22,7 +22,7 @@ import os
 import bittensor as bt
 import torch
 
-from distributed_training import __version__, __run__
+from distributed_training import __run__, __version__
 
 
 def check_config(cls, config: "bt.Config"):
@@ -59,7 +59,7 @@ def add_args(cls, parser):
         help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
         default=8009,
     )
-    
+
     parser.add_argument(
         "--neuron.events_retention_size",
         type=str,

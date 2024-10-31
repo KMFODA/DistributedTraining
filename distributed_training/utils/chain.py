@@ -1,10 +1,10 @@
-import bittensor as bt
-
 import bisect
 import copy
+import random
 import threading
 from typing import List
-import random
+
+import bittensor as bt
 
 
 class UIDIterator:
