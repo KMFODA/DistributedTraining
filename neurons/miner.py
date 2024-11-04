@@ -28,6 +28,7 @@ from bitarray import bitarray
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
+import threading
 
 # Bittensor Miner Template:
 import distributed_training
@@ -54,13 +55,20 @@ from distributed_training.utils.misc import (
     setup_logging,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training.utils.s3 import (
+    get_indices_for_window,
+    add_slice_for_window_to_buffer,
+    upload_gradient_buffers_to_s3,
+)
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
+from queue import Queue
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
@@ -99,7 +107,7 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        update_global_tracker_state(self)
+        self.global_progress.epoch = get_global_epoch(self)
 
         # Init Device & Model
         self.device = self.config.neuron.device
@@ -110,7 +118,7 @@ class Miner(BaseMinerNeuron):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name,
-                revision=str(self.global_progress.epoch),
+                revision=str(1),
                 trust_remote_code=True,
             )
             if self.global_progress.epoch
@@ -162,9 +170,6 @@ class Miner(BaseMinerNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        self.peer_id = self.dht.peer_id
-        self.get_stub = self.grad_averager.get_stub
-        self.serializer = self.grad_averager.serializer
 
         # Create mapping between uids to peerids
         self.uids_to_peerids = self.loop.run_until_complete(
@@ -200,6 +205,83 @@ class Miner(BaseMinerNeuron):
 
         # Init Tracking event
         self.event = {}
+
+        # Init gradient queue
+        self.config.neuron.window_length = 2  # TODO: set this in config.py
+        self.grad_buff_queue = Queue(maxsize=0)
+
+        # Init bakcground threads
+        self.stop_event = threading.Event()
+        self.dataloader_thread = threading.Thread(
+            target=self.load_dataloader, daemon=True
+        )
+        self.dataloader_thread.start()
+
+        self.update_model_thread = threading.Thread(
+            target=self.load_latest_model, daemon=True
+        )
+        self.update_model_thread.start()
+
+        self.upload_gradient_buffers_to_s3_thread = threading.Thread(
+            target=self.upload_gradient_buffers_to_s3,
+            args=("distributed-training-second", self.wallet, "gradient"),
+            daemon=True,
+        )
+        self.upload_gradient_buffers_to_s3_thread.start()
+
+        # TODO: Add AWS credentials setup instructions in README.md
+
+    def upload_gradient_buffers_to_s3(self, bucket: str, wallet: "bt.wallet", key: str):
+        _ = asyncio.run(
+            upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
+        )
+
+    def load_latest_model(self):
+        while not self.stop_event.is_set():
+            self.global_progress.epoch = get_global_epoch(self)
+            if (self.local_progress.epoch != self.global_progress.epoch) or (
+                sum(
+                    np.isnan(
+                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
+                    )
+                )
+                > 1
+            ):
+                bt.logging.info(
+                    "Local Epoch Behind Global Epoch. Loading Latest Model State."
+                )
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
+            else:
+                time.sleep(30)
+
+    def load_dataloader(self):
+        bt.logging.info("DataLoader initialisation started")
+        search_start = random.choice(
+            range(
+                len(self.dataset_indices)
+                - self.config.neuron.training_examples_per_miner
+                + 1
+            )
+        )
+        start = self.dataset_indices.index(
+            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+        )
+        self.group = [
+            i
+            for i in range(
+                start, start + self.config.neuron.training_examples_per_miner
+            )
+        ]
+
+        self.dataset_indices[self.group] = True
+
+        # Create Dataloader
+        self.dataloader = DataLoader(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            rows=self.group,
+        )
+        bt.logging.info("DataLoader initialisation finished")
 
     def get_miner_info(self):
         return {
@@ -355,7 +437,7 @@ class Miner(BaseMinerNeuron):
                 f"Gradient Averaging Step Failed With Error: {e}. Loading Latest Model State."
             )
             failed_gradient_all_reduce = True
-            update_global_tracker_state(self)
+            self.global_progress.epoch = get_global_epoch(self)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
 
@@ -382,8 +464,10 @@ class Miner(BaseMinerNeuron):
         """
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
+        window: int = int(self.subtensor.block / self.config.neuron.window_length)
 
         self.global_progress.epoch = get_global_epoch(self)
+        # TODO Skip this if already load_state_from_peers
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
@@ -397,30 +481,6 @@ class Miner(BaseMinerNeuron):
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-        search_start = random.choice(
-            range(
-                len(self.dataset_indices)
-                - self.config.neuron.training_examples_per_miner
-                + 1
-            )
-        )
-        start = self.dataset_indices.index(
-            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
-        )
-        group = [
-            i
-            for i in range(
-                start, start + self.config.neuron.training_examples_per_miner
-            )
-        ]
-        self.dataset_indices[group] = True
-
-        # Create Dataloader
-        dataloader = DataLoader(
-            batch_size=self.config.neuron.local_batch_size_train,
-            sequence_length=1024,
-            rows=group,
-        )
         synapse.batch_size = self.config.neuron.local_batch_size_train
 
         total_loss = 0
@@ -428,8 +488,13 @@ class Miner(BaseMinerNeuron):
 
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
+        # Wait for the dataloader thread to complete if it is running
+        while self.dataloader_thread.is_alive():
+            bt.logging.info("Waiting for DataLoader thread to complete")
+            time.sleep(1)
+
         # Training loop
-        for index, batch in enumerate(dataloader):
+        for index, batch in enumerate(self.dataloader):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
@@ -462,6 +527,18 @@ class Miner(BaseMinerNeuron):
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
 
+            # Add gradient to buffer
+            await add_slice_for_window_to_buffer(
+                self,
+                dataset_index=index,
+                model=self.model,
+                window=window,
+                seed=window,
+                compression=100,
+                key="gradient",
+            )
+            bt.logging.info("Added gradient to buffer")
+
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
                 f"Request Received From A Validator Running {synapse.model_name} Whilst Current Miner Is Running {self.model.name_or_path}."
@@ -469,12 +546,17 @@ class Miner(BaseMinerNeuron):
             synapse.model_name = self.model.name_or_path
             return synapse
 
+        self.dataloader_thread = threading.Thread(
+            target=self.load_dataloader, daemon=True
+        )
+        self.dataloader_thread.start()
+
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
-        synapse.dataset_indices = group
+        synapse.dataset_indices = self.group
 
         if not self.config.neuron.dont_wandb_log:
             self.event.update(
