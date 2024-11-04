@@ -114,7 +114,7 @@ class BaseMinerNeuron(BaseNeuron):
         # Serve passes the axon information to the network + netuid we are hosting on.
         # This will auto-update if the axon port of external ip have changed.
         bt.logging.info(
-            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid} and port {self.axon.port}"
+            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid} and port: {self.axon.port}"
         )
         self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
@@ -158,8 +158,6 @@ class BaseMinerNeuron(BaseNeuron):
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
             self.should_exit = True
-            # self.opt.shutdown()
-            # self.dht.shutdown()
             self.axon.stop()
             bt.logging.success("Miner killed by keyboard interrupt.")
             exit()

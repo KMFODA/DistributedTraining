@@ -102,7 +102,7 @@ class Miner(BaseMinerNeuron):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name,
-                revision=str(12),
+                revision=str(self.global_progress_epoch),
                 trust_remote_code=True,
             )
             if self.global_progress.epoch
@@ -194,7 +194,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.IsAlive:
         bt.logging.info("Responded to be Active")
         synapse.completion = "True"
-        # synapse.epoch = self.local_progress.epoch
+        synapse.epoch = self.local_progress.epoch
         return synapse
 
     async def all_reduce(

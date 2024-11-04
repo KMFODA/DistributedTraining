@@ -84,7 +84,7 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 2:
+            while len(self.miner_uids) < 30:
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
                 )
@@ -99,9 +99,9 @@ async def forward(self):
             if self.local_progress.samples_accumulated == 0 and (
                 self.uid == self.master_uid
             ):
-                sample_size = 2
+                sample_size = 20
             elif self.uid == self.master_uid:
-                sample_size = 2
+                sample_size = 1
 
             self.miner_uids = await get_random_uids(
                 self,
@@ -177,6 +177,15 @@ async def forward(self):
                         failed_peers,
                         participating_peers,
                     ) = gradient_averaging_step.result()
+                    
+                    batch_size = sum(
+                     [
+                            value
+                            if (value is not None) and (key not in failed_peers)
+                            else 0
+                            for key, value in gathered.items()
+                        ]
+                    )
 
                     bt.logging.info(f"Gathered {gathered} gradients")
                     bt.logging.info(f"Failed allreduce: {failed_peers}")
@@ -184,12 +193,7 @@ async def forward(self):
 
                     self.event.update(
                         {
-                            "batch_size": sum(
-                                [
-                                    value if value is not None else 0
-                                    for value in gathered.values()
-                                ]
-                            ),
+                            "batch_size": batch_size,
                             "failed_peers_count": len(failed_peers),
                             "participating_peers_count": len(participating_peers),
                         }

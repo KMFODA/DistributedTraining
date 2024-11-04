@@ -127,7 +127,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     f"UID:{uid} - PeerID:{peer_id_abreviated} - Failed to communicate with peers due to error - {e}"
                 )
                 self.tensor_part_container.register_failed_reducer(peer_index)
-                # await self._ban_sender(peer_id)
+                await self._ban_sender(peer_id)
                 raise
 
     def __aiter__(self):

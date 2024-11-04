@@ -35,7 +35,6 @@ async def check_uid(dendrite, axon, uid, epoch=None):
             bt.logging.trace(f"UID {uid} is not active.")
             return False
     except Exception as e:
-        print("NOW deing deaong....")
         bt.logging.error(f"Error checking UID {uid}: {e}\n{traceback.format_exc()}")
         # loop.close()
         return False

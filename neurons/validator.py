@@ -139,7 +139,9 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.uid  # TODO FIX HERE @Karim!!
+        self.master_uid = self.metagraph.hotkeys.index(
+            "5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP"
+        )
 
         # Init All Reduce Variables
         self.train_timeout = 120
@@ -178,7 +180,7 @@ class Validator(BaseValidatorNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            # min_group_size=5,
+            min_group_size=5,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
