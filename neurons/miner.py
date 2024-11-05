@@ -42,8 +42,11 @@ from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.misc import init_dht, load_wandb, setup_logging
 from distributed_training.utils.progress_tracker import (
-    GlobalTrainingProgress, LocalTrainingProgress, get_global_epoch,
-    update_global_tracker_state)
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    get_global_epoch,
+    update_global_tracker_state,
+)
 from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import map_uid_to_peerid
 
@@ -176,6 +179,9 @@ class Miner(BaseMinerNeuron):
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
+        # Init Tracking event
+        self.event = {}
+
         # Log PeerID to chain
         log_peerid_to_chain(self)
 
@@ -206,26 +212,26 @@ class Miner(BaseMinerNeuron):
         # Update the gradient averaging kwargs
         if synapse.next_chunk_timeout is not None:
             self.grad_averager.next_chunk_timeout = synapse.next_chunk_timeout
-            self.grad_averager.allreduce_kwargs["sender_timeout"] = (
-                self.grad_averager.next_chunk_timeout
-            )
+            self.grad_averager.allreduce_kwargs[
+                "sender_timeout"
+            ] = self.grad_averager.next_chunk_timeout
             self.grad_averager.allreduce_kwargs["reducer_timeout"] = (
                 self.grad_averager.next_chunk_timeout * 2
             )
         if synapse.all_reduce_timeout is not None:
             self.grad_averager._allreduce_timeout = synapse.all_reduce_timeout
         if synapse.min_group_size is not None:
-            self.grad_averager.matchmaking_kwargs["min_group_size"] = (
-                synapse.min_group_size
-            )
+            self.grad_averager.matchmaking_kwargs[
+                "min_group_size"
+            ] = synapse.min_group_size
         if synapse.request_timeout is not None:
-            self.grad_averager.matchmaking_kwargs["request_timeout"] = (
-                synapse.request_timeout
-            )
+            self.grad_averager.matchmaking_kwargs[
+                "request_timeout"
+            ] = synapse.request_timeout
         if synapse.min_matchmaking_time is not None:
-            self.grad_averager.matchmaking_kwargs["min_matchmaking_time"] = (
-                synapse.min_matchmaking_time
-            )
+            self.grad_averager.matchmaking_kwargs[
+                "min_matchmaking_time"
+            ] = synapse.min_matchmaking_time
 
         # # Update mapping of uids to peerids
         try:
