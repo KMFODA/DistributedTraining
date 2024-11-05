@@ -129,6 +129,9 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
+                    if self.peer_id_logged_to_chain == False:
+                        log_peerid_to_chain(self)
+
                     if not self.config.neuron.dont_wandb_log:
                         if self.event != {}:
                             self.event.update(self.get_miner_info())
@@ -149,9 +152,6 @@ class BaseMinerNeuron(BaseNeuron):
                 # Sync metagraph and potentially set weights.
                 self.sync()
                 self.step += 1
-
-                if self.peer_id_logged_to_chain == False:
-                    log_peerid_to_chain(self)
 
             # Await the training task to ensure it completes before exiting
 
