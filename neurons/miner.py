@@ -102,7 +102,7 @@ class Miner(BaseMinerNeuron):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name,
-                revision=str(self.global_progress_epoch),
+                revision=str(self.global_progress.epoch),
                 trust_remote_code=True,
             )
             if self.global_progress.epoch
