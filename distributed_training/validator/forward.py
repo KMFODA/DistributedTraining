@@ -386,8 +386,8 @@ async def forward(self):
                     [
                         response.loss
                         for response, uid in zip(responses[0], self.miner_uids)
-                        # if response.dendrite.status_code == 200
-                        # and (response.dataset_indices is not None)
+                        if response.dendrite.status_code == 200
+                        and (response.dataset_indices is not None)
                     ]
                 ).mean()
                 bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
