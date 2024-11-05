@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 import bittensor as bt
 
 from distributed_training import __spec_version__ as spec_version
+
 # Sync calls set weights and also resyncs the metagraph.
 from distributed_training.utils.config import add_args, check_config, config
 from distributed_training.utils.misc import ttl_get_block
@@ -99,10 +100,12 @@ class BaseNeuron(ABC):
         self.step = 0
 
     @abstractmethod
-    async def forward(self, synapse: bt.Synapse) -> bt.Synapse: ...
+    async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
+        ...
 
     @abstractmethod
-    def run(self): ...
+    def run(self):
+        ...
 
     def sync(self):
         """
@@ -120,7 +123,7 @@ class BaseNeuron(ABC):
 
         if self.should_sync_metagraph():
             self.metagraph.last_update[self.uid] = self.block
-        
+
         if self.step != 0:
             self.save_state()
 

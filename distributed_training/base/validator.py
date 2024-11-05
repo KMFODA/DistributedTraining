@@ -27,8 +27,7 @@ import numpy as np
 
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
-from distributed_training.utils.weight_utils import \
-    convert_weights_and_uids_for_emit
+from distributed_training.utils.weight_utils import convert_weights_and_uids_for_emit
 
 
 class BaseValidatorNeuron(BaseNeuron):

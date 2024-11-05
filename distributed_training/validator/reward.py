@@ -26,9 +26,11 @@ import numpy as np
 import torch
 
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import (get_random_uids,
-                                             map_uid_to_peerid,
-                                             update_run_peerid_list)
+from distributed_training.utils.uids import (
+    get_random_uids,
+    map_uid_to_peerid,
+    update_run_peerid_list,
+)
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True

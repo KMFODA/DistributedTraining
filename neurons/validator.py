@@ -37,13 +37,19 @@ from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import (AsyncDendritePool, init_dht,
-                                             load_wandb, setup_logging)
+from distributed_training.utils.misc import (
+    AsyncDendritePool,
+    init_dht,
+    load_wandb,
+    setup_logging,
+)
 from distributed_training.utils.progress_tracker import (
-    GlobalTrainingProgress, LocalTrainingProgress, update_global_tracker_state)
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
 from distributed_training.utils.state_loader import load_state_from_peer
-from distributed_training.utils.uids import (map_uid_to_peerid,
-                                             update_run_peerid_list)
+from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 from distributed_training.validator import forward
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2

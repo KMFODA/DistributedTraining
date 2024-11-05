@@ -29,8 +29,7 @@ from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
 from distributed_training.utils.misc import get_bandwidth
-from distributed_training.utils.progress_tracker import \
-    update_global_tracker_state
+from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
@@ -177,9 +176,9 @@ async def forward(self):
                         failed_peers,
                         participating_peers,
                     ) = gradient_averaging_step.result()
-                    
+
                     batch_size = sum(
-                     [
+                        [
                             value
                             if (value is not None) and (key not in failed_peers)
                             else 0
