@@ -19,6 +19,7 @@
 import asyncio
 import copy
 import threading
+import os
 from traceback import print_exception
 from typing import List
 
@@ -394,8 +395,12 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        # Load the state of the validator from file.
-        state = np.load(self.config.neuron.full_path + "/state.npz")
-        self.step = state["step"]
-        self.scores = state["scores"]
-        self.hotkeys = state["hotkeys"]
+        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+            bt.logging.info("Pre-saved validator state found. Loading validator state.")
+            # Load the state of the validator from file.
+            state = np.load(self.config.neuron.full_path + "/state.npz")
+            self.step = state["step"]
+            self.scores = state["scores"]
+            self.hotkeys = state["hotkeys"]
+        else:
+            bt.logging.info("Pre-saved validator state not found.")

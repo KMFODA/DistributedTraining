@@ -28,8 +28,8 @@ import torch
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.uids import (
     get_random_uids,
-    map_uid_to_peerid,
     update_run_peerid_list,
+    map_uid_to_peerid,
 )
 
 # GPU optimizations.
@@ -174,9 +174,9 @@ def score_gradients(self, response, uid, threshold=0.85):
 async def score_blacklist(self, uids):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        if self.uids_to_peerids[uid] == None:
+        if self.uids_to_peerids[uid][0] == None:
             scores[i] = 0.0
-        elif self.uids_to_peerids[uid] in self.run_peer_id_list:
+        elif self.uids_to_peerids[uid][0] in self.run_peer_id_list:
             scores[i] = 1.0
         else:
             scores[i] = 0.0
@@ -271,9 +271,13 @@ async def get_rewards(
 
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+
+        # Update UID to PeerID mapping
+        map_uid_to_peerid(self, uids)
+
+        # Update PeerIDs list
         update_run_peerid_list(self)
-        # Update peerids from chain
-        map_uid_to_peerid(self)
+
         blacklist_scores = await score_blacklist(self, self.miner_uids)
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
@@ -343,9 +347,13 @@ async def get_rewards(
         if (self.step % 1) == 0:
             # Check if peer is connected to DHT & run_id and blacklist them if they are not
             bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+
+            # Update UID to PeerID mapping
+            map_uid_to_peerid(self, uids)
+
+            # Update PeerIDs list
             update_run_peerid_list(self)
-            # Update peerids from chain
-            map_uid_to_peerid(self)
+
             blacklist_scores = await score_blacklist(self, uids)
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(

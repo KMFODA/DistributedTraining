@@ -124,7 +124,7 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.metagraph.last_update[self.uid] = self.block
 
-        if self.step != 0:
+        if (self.step != 0) and (self.neuron_type != "MinerNeuron"):
             self.save_state()
 
     def check_registered(self):

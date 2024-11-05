@@ -27,6 +27,7 @@ import math
 
 import bittensor as bt
 import torch
+import threading
 from bitarray import bitarray
 from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
@@ -49,7 +50,11 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import load_state_from_peer
-from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
+from distributed_training.utils.uids import (
+    map_uid_to_peerid,
+    map_uid_to_peerid_background_task,
+    update_run_peerid_list,
+)
 from distributed_training.validator import forward
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
@@ -214,8 +219,16 @@ class Validator(BaseValidatorNeuron):
             uid: (None, None) for uid in self.metagraph.uids.tolist()
         }
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
-        map_uid_to_peerid(self)
 
+        # Start UID to PeerID mapping
+        self.stop_event = threading.Event()
+        self.map_uid_to_peerid_thread = threading.Thread(
+            target=map_uid_to_peerid_background_task, args=(self,), daemon=True
+        )
+        # self.map_uid_to_peerid_thread.start()
+        map_uid_to_peerid(self, self.metagraph.uids.tolist())
+
+        # Update PeerID list
         update_run_peerid_list(self)
 
     def update_local_tracker_state(self, rewards, responses):
