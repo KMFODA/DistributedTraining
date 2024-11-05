@@ -120,8 +120,9 @@ class BaseNeuron(ABC):
 
         if self.should_sync_metagraph():
             self.metagraph.last_update[self.uid] = self.block
-
-        self.save_state()
+        
+        if self.step != 0:
+            self.save_state()
 
     def check_registered(self):
         # --- Check for registration.
