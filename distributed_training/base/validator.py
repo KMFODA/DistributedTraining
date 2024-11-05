@@ -244,7 +244,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Compute raw_weights safely
         raw_weights = self.scores / norm
 
-        bt.logging.debug("raw_weights", raw_weights)
+        bt.logging.debug("raw_weights", raw_weights.tolist())
         bt.logging.debug("raw_weight_uids", str(self.metagraph.uids.tolist()))
         # Process the raw weights to final_weights via subtensor limitations.
 
