@@ -219,7 +219,7 @@ async def score_bandwidth(self, uids, timeout=30):
 def score_failed_senders(self, uids, failed_peers, participating_peers):
     scores = torch.FloatTensor([0.0 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        peer_id = self.uids_to_peerids.get(uid)
+        peer_id = self.uids_to_peerids.get(uid)[0]
 
         if peer_id in participating_peers:
             if peer_id in failed_peers:

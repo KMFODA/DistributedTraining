@@ -120,7 +120,7 @@ async def forward(self):
             if all_reduce:
                 bt.logging.info("Performing Gradient Averaging")
                 self.peerids_to_uids = {
-                    str(value): key for key, value in self.uids_to_peerids.items()
+                    str(value[0]): key for key, value in self.uids_to_peerids.items()
                 }
                 gradient_averaging_step = self.grad_averager.step(
                     gather=0, wait=False, peerids_to_uids=self.peerids_to_uids
