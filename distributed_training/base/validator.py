@@ -395,7 +395,7 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+        if os.path.isfile(self.config.neuron.full_path + "/state.npz"):
             bt.logging.info("Pre-saved validator state found. Loading validator state.")
             # Load the state of the validator from file.
             state = np.load(self.config.neuron.full_path + "/state.npz")
