@@ -113,6 +113,20 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
+        "--neuron.master_ss58_address",
+        type=str,
+        help="The ss58 address for the master validator UID",
+        default="5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP",
+    )
+
+    parser.add_argument(
+        "--neuron.min_group_size",
+        type=int,
+        help="The minimum group size for an all reduce",
+        default=30,
+    )
+
+    parser.add_argument(
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",

@@ -23,6 +23,7 @@ import re
 from io import open
 from os import path
 
+from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
 
 
@@ -46,7 +47,12 @@ def read_requirements(path):
         return processed_requirements
 
 
-requirements = read_requirements("requirements.txt")
+with open("requirements.txt") as requirements_file:
+    requirements = list(map(str, parse_requirements(requirements_file)))
+
+with open("requirements_pre.txt") as requirements_file:
+    requirements_pre = list(map(str, parse_requirements(requirements_file)))
+
 here = path.abspath(path.dirname(__file__))
 
 with open(path.join(here, "README.md"), encoding="utf-8") as f:

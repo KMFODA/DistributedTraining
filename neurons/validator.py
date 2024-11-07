@@ -151,7 +151,7 @@ class Validator(BaseValidatorNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         self.master_uid = self.metagraph.hotkeys.index(
-            "5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP"
+            self.config.neuron.master_ss58_address,
         )
 
         # Init All Reduce Variables
@@ -191,7 +191,7 @@ class Validator(BaseValidatorNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            min_group_size=5,
+            min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
@@ -200,9 +200,6 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        self.peer_id = self.dht.peer_id
-        self.get_stub = self.grad_averager.get_stub
-        self.serializer = self.grad_averager.serializer
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:

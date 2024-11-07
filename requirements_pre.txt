@@ -1,0 +1,3 @@
+hivemind @ git+https://github.com/learning-at-home/hivemind.git@3a4cc15e29ce51b20c5d415a4c579abbae435718
+bittensor==8.2.1
+py-multihash==2.0.1

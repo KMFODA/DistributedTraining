@@ -83,9 +83,9 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 30:
+            while len(self.miner_uids) < self.config.neuron.min_group_size:
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {30-len(self.miner_uids)} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -189,6 +189,7 @@ async def forward(self):
                     bt.logging.info(f"Gathered {gathered} gradients")
                     bt.logging.info(f"Failed allreduce: {failed_peers}")
                     bt.logging.info(f"Participating peers: {participating_peers}")
+                    bt.logging.info(f"Batch Size: {batch_size}")
 
                     self.event.update(
                         {
@@ -318,7 +319,7 @@ async def forward(self):
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
                                     # Wait for other validators to query miners
-                                    time.sleep(120 * 6)
+                                    time.sleep(120 * 0)
                                     break
 
                                 except HfHubHTTPError:
