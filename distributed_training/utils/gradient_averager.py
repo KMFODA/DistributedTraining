@@ -1,55 +1,109 @@
 import asyncio
 import logging
 from contextlib import contextmanager
-from typing import (
-    Any,
-    AsyncIterator,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Sequence,
-    Union,
-)
+from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
+                    Sequence, Union)
+
+import torch
+import bittensor as bt
+
+from accumulators import AccumulatorFactory, CenteredClipAccumulator
 
 import hivemind
 import hivemind.averaging.averager
-import torch
-from hivemind.averaging.allreduce import (
-    AllreduceException,
-    AllReduceRunner,
-    AveragingMode,
-)
+from hivemind.averaging.allreduce import (AllreduceException, AllReduceRunner,
+                                          AveragingMode)
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
-from hivemind.compression import deserialize_torch_tensor, CompressionInfo
+from hivemind.averaging.partition import TensorPartReducer, BannedException
+from hivemind.compression import CompressionInfo, deserialize_torch_tensor
 from hivemind.dht import DHT
-from hivemind.p2p import P2PDaemonError, P2PHandlerError, PeerID, P2PContext
+from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
-from hivemind.utils.asyncio import (
-    aiter_with_timeout,
-    amap_in_executor,
-    as_aiter,
-    attach_event_on_finished,
-    azip,
-    enter_asynchronously,
-)
+from hivemind.utils.asyncio import (aiter_with_timeout, amap_in_executor,
+                                    as_aiter, attach_event_on_finished, azip,
+                                    enter_asynchronously)
 from hivemind.utils.streaming import split_for_streaming
-from hivemind.utils.timed_storage import (
-    DHTExpiration,
-    get_dht_time,
-)
-import bittensor as bt
-
+from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
 GatheredData = Any
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
 
+class DTTensorPartReducer(TensorPartReducer):
+    def __init__(
+        self,
+        part_shapes: Sequence[torch.Size],
+        num_senders: int,
+        *,
+        accumulator_factory: AccumulatorFactory,
+    ):
+        super().__init__(part_shapes, num_senders)
+        self.accumulator_factory = accumulator_factory
+        self.accumulator = None
+        
+    def reset_accumulators(self):
+        """(re)create averaging buffers for the next part in line, prepopulate with local tensor part"""
+        assert self.current_part_accumulated_from == self.num_current_senders or self.current_part_index == -1
+        if self.current_part_index >= self.num_parts - 1:
+            self.finalize()
+            return
+
+        self.current_part_index += 1
+        self.current_part_accumulated_from = 0
+        self.current_part_future = asyncio.Future()
+        self.num_current_senders = sum(
+            self.current_part_index < failed_index for failed_index in self.sender_failed_after
+        )
+        self.accumulator = self.accumulator_factory(self.part_shapes[self.current_part_index], self.num_senders)
+        self.denominator = 0.0
+        
+    async def accumulate_part(
+        self, sender_index: int, part_index: int, tensor_part: torch.Tensor, weight: float = 1.0
+    ) -> torch.Tensor:
+        """Add vector part to accumulator, wait for all other vectors to be added, then return the average part"""
+        assert 0 <= sender_index < self.num_senders, "invalid sender index"
+        assert 0 <= part_index < self.num_parts, "invalid part index"
+        self.num_parts_received[sender_index] += 1
+
+        while part_index > self.current_part_index:
+            # wait for previous parts to finish processing ...
+            await asyncio.wait(
+                {self.current_part_future, asyncio.create_task(self.finished.wait())},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self.finished.is_set():
+                raise AllreduceException(f"attempted to aggregate part in a finalized {self.__class__.__name__}")
+
+        if self.sender_failed_after[sender_index] != float("inf"):
+            raise BannedException(f"sender {sender_index} was banned in background")
+        assert part_index == self.current_part_index
+
+        current_part_future = self.current_part_future
+
+        if part_index < self.sender_failed_after[sender_index]:
+            self.accumulator.accumulate_part(tensor_part, weight)
+            self.current_part_accumulated_from += 1
+            self.denominator += weight
+            self.check_current_part_finished()
+        return await current_part_future
+    
+    def check_current_part_finished(self):
+        assert self.current_part_accumulated_from <= self.num_current_senders
+        if self.current_part_accumulated_from == self.num_current_senders:
+            self.current_part_future.set_result(self.accumulator.reduce())
+            self.reset_accumulators()
+        
+    def finalize(self):
+        if not self.finished.is_set():
+            if hasattr(self, "current_part_future"):
+                self.current_part_future.cancel()
+                self.accumulator = None
+            self.finished.set()
 
 class DTAllReduceRunner(AllReduceRunner):
     def __init__(self, peerids_to_uids, *args, **kwargs):
@@ -57,6 +111,14 @@ class DTAllReduceRunner(AllReduceRunner):
         self.count = 0
         self.peerids_to_uids = peerids_to_uids
         bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
+        
+        # Setting up CenteredClipAccumulator
+        accumulator_factory: AccumulatorFactory = CenteredClipAccumulator
+        self.tensor_part_reducer = DTTensorPartReducer(
+            tuple(part.shape for part in self.parts_for_local_averaging),
+            len(self.sender_peer_ids),
+            accumulator_factory=accumulator_factory,
+        )
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
@@ -471,6 +533,8 @@ class DTAverager(hivemind.DecentralizedAverager):
             )
             bt.logging.info(group_info.peer_ids)
             bt.logging.info(peer_fractions)
+            kwargs['accumulator_factory'] = self.accumulator_factory
+
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
                     peerids_to_uids=peerids_to_uids,
