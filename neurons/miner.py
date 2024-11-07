@@ -251,10 +251,15 @@ class Miner(BaseMinerNeuron):
 
         # # Update mapping of uids to peerids
         try:
+            commitment = {
+            'hash': self._compute_hash(gradients),
+            'samples': self.local_samples_accumulated 
+        }
+            
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
                 wait=False,
-                gather=self.local_progress.samples_accumulated,
+                gather=[self.local_progress.samples_accumulated, commitment], # TODO Need to test if this can take a list
             )
             start_time = time.perf_counter()
 

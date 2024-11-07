@@ -106,12 +106,20 @@ class DTTensorPartReducer(TensorPartReducer):
             self.finished.set()
 
 class DTAllReduceRunner(AllReduceRunner):
-    def __init__(self, peerids_to_uids, *args, **kwargs):
+    def __init__(self, peerids_to_uids, *args, tau=1.0, mprng_seed=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.count = 0
+        self.tau = tau  # todo - - - Need tau for clipping
+        self.mprng_seed = mprng_seed
+        self.step = 0
         self.peerids_to_uids = peerids_to_uids
         bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
         
+        # Store verification state
+        self.gradient_hashes = {}  # {step: {peer_id: {part_idx: hash}}}
+        self.result_hashes = {}    # {step: {peer_id: hash}}
+        self.inner_products = {}   # {step: {part_idx: {peer_id: value}}}
+        self.peer_commitments = None  # Will store user_gathered from _aggregate_with_group
+
         # Setting up CenteredClipAccumulator
         accumulator_factory: AccumulatorFactory = CenteredClipAccumulator
         self.tensor_part_reducer = DTTensorPartReducer(
@@ -119,96 +127,137 @@ class DTAllReduceRunner(AllReduceRunner):
             len(self.sender_peer_ids),
             accumulator_factory=accumulator_factory,
         )
+        
+    async def _verify_hashes(self, step: int, part_idx: int, msg) -> bool:
+        """Verify gradient and result hashes match broadcast values"""
+        # Get stored hashes for this step/part
+        grad_hash = self.gradient_hashes[step][msg.peer_id][part_idx]
+        result_hash = self.result_hashes[step][msg.peer_id]
+        
+        # Compute hashes of received data
+        computed_grad_hash = self._compute_hash(msg.original)
+        computed_result_hash = self._compute_hash(msg.result)
+        
+        return (grad_hash == computed_grad_hash and 
+                result_hash == computed_result_hash)
 
+    def _get_random_vector(self, seed: int, step: int, part_idx: int) -> torch.Tensor:
+        """Generate deterministic random vector for verification"""
+        # Need consistent random vector across all peers
+        rng = torch.Generator(device=self.device)
+        rng.manual_seed(hash((seed, step, part_idx)))
+        shape = self.parts_for_local_averaging[part_idx].shape
+        return torch.randn(shape, generator=rng, device=self.device)
+                  
     async def _communicate_with_peer(self, peer_id: PeerID):
-        """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
-        uid = self.peerids_to_uids.get(str(peer_id), "")
-        peer_id_abreviated = str(peer_id)
-
-        bt.logging.info(
-            f"UID:{uid} - PeerID:{peer_id_abreviated} - communicate_with_peer started",
-        )
+        """Handle gradient exchange with verification using gathered commitments"""
         peer_index = self.ordered_peer_ids.index(peer_id)
+        
         if peer_id == self.peer_id:
+            # We're the aggregator
             sender_index = self.sender_peer_ids.index(peer_id)
+            
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
+                # Verify all peers' gradient hashes before averaging
+                for peer_id, commitment in self.peer_commitments.items():
+                    gradient_hash = commitment['hash']
+                    samples = commitment['samples']
+                    
+                    # Skip banned peers
+                    if peer_id in self.banned_senders:
+                        continue
+                        
+                    # Verify hash matches
+                    received_grad = self.tensor_part_reducer.current_parts[sender_index][part_index]
+                    computed_hash = self._compute_hash(received_grad)
+                    
+                    if computed_hash != gradient_hash:
+                        bt.logging.error(
+                            f"Hash mismatch from peer {peer_id}\n"
+                            f"Committed: {gradient_hash}\n"
+                            f"Computed: {computed_hash}"
+                        )
+                        self.banned_senders.add(peer_id)
+                        continue
+                
+                # Let CenteredClip happen in tensor_part_reducer
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
                     sender_index, part_index, tensor_part, weight=self.weight
                 )
+                
+                # Generate random vector for verification (same for all peers due to same seed)
+                z = self._get_random_vector(self.mprng_seed, part_index)
+                
+                # Compute and verify CenteredClip constraint
+                all_inner_products = {}
+                for sender_id, sender_grad in self.tensor_part_reducer.current_parts.items():
+                    diff = sender_grad - averaged_part
+                    norm = torch.norm(diff)
+                    clipped_diff = diff * min(1.0, self.tau / (norm + 1e-8))
+                    inner_product = torch.dot(z, clipped_diff)
+                    all_inner_products[sender_id] = inner_product.item()
+                
+                # Verify sum equals zero (CenteredClip property)
+                total = sum(all_inner_products.values())
+                if abs(total) > 1e-6:
+                    await self._broadcast_accusation(
+                        peer_id,
+                        part_index,
+                        "centeredclip_violation",
+                        {"products": all_inner_products, "sum": total}
+                    )
+                    await self._ban_sender(peer_id)
+                    continue
+                    
+                # Store verification data
+                self.verification_data[part_index] = {
+                    'inner_products': all_inner_products,
+                    'result_hash': self._compute_hash(averaged_part)
+                }
+                
                 self.tensor_part_container.register_processed_part(
                     peer_index,
                     part_index,
-                    averaged_part - tensor_part,
+                    averaged_part - tensor_part
                 )
-
+                
         else:
             try:
+                # Regular gradient exchange flow
                 done_sending = asyncio.Event()
                 inputs_aiter = attach_event_on_finished(
-                    self._generate_input_for_peer(peer_index, uid, peer_id),
-                    done_sending,
+                    self._generate_input_for_peer(peer_index),
+                    done_sending
                 )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - generate_input_for_peer started"
-                )
-                stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(
-                    inputs_aiter
-                )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - get_peer_stub finished"
-                )
-
+                
+                stream = await self._get_peer_stub(peer_id).rpc_aggregate_part(inputs_aiter)
+                
                 if self.should_delay_results(self.peer_id):
                     await done_sending.wait()
-
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - sending tensors finished"
-                )
+                    
                 part_index = 0
-
-                def _try_deserialize(msg):
-                    if msg.code != averaging_pb2.AVERAGED_PART:
-                        raise AllreduceException(
-                            f"{peer_id_abreviated} sent {averaging_pb2.MessageCode.Name(msg.code)}"
-                        )
-                    return deserialize_torch_tensor(msg.tensor_part), msg
-
-                async for delta, msg in amap_in_executor(
-                    _try_deserialize,
-                    aiter_with_timeout(stream, self.reducer_timeout),
-                    max_prefetch=self.tensor_part_container.prefetch,
-                ):
+                async for delta, msg in self._process_peer_stream(stream):
+                    # Skip if aggregator was banned
+                    if peer_id in self.banned_senders:
+                        continue
+                        
+                    # Verify aggregator's result matches commitment
+                    aggregator_data = self.verification_data[peer_id][part_index]
+                    if self._compute_hash(msg.result) != aggregator_data['result_hash']:
+                        self.banned_senders.add(peer_id)
+                        continue
+                    
                     self.tensor_part_container.register_processed_part(
                         peer_index,
                         part_index,
-                        delta,
+                        delta
                     )
                     part_index += 1
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - register_processed_part finished"
-                )
-                if (
-                    part_index
-                    != self.tensor_part_container.num_parts_by_peer[peer_index]
-                ):
-                    bt.logging.info(
-                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
-                    )
-                    raise AllreduceException(
-                        f"peer {peer_id_abreviated} sent {part_index} parts, but we expected "
-                        f"{self.tensor_part_container.num_parts_by_peer[peer_index]}"
-                    )
-            except BaseException as e:
-                if isinstance(e, Exception):
-                    logger.debug(
-                        f"Caught {repr(e)} when communicating to {peer_id_abreviated}",
-                        exc_info=True,
-                    )
-                bt.logging.info(
-                    f"UID:{uid} - PeerID:{peer_id_abreviated} - Failed to communicate with peers due to error - {e}"
-                )
+                    
+            except Exception as e:
+                bt.logging.error(f"Communication failed with {peer_id}: {str(e)}")
                 self.tensor_part_container.register_failed_reducer(peer_index)
-                await self._ban_sender(peer_id)
+                # await self._ban_sender(peer_id)
                 raise
 
     def __aiter__(self):
@@ -533,7 +582,6 @@ class DTAverager(hivemind.DecentralizedAverager):
             )
             bt.logging.info(group_info.peer_ids)
             bt.logging.info(peer_fractions)
-            kwargs['accumulator_factory'] = self.accumulator_factory
 
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = DTAllReduceRunner(
