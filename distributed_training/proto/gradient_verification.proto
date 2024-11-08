@@ -1,0 +1,59 @@
+syntax = "proto3";
+package gradient_verification;
+
+// Messages for partition hash verification
+message PartitionHashRequest {
+    bytes peer_id = 1;
+    int32 part_idx = 2;
+    bytes gradient_hash = 3;
+}
+
+message PartitionHashResponse {
+    ResponseCode code = 1;
+    bytes peer_hash = 2;  // Receiving peer's hash for same partition
+}
+
+// Messages for aggregation result verification  
+message AggregationResultRequest {
+    bytes peer_id = 1;
+    int32 part_idx = 2;
+    bytes result_hash = 3;
+}
+
+message AggregationResultResponse {
+    ResponseCode code = 1;
+    bytes peer_result = 2;
+}
+
+// Messages for CenteredClip verification
+message ClipVerificationRequest {
+    bytes peer_id = 1;
+    int32 part_idx = 2;
+    double inner_product = 3;
+}
+
+message ClipVerificationResponse { 
+    ResponseCode code = 1;
+    double peer_product = 2;
+}
+
+// Message for accusations
+message AccusationRequest {
+    bytes accuser_id = 1;
+    bytes accused_id = 2;
+    string reason = 3;
+    bytes evidence = 4;  // Hash of relevant data
+}
+
+message AccusationResponse {
+    ResponseCode code = 1;
+    bool confirmed = 2;  // Other peer confirms the accusation
+}
+
+enum ResponseCode {
+    UNKNOWN = 0;
+    ACCEPTED = 1;
+    REJECTED = 2;
+    HASH_MISMATCH = 3;
+    VERIFICATION_FAILED = 4;
+}

@@ -2,12 +2,15 @@ import asyncio
 import logging
 from contextlib import contextmanager
 from typing import (Any, AsyncIterator, Dict, Iterable, Iterator, Optional,
-                    Sequence, Union)
+                    Sequence, Union, List)
 
+import random
+import time
 import torch
 import bittensor as bt
 
 from accumulators import AccumulatorFactory, CenteredClipAccumulator
+from distributed_training.proto import gradient_verification_pb2
 
 import hivemind
 import hivemind.averaging.averager
@@ -105,20 +108,44 @@ class DTTensorPartReducer(TensorPartReducer):
                 self.accumulator = None
             self.finished.set()
 
+class VerificationLogger:
+    def __init__(self):
+        self.transactions = []
+        
+    def log_verification(self, phase: str, peer_id: PeerID, success: bool, details: Dict):
+        """Log verification transaction"""
+        transaction = {
+            'timestamp': time.time(),
+            'phase': phase,
+            'peer_id': str(peer_id),
+            'success': success,
+            'details': details
+        }
+        self.transactions.append(transaction)
+        bt.logging.debug(f"Verification log: {transaction}")
+        
+    def get_peer_history(self, peer_id: PeerID) -> List[Dict]:
+        """Get verification history for specific peer"""
+        return [t for t in self.transactions if t['peer_id'] == str(peer_id)]
+
 class DTAllReduceRunner(AllReduceRunner):
     def __init__(self, peerids_to_uids, *args, tau=1.0, mprng_seed=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.tau = tau  # todo - - - Need tau for clipping
+        self.tau = tau
         self.mprng_seed = mprng_seed
-        self.step = 0
         self.peerids_to_uids = peerids_to_uids
-        bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
         
-        # Store verification state
-        self.gradient_hashes = {}  # {step: {peer_id: {part_idx: hash}}}
-        self.result_hashes = {}    # {step: {peer_id: hash}}
-        self.inner_products = {}   # {step: {part_idx: {peer_id: value}}}
-        self.peer_commitments = None  # Will store user_gathered from _aggregate_with_group
+        # Verification state
+        self.partition_hashes = {}  # {part_idx: {peer_id: hash}}
+        self.aggregation_results = {}  # {part_idx: {peer_id: hash}} 
+        self.inner_products = {}  # {part_idx: {peer_id: value}}
+        
+        # Accusation tracking
+        self.accusations = {}  # {accused_id: {accuser_id: evidence}}
+        self.banned_peers = set()  # Set of banned peer IDs
+        
+        # Verification logging
+        self.logger = VerificationLogger()
 
         # Setting up CenteredClipAccumulator
         accumulator_factory: AccumulatorFactory = CenteredClipAccumulator
@@ -128,29 +155,193 @@ class DTAllReduceRunner(AllReduceRunner):
             accumulator_factory=accumulator_factory,
         )
         
-    async def _verify_hashes(self, step: int, part_idx: int, msg) -> bool:
-        """Verify gradient and result hashes match broadcast values"""
-        # Get stored hashes for this step/part
-        grad_hash = self.gradient_hashes[step][msg.peer_id][part_idx]
-        result_hash = self.result_hashes[step][msg.peer_id]
+    async def verify_partition_hash(self, part_idx: int, gradient_hash: bytes) -> bool:
+        """
+        Verify partition hash with random subset of peers.
+        This is the first phase of verification.
+        """
+        verify_peers = self._get_verification_peers(3)
+        requests = []
         
-        # Compute hashes of received data
-        computed_grad_hash = self._compute_hash(msg.original)
-        computed_result_hash = self._compute_hash(msg.result)
+        for peer_id in verify_peers:
+            try:
+                stub = self.get_stub(peer_id)
+                request = gradient_verification_pb2.PartitionHashRequest(
+                    peer_id=self.peer_id.to_bytes(),
+                    part_idx=part_idx,
+                    gradient_hash=gradient_hash
+                )
+                requests.append(stub.rpc_verify_partition_hash(request))
+            except Exception as e:
+                bt.logging.warning(f"Failed partition hash request to peer {peer_id}: {e}")
+                continue
+                
+        responses = await asyncio.gather(*requests, return_exceptions=True)
         
-        return (grad_hash == computed_grad_hash and 
-                result_hash == computed_result_hash)
+        confirmations = 0
+        for peer_id, resp in zip(verify_peers, responses):
+            if isinstance(resp, Exception):
+                bt.logging.warning(f"Failed partition hash response from {peer_id}: {resp}")
+                continue
+            
+            if resp.code == gradient_verification_pb2.ResponseCode.ACCEPTED:
+                confirmations += 1
+            elif resp.code == gradient_verification_pb2.ResponseCode.HASH_MISMATCH:
+                # Submit evidence for peer validation
+                bt.logging.warning(f"Hash mismatch with peer {peer_id}")
+                await self._submit_evidence(
+                    peer_id=peer_id,
+                    evidence_type="hash_mismatch",
+                    evidence={
+                        'part_idx': part_idx,
+                        'gradient_hash': gradient_hash,
+                        'peer_hash': resp.peer_hash
+                    }
+                )
+                
+        return confirmations >= 2
 
-    def _get_random_vector(self, seed: int, step: int, part_idx: int) -> torch.Tensor:
-        """Generate deterministic random vector for verification"""
-        # Need consistent random vector across all peers
-        rng = torch.Generator(device=self.device)
-        rng.manual_seed(hash((seed, step, part_idx)))
-        shape = self.parts_for_local_averaging[part_idx].shape
-        return torch.randn(shape, generator=rng, device=self.device)
+    async def verify_aggregation_result(self, part_idx: int, result_hash: bytes) -> bool:
+        """
+        Verify aggregation result with peers.
+        This is the second phase of verification.
+        """
+        verify_peers = self._get_verification_peers(3)
+        requests = []
+        
+        for peer_id in verify_peers:
+            try:
+                stub = self.get_stub(peer_id)
+                request = gradient_verification_pb2.AggregationResultRequest(
+                    peer_id=self.peer_id.to_bytes(),
+                    part_idx=part_idx,
+                    result_hash=result_hash
+                )
+                requests.append(stub.rpc_verify_aggregation_result(request))
+            except Exception as e:
+                bt.logging.warning(f"Failed aggregation request to peer {peer_id}: {e}")
+                continue
+                
+        responses = await asyncio.gather(*requests, return_exceptions=True)
+        
+        confirmations = 0
+        for peer_id, resp in zip(verify_peers, responses):
+            if isinstance(resp, Exception):
+                bt.logging.warning(f"Failed aggregation response from {peer_id}: {resp}")
+                continue
+            
+            if resp.code == gradient_verification_pb2.ResponseCode.ACCEPTED:
+                confirmations += 1
+            elif resp.code == gradient_verification_pb2.ResponseCode.HASH_MISMATCH:
+                await self._submit_evidence(
+                    peer_id=peer_id,
+                    evidence_type="aggregation_mismatch",
+                    evidence={
+                        'part_idx': part_idx,
+                        'result_hash': result_hash,
+                        'peer_hash': resp.peer_result
+                    }
+                )
+                
+        return confirmations >= 2
+
+    async def verify_centered_clip(self, part_idx: int, averaged_part: torch.Tensor, z: torch.Tensor) -> bool:
+        """
+        Verify CenteredClip constraint.
+        This is the third phase of verification.
+        """
+        # Compute inner products for all current parts
+        inner_products = {}
+        for sender_id, sender_grad in self.tensor_part_reducer.current_parts.items():
+            diff = sender_grad - averaged_part
+            norm = torch.norm(diff)
+            clipped_diff = diff * min(1.0, self.tau / (norm + 1e-8))
+            inner_products[sender_id] = torch.dot(z, clipped_diff).item()
+
+        verify_peers = self._get_verification_peers(3)
+        requests = []
+        
+        for peer_id in verify_peers:
+            try:
+                stub = self.get_stub(peer_id)
+                request = gradient_verification_pb2.ClipVerificationRequest(
+                    peer_id=self.peer_id.to_bytes(),
+                    part_idx=part_idx,
+                    inner_products=inner_products
+                )
+                requests.append(stub.rpc_verify_centered_clip(request))
+            except Exception as e:
+                bt.logging.warning(f"Failed clip verification request to peer {peer_id}: {e}")
+                continue
+                
+        responses = await asyncio.gather(*requests, return_exceptions=True)
+        
+        confirmations = 0
+        for peer_id, resp in zip(verify_peers, responses):
+            if isinstance(resp, Exception):
+                bt.logging.warning(f"Failed clip verification response from {peer_id}: {resp}")
+                continue
+            
+            if resp.code == gradient_verification_pb2.ResponseCode.ACCEPTED:
+                confirmations += 1
+            elif resp.code == gradient_verification_pb2.ResponseCode.VERIFICATION_FAILED:
+                await self._submit_evidence(
+                    peer_id=peer_id,
+                    evidence_type="clip_violation",
+                    evidence={
+                        'part_idx': part_idx,
+                        'inner_products': inner_products,
+                        'peer_products': resp.peer_products
+                    }
+                )
+                
+        return confirmations >= 2
+
+    async def _submit_evidence(self, peer_id: PeerID, evidence_type: str, evidence: Dict):
+        """Submit evidence of peer misbehavior for validation"""
+        verify_peers = self._get_verification_peers(3)  # Get different peers to validate
+        requests = []
+        
+        evidence_bytes = self.serializer.dumps(evidence)
+        
+        for validator_id in verify_peers:
+            try:
+                stub = self.get_stub(validator_id)
+                request = gradient_verification_pb2.ValidateEvidenceRequest(
+                    reporter_id=self.peer_id.to_bytes(),
+                    accused_id=peer_id.to_bytes(),
+                    evidence_type=evidence_type,
+                    evidence=evidence_bytes
+                )
+                requests.append(stub.rpc_validate_evidence(request))
+            except Exception as e:
+                bt.logging.warning(f"Failed evidence submission to validator {validator_id}: {e}")
+                continue
+                
+        responses = await asyncio.gather(*requests, return_exceptions=True)
+        
+        confirmations = 0
+        for validator_id, resp in zip(verify_peers, responses):
+            if isinstance(resp, Exception):
+                bt.logging.warning(f"Failed evidence validation from {validator_id}: {resp}")
+                continue
+            
+            if resp.code == gradient_verification_pb2.ResponseCode.ACCEPTED:
+                confirmations += 1
+                
+        if confirmations >= 2:
+            await self._ban_sender(peer_id)  # Using original ban method
+
+    def _get_verification_peers(self, count: int) -> List[PeerID]:
+        """Get random subset of available peers for verification"""
+        available_peers = [
+            p for p in self.ordered_peer_ids 
+            if p != self.peer_id and p not in self.banned_senders
+        ]
+        return random.sample(available_peers, min(count, len(available_peers)))
                   
     async def _communicate_with_peer(self, peer_id: PeerID):
-        """Handle gradient exchange with verification using gathered commitments"""
+        """Handle gradient exchange with three-phase verification"""
         peer_index = self.ordered_peer_ids.index(peer_id)
         
         if peer_id == self.peer_id:
@@ -158,66 +349,45 @@ class DTAllReduceRunner(AllReduceRunner):
             sender_index = self.sender_peer_ids.index(peer_id)
             
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
-                # Verify all peers' gradient hashes before averaging
-                for peer_id, commitment in self.peer_commitments.items():
-                    gradient_hash = commitment['hash']
-                    samples = commitment['samples']
-                    
-                    # Skip banned peers
-                    if peer_id in self.banned_senders:
-                        continue
-                        
-                    # Verify hash matches
-                    received_grad = self.tensor_part_reducer.current_parts[sender_index][part_index]
-                    computed_hash = self._compute_hash(received_grad)
-                    
-                    if computed_hash != gradient_hash:
-                        bt.logging.error(
-                            f"Hash mismatch from peer {peer_id}\n"
-                            f"Committed: {gradient_hash}\n"
-                            f"Computed: {computed_hash}"
-                        )
-                        self.banned_senders.add(peer_id)
-                        continue
+                # Phase 1: Verify partition hashes
+                hash_verified = await self.verify_partition_hash(
+                    part_index,
+                    self._compute_hash(tensor_part)
+                )
+                if not hash_verified:
+                    await self._ban_sender(peer_id)
+                    continue
                 
-                # Let CenteredClip happen in tensor_part_reducer
+                # Phase 2: Perform CenteredClip and verify result
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
                     sender_index, part_index, tensor_part, weight=self.weight
                 )
                 
-                # Generate random vector for verification (same for all peers due to same seed)
-                z = self._get_random_vector(self.mprng_seed, part_index)
-                
-                # Compute and verify CenteredClip constraint
-                all_inner_products = {}
-                for sender_id, sender_grad in self.tensor_part_reducer.current_parts.items():
-                    diff = sender_grad - averaged_part
-                    norm = torch.norm(diff)
-                    clipped_diff = diff * min(1.0, self.tau / (norm + 1e-8))
-                    inner_product = torch.dot(z, clipped_diff)
-                    all_inner_products[sender_id] = inner_product.item()
-                
-                # Verify sum equals zero (CenteredClip property)
-                total = sum(all_inner_products.values())
-                if abs(total) > 1e-6:
-                    await self._broadcast_accusation(
-                        peer_id,
-                        part_index,
-                        "centeredclip_violation",
-                        {"products": all_inner_products, "sum": total}
-                    )
+                result_hash = self._compute_hash(averaged_part)
+                result_verified = await self.verify_aggregation_result(
+                    part_index, result_hash
+                )
+                if not result_verified:
                     await self._ban_sender(peer_id)
                     continue
-                    
-                # Store verification data
+                
+                # Phase 3: Verify CenteredClip constraint using random vector
+                z = self._get_random_vector(self.mprng_seed, part_index)
+                clip_verified = await self.verify_centered_clip(
+                    part_index, averaged_part, z
+                )
+                if not clip_verified:
+                    await self._ban_sender(peer_id)
+                    continue
+                
+                # Store verification data and register processed part
                 self.verification_data[part_index] = {
-                    'inner_products': all_inner_products,
-                    'result_hash': self._compute_hash(averaged_part)
+                    'result_hash': result_hash
                 }
                 
                 self.tensor_part_container.register_processed_part(
                     peer_index,
-                    part_index,
+                    part_index, 
                     averaged_part - tensor_part
                 )
                 
@@ -242,9 +412,9 @@ class DTAllReduceRunner(AllReduceRunner):
                         continue
                         
                     # Verify aggregator's result matches commitment
-                    aggregator_data = self.verification_data[peer_id][part_index]
-                    if self._compute_hash(msg.result) != aggregator_data['result_hash']:
-                        self.banned_senders.add(peer_id)
+                    aggregator_data = self.verification_data.get(part_index, {})
+                    if self._compute_hash(msg.result) != aggregator_data.get('result_hash'):
+                        await self._ban_sender(peer_id)
                         continue
                     
                     self.tensor_part_container.register_processed_part(
@@ -257,7 +427,7 @@ class DTAllReduceRunner(AllReduceRunner):
             except Exception as e:
                 bt.logging.error(f"Communication failed with {peer_id}: {str(e)}")
                 self.tensor_part_container.register_failed_reducer(peer_index)
-                # await self._ban_sender(peer_id)
+                await self._ban_sender(peer_id)
                 raise
 
     def __aiter__(self):
