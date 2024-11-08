@@ -22,6 +22,7 @@ import threading
 import os
 from traceback import print_exception
 from typing import List
+import torch
 
 import bittensor as bt
 import numpy as np
@@ -398,8 +399,19 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        if os.path.isfile(self.config.neuron.full_path + "/state.npz"):
-            bt.logging.info("Pre-saved validator state found. Loading validator state.")
+        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+            bt.logging.info(
+                "Pre-saved validator state found in .pt format. Loading validator state."
+            )
+            state = torch.load(self.config.neuron.full_path + "/state.pt")
+            self.step = state["step"]
+            self.scores = state["scores"]
+            self.hotkeys = state["hotkeys"]
+
+        elif os.path.isfile(self.config.neuron.full_path + "/state.npz"):
+            bt.logging.info(
+                "Pre-saved validator state found in .npz format. Loading validator state."
+            )
             # Load the state of the validator from file.
             state = np.load(self.config.neuron.full_path + "/state.npz")
             self.step = state["step"]

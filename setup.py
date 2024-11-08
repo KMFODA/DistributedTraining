@@ -25,6 +25,9 @@ from os import path
 
 from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
+from setuptools.command.develop import develop
+from setuptools.command.egg_info import egg_info
+from setuptools.command.install import install
 
 
 def read_requirements(path):
@@ -47,11 +50,39 @@ def read_requirements(path):
         return processed_requirements
 
 
+def custom_command():
+    import pip
+
+    pip.main(
+        [
+            "install",
+            "git+https://github.com/learning-at-home/hivemind.git@3a4cc15e29ce51b20c5d415a4c579abbae435718",
+        ]
+    )
+    pip.main(["install", "bittensor==8.2.1"])
+    pip.main(["install", "py-multihash==2.0.1"])
+
+
+class CustomInstallCommand(install):
+    def run(self):
+        custom_command()
+        install.run(self)
+
+
+class CustomDevelopCommand(develop):
+    def run(self):
+        custom_command()
+        develop.run(self)
+
+
+class CustomEggInfoCommand(egg_info):
+    def run(self):
+        custom_command()
+        egg_info.run(self)
+
+
 with open("requirements.txt") as requirements_file:
     requirements = list(map(str, parse_requirements(requirements_file)))
-
-with open("requirements_pre.txt") as requirements_file:
-    requirements_pre = list(map(str, parse_requirements(requirements_file)))
 
 here = path.abspath(path.dirname(__file__))
 
@@ -80,6 +111,12 @@ setup(
     author_email="",
     license="MIT",
     python_requires=">=3.8",
+    cmdclass={
+        "install": CustomInstallCommand,
+        "develop": CustomDevelopCommand,
+        "egg_info": CustomEggInfoCommand,
+    },
+    setup_requires=["pip"],
     install_requires=requirements,
     classifiers=[
         "Development Status :: 3 - Alpha",
