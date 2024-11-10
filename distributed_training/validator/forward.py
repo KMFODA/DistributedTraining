@@ -69,8 +69,12 @@ async def forward(self):
             or (self.local_progress.samples_accumulated != 0)
         )
     ):
-        # If running an AllReduce synapse, call as many miners as possible
-        sample_size = int(self.metagraph.n)
+        if self.uid == self.master_uid:
+            # If running an AllReduce synapse, call as many miners as possible
+            sample_size = int(self.metagraph.n)
+        else:
+            sample_size = self.config.neuron.sample_size
+
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
@@ -318,8 +322,6 @@ async def forward(self):
                                     )
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
-                                    # Wait for other validators to query miners
-                                    time.sleep(120 * 0)
                                     break
 
                                 except HfHubHTTPError:
@@ -397,7 +399,11 @@ async def forward(self):
             f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
         )
         time.sleep(self.all_reduce_timeout + 30)
-        self.miner_uids = []
+        self.miner_uids = await get_random_uids(
+            self, dendrite=self.dendrite, k=sample_size
+        )
+        self.event.update({"uids": self.miner_uids})
+        bt.logging.info(f"UIDs:  {self.miner_uids}")
         responses = [[]]
 
     # Adjust the scores based on responses from miners.
