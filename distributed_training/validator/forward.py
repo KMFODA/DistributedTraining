@@ -399,11 +399,7 @@ async def forward(self):
             f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
         )
         time.sleep(self.all_reduce_timeout + 30)
-        self.miner_uids = await get_random_uids(
-            self, dendrite=self.dendrite, k=sample_size
-        )
-        self.event.update({"uids": self.miner_uids})
-        bt.logging.info(f"UIDs:  {self.miner_uids}")
+        self.miner_uids = []
         responses = [[]]
 
     # Adjust the scores based on responses from miners.
