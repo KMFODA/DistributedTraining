@@ -251,7 +251,7 @@ class BaseValidatorNeuron(BaseNeuron):
         raw_weights = self.scores / norm
 
         bt.logging.info(raw_weights)
-        bt.logging.info(f"raw_weight_uids: {raw_weights}")
+        bt.logging.info(f"raw_weights: {raw_weights}")
         bt.logging.info(f"raw_weight_uids: {self.metagraph.uids.tolist()}")
         # Process the raw weights to final_weights via subtensor limitations.
         (
@@ -386,7 +386,6 @@ class BaseValidatorNeuron(BaseNeuron):
     def save_state(self):
         """Saves the state of the validator to a file."""
         bt.logging.info("Saving validator state.")
-
         # Save the state of the validator to file.
         np.savez(
             self.config.neuron.full_path + "/state.npz",
@@ -405,7 +404,7 @@ class BaseValidatorNeuron(BaseNeuron):
             )
             state = torch.load(self.config.neuron.full_path + "/state.pt")
             self.step = state["step"]
-            self.scores = state["scores"]
+            self.scores = state["scores"].cpu().numpy()
             self.hotkeys = state["hotkeys"]
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.npz"):
