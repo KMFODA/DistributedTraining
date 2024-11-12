@@ -1,9 +1,10 @@
-import copy
-import logging
-import random
+import os
 import re
+import copy
+import random
+import logging
+import tempfile
 import threading
-import time
 from itertools import chain
 from typing import Any, Dict, Optional, Sequence, Tuple
 
@@ -18,7 +19,7 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import create_tag, list_repo_refs, scan_cache_dir
+from huggingface_hub import upload_file, hf_hub_download, scan_cache_dir
 from transformers import AutoModelForCausalLM
 
 from distributed_training.utils.progress_tracker import (LocalTrainingProgress,
@@ -271,6 +272,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
 
     # Set loading state
     self.loading_manager.set_loading_state(True, epoch)
+    
     try:
         state_loaded = False
         if epoch == None:
@@ -284,11 +286,13 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
         bt.logging.info(current_model_weights_sample)
 
         bt.logging.info(f"Old Model Tag: {self.local_progress.epoch}")
-        # if (self.global_progress.epoch is not None) and (tag_name >= epoch):
+        
         if self.global_progress.epoch is not None:
             bt.logging.info(
                 f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
             )
+            
+            # Load model state
             attempt = 0
             while True:
                 try:
@@ -298,23 +302,54 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         trust_remote_code=True,
                     )
                     self.model.to(self.device)
+                    
+                    # Load optimizer state
+                    optimizer_path = f"optimizer_state_{self.global_progress.epoch}.pt"
+                    try:
+                        optimizer_state_path = hf_hub_download(
+                            repo_id=self.config.neuron.model_name,
+                            filename=optimizer_path,
+                            revision=str(self.global_progress.epoch)
+                        )
+                        
+                        optimizer_checkpoint = torch.load(optimizer_state_path)
+                        
+                        # Initialize optimizer with model parameters
+                        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+                        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+                        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+                        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+                        optim_groups = [
+                            {"params": decay_params, "weight_decay": self.weight_decay},
+                            {"params": nodecay_params, "weight_decay": 0.0},
+                        ]
+                        
+                        self.opt = LAMB(
+                            optim_groups, 
+                            lr=optimizer_checkpoint['learning_rate'], 
+                            betas=(0.9, 0.95), 
+                            eps=1e-8
+                        )
+                        
+                        # Load optimizer state
+                        self.opt.load_state_dict(optimizer_checkpoint['optimizer_state_dict'])
+                        bt.logging.info(f"Successfully loaded optimizer state from epoch {epoch}")
+                        
+                    except Exception as e:
+                        bt.logging.warning(f"Failed to load optimizer state: {str(e)}. Initializing fresh optimizer.")
+                        # Initialize fresh optimizer if loading fails
+                        self.opt = LAMB(
+                            optim_groups, 
+                            lr=self.learning_rate_maximum, 
+                            betas=(0.9, 0.95), 
+                            eps=1e-8
+                        )
+                    
                     break
-                except:
+                except Exception as e:
                     attempt += 1
                     bt.logging.warning(f"Failed to fetch data, retrying. Attempt {attempt}")
-            param_dict = {pn: p for pn, p in self.model.named_parameters()}
-            param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-            # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-            # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-            decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-            nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-            optim_groups = [
-                {"params": decay_params, "weight_decay": self.weight_decay},
-                {"params": nodecay_params, "weight_decay": 0.0},
-            ]
-            self.opt = LAMB(
-                optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
-            )
+            
             self.grad_averager.parameters = tuple(self.model.parameters())
             # Reset gradient buffers
             self.grad_averager.reset_accumulated_grads_()
@@ -330,33 +365,11 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             self.local_progress.samples_accumulated = 0
             bt.logging.info(f"New Model Tag: {self.global_progress.epoch}")
 
-            # Delete one model from the chace to maintain disk space
-            current_revision = self.model.config._commit_hash
+            # Clean up old cache
             try:
-                cache_info = scan_cache_dir()
-                for repo in cache_info.repos:
-                    if repo.repo_id == self.config.neuron.model_name:
-                        revisions = sorted(
-                            repo.revisions, key=lambda r: r.last_modified, reverse=True
-                        )
-                        current_index = next(
-                            (
-                                i
-                                for i, r in enumerate(revisions)
-                                if r.commit_hash == current_revision
-                            ),
-                            None,
-                        )
-                        if current_index is not None:
-                            for revision in revisions[
-                                max(current_index + 1, keep_recent) :
-                            ]:
-                                cache_info.delete_revisions(revision.commit_hash).execute()
-                        break
-            except:
-                bt.logging.warning(
-                    "Failed to delete previous model version from cache. This might lead to 100% disk space utlisation in the future."
-                )
+                cleanup_old_cache(self, keep_recent)
+            except Exception as e:
+                bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 
         else:
             bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
@@ -371,4 +384,57 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
     except Exception as e:
         bt.logging.error(f"Error loading state: {str(e)}")
         self.loading_manager.set_loading_state(False, None)
+        return False
+
+def cleanup_old_cache(self, keep_recent):
+    """Helper method to clean up old cache files"""
+    current_revision = self.model.config._commit_hash
+    cache_info = scan_cache_dir()
+    for repo in cache_info.repos:
+        if repo.repo_id == self.config.neuron.model_name:
+            revisions = sorted(
+                repo.revisions, key=lambda r: r.last_modified, reverse=True
+            )
+            current_index = next(
+                (
+                    i
+                    for i, r in enumerate(revisions)
+                    if r.commit_hash == current_revision
+                ),
+                None,
+            )
+            if current_index is not None:
+                for revision in revisions[
+                    max(current_index + 1, keep_recent) :
+                ]:
+                    cache_info.delete_revisions(revision.commit_hash).execute()
+            break
+        
+def save_optimizer_state(self, epoch, batch_size, participating_peers, failed_peers):
+    """Save optimizer state to a file and upload to HuggingFace Hub"""
+    try:
+        # Create a temporary file to save optimizer state
+        with tempfile.NamedTemporaryFile(suffix='.pt', delete=False) as tmp_file:
+            optimizer_state = {
+                'optimizer_state_dict': self.opt.state_dict(),
+                'epoch': epoch,
+                'learning_rate': self.learning_rate_maximum
+            }
+            torch.save(optimizer_state, tmp_file.name)
+            
+            # Upload the optimizer state file
+            optimizer_path = f"optimizer_state_{epoch}.pt"
+            upload_file(
+                path_or_fileobj=tmp_file.name,
+                path_in_repo=optimizer_path,
+                repo_id=self.config.neuron.model_name,
+                commit_message=f"Optimizer state for epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+            )
+        
+        # Clean up temporary file
+        os.unlink(tmp_file.name)
+        return True
+    
+    except Exception as e:
+        bt.logging.error(f"Failed to save optimizer state: {str(e)}")
         return False

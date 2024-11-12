@@ -17,22 +17,24 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import copy
 import random
 import time
 
 import bittensor as bt
+import numpy as np
+import torch
 from huggingface_hub import create_tag, list_repo_refs
+from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
-from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.misc import get_bandwidth
-from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.progress_tracker import \
+    update_global_tracker_state
+from distributed_training.utils.state_loader import (load_state_from_peer,
+                                                     save_optimizer_state)
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
-import copy
-import numpy as np
-from huggingface_hub.utils import HfHubHTTPError
-import torch
 
 
 async def forward(self):
@@ -281,32 +283,37 @@ async def forward(self):
                             else None
                         )
                         bt.logging.info(f"Old Model Tag {tag_name}")
-                        if (
-                            tag_name is not None
-                        ) and tag_name < self.local_progress.epoch:
+                        if (tag_name is not None) and tag_name < self.local_progress.epoch:
                             attempt = 0
                             while attempt < self.model_upload_retry_limit:
                                 try:
-                                    bt.logging.info(
-                                        "Pushing New Model Weights To HF Hub."
-                                    )
+                                    bt.logging.info("Pushing New Model Weights To HF Hub.")
+                                    
+                                    # Push model to hub
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
                                         commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}.",
                                     )
+
+                                    # Save and upload optimizer state
+                                    optimizer_saved = save_optimizer_state(
+                                        self,
+                                        epoch=self.local_progress.epoch,
+                                        batch_size=batch_size,
+                                        participating_peers=participating_peers,
+                                        failed_peers=failed_peers
+                                    )
+                                    
+                                    if not optimizer_saved:
+                                        bt.logging.warning("Failed to save optimizer state, but model was uploaded successfully.")
 
                                     # Log batch size to wandb
                                     self.event.update(
                                         {
                                             "batch_size": batch_size,
                                             "failed_peers_count": len(failed_peers),
-                                            "participating_peers_count": len(
-                                                participating_peers
-                                            ),
-                                            "succesfull_peers_count": len(
-                                                participating_peers
-                                            )
-                                            - len(failed_peers),
+                                            "participating_peers_count": len(participating_peers),
+                                            "succesfull_peers_count": len(participating_peers) - len(failed_peers),
                                         }
                                     )
 
@@ -316,9 +323,7 @@ async def forward(self):
                                         tag=str(self.local_progress.epoch),
                                         tag_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
-                                    refs = list_repo_refs(
-                                        self.config.neuron.model_name, repo_type="model"
-                                    )
+                                    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
 
@@ -327,26 +332,18 @@ async def forward(self):
                                     break
 
                                 except HfHubHTTPError:
-                                    bt.logging.info(
-                                        f"Model With Tag {tag_name} Already Uploaded to HF Hub. Loading That Model."
-                                    )
-                                    state_loaded = load_state_from_peer(
-                                        self, epoch=tag_name
-                                    )
+                                    bt.logging.info(f"Model With Tag {tag_name} Already Uploaded to HF Hub. Loading That Model.")
+                                    state_loaded = load_state_from_peer(self, epoch=tag_name)
                                     if state_loaded:
                                         break
                                 except Exception as e:
                                     attempt += 1
-                                    bt.logging.warning(
-                                        f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
-                                    )
+                                    bt.logging.warning(f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}.")
                                     if attempt < self.model_upload_retry_limit:
                                         # Wait before the next retry
                                         time.sleep(self.model_upload_retry_delay)
                                     else:
-                                        bt.logging.error(
-                                            "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
-                                        )
+                                        bt.logging.error("Maximum Retry Limit Reached. Unable To Upload Model To HF Hub.")
                                         raise
 
                 else:
