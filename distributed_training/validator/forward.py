@@ -200,6 +200,8 @@ async def forward(self):
                             "batch_size": batch_size,
                             "failed_peers_count": len(failed_peers),
                             "participating_peers_count": len(participating_peers),
+                            "succesfull_peers_count": len(participating_peers)
+                            - len(failed_peers),
                         }
                     )
 

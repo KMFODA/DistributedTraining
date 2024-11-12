@@ -248,6 +248,7 @@ if [ "$?" -eq 1 ]; then
                         echo "New version published. Updating the local copy."
 
                         # Install latest changes just in case.
+                        # pip uninstall -y distributed_training && pip freeze --exclude-editable | cut -d "@" -f1 | xargs pip uninstall -y && pip install -e .
                         pip install -e .
 
                         # # Run the Python script with the arguments using pm2
