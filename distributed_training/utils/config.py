@@ -21,8 +21,8 @@ import os
 
 import bittensor as bt
 import torch
-from loguru import logger
-from distributed_training import __version__, __run__
+
+from distributed_training import __run__, __version__
 
 
 def check_config(cls, config: "bt.Config"):
@@ -43,20 +43,6 @@ def check_config(cls, config: "bt.Config"):
     if not os.path.exists(config.neuron.full_path):
         os.makedirs(config.neuron.full_path, exist_ok=True)
 
-    if not config.neuron.dont_save_events:
-        # Add custom event logger for the events.
-        logger.level("EVENTS", no=38, icon="📝")
-        logger.add(
-            os.path.join(config.neuron.full_path, "events.log"),
-            rotation=config.neuron.events_retention_size,
-            serialize=True,
-            enqueue=True,
-            backtrace=False,
-            diagnose=False,
-            level="EVENTS",
-            format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
-        )
-
 
 def add_args(cls, parser):
     """
@@ -72,6 +58,13 @@ def add_args(cls, parser):
         type=int,
         help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
         default=8009,
+    )
+
+    parser.add_argument(
+        "--neuron.events_retention_size",
+        type=str,
+        help="Events retention size.",
+        default=2 * 1024 * 1024 * 1024,  # 2 GB
     )
 
     parser.add_argument(
@@ -93,13 +86,6 @@ def add_args(cls, parser):
         type=int,
         help="The default epoch length (how often we set weights, measured in 12 second blocks).",
         default=100,
-    )
-
-    parser.add_argument(
-        "--neuron.events_retention_size",
-        type=str,
-        help="Events retention size.",
-        default="2 GB",
     )
 
     parser.add_argument(
@@ -127,6 +113,20 @@ def add_args(cls, parser):
     )
 
     parser.add_argument(
+        "--neuron.master_ss58_address",
+        type=str,
+        help="The ss58 address for the master validator UID",
+        default="5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP",
+    )
+
+    parser.add_argument(
+        "--neuron.min_group_size",
+        type=int,
+        help="The minimum group size for an all reduce",
+        default=30,
+    )
+
+    parser.add_argument(
         "--neuron.local_batch_size_train",
         type=int,
         help="The default batch size",
@@ -137,7 +137,7 @@ def add_args(cls, parser):
         "--neuron.global_batch_size_train",
         type=int,
         help="The hivemind global target_batch_size",
-        default=70400,
+        default=35200,
     )
 
     parser.add_argument(

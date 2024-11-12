@@ -23,30 +23,47 @@ import re
 from io import open
 from os import path
 
+from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
+from setuptools.command.develop import develop
+from setuptools.command.egg_info import egg_info
+from setuptools.command.install import install
 
 
-def read_requirements(path):
-    with open(path, "r") as f:
-        requirements = f.read().splitlines()
-        processed_requirements = []
+def custom_command():
+    import pip
 
-        for req in requirements:
-            # For git or other VCS links
-            if req.startswith("git+") or "@" in req:
-                pkg_name = re.search(r"(#egg=)([\w\-_]+)", req)
-                if pkg_name:
-                    processed_requirements.append(pkg_name.group(2))
-                else:
-                    # You may decide to raise an exception here,
-                    # if you want to ensure every VCS link has an #egg=<package_name> at the end
-                    continue
-            else:
-                processed_requirements.append(req)
-        return processed_requirements
+    pip.main(
+        [
+            "install",
+            "git+https://github.com/learning-at-home/hivemind.git@3a4cc15e29ce51b20c5d415a4c579abbae435718",
+        ]
+    )
+    pip.main(["install", "bittensor==8.2.1"])
+    pip.main(["install", "py-multihash==2.0.1"])
 
 
-requirements = read_requirements("requirements.txt")
+class CustomInstallCommand(install):
+    def run(self):
+        custom_command()
+        install.run(self)
+
+
+class CustomDevelopCommand(develop):
+    def run(self):
+        custom_command()
+        develop.run(self)
+
+
+class CustomEggInfoCommand(egg_info):
+    def run(self):
+        custom_command()
+        egg_info.run(self)
+
+
+with open("requirements.txt") as requirements_file:
+    requirements = list(map(str, parse_requirements(requirements_file)))
+
 here = path.abspath(path.dirname(__file__))
 
 with open(path.join(here, "README.md"), encoding="utf-8") as f:
@@ -74,6 +91,12 @@ setup(
     author_email="",
     license="MIT",
     python_requires=">=3.8",
+    cmdclass={
+        "install": CustomInstallCommand,
+        "develop": CustomDevelopCommand,
+        "egg_info": CustomEggInfoCommand,
+    },
+    setup_requires=["pip"],
     install_requires=requirements,
     classifiers=[
         "Development Status :: 3 - Alpha",

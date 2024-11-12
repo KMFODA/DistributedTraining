@@ -16,10 +16,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from typing import Any, List, Optional
+from typing import Optional
 
 import bittensor as bt
-import numpy as np
 import pydantic
 
 
@@ -44,25 +43,22 @@ class Train(bt.Synapse):
     """
 
     # List of indices trained on
-    dataset_indices: list = None
+    dataset_indices: Optional[list] = None
 
     # Gradient sums of a randomly chosen index
-    gradient_sums: list = None
-
-    # Projected gradients of a randomly chosen index
-    projected_gradients: list = None
+    gradient_sums: Optional[list] = None
 
     # Gradient Index to be evaluated
-    gradient_test_index: int = None
+    gradient_test_index: int
 
     # Model Name
-    model_name: str = "distributed/gpt2-250m"
+    model_name: Optional[str] = "distributed/gpt2-250m"
 
     # Model Loss
-    loss: float = 0.0
+    loss: Optional[float] = 0.0
 
     # Batch Size
-    batch_size: int = 8
+    batch_size: Optional[int] = 8
 
 
 class AllReduce(bt.Synapse):
@@ -74,9 +70,9 @@ class AllReduce(bt.Synapse):
         "This attribute is mutable and can be updated.",
     )
     # Learning Rate
-    learning_rate: float = None
-    next_chunk_timeout: float = None
-    min_group_size: int = None
-    request_timeout: float = None
-    min_matchmaking_time: float = None
-    all_reduce_timeout: float = None
+    learning_rate: Optional[float] = None
+    next_chunk_timeout: Optional[float] = None
+    min_group_size: Optional[int] = None
+    request_timeout: Optional[float] = None
+    min_matchmaking_time: Optional[float] = None
+    all_reduce_timeout: Optional[float] = None

@@ -17,15 +17,15 @@
 
 import copy
 import typing
+from abc import ABC, abstractmethod
 
 import bittensor as bt
 
-from abc import ABC, abstractmethod
+from distributed_training import __spec_version__ as spec_version
 
 # Sync calls set weights and also resyncs the metagraph.
-from distributed_training.utils.config import check_config, add_args, config
-from distributed_training.utils.misc import ttl_get_block, load_wandb
-from distributed_training import __spec_version__ as spec_version
+from distributed_training.utils.config import add_args, check_config, config
+from distributed_training.utils.misc import ttl_get_block
 
 
 class BaseNeuron(ABC):
@@ -124,8 +124,7 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.metagraph.last_update[self.uid] = self.block
 
-        if self.step != 0:
-            # Save state if we're not on the first step
+        if (self.step != 0) and (self.neuron_type != "MinerNeuron"):
             self.save_state()
 
     def check_registered(self):

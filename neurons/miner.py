@@ -17,14 +17,19 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import os
 import random
 import time
 import typing
 
+os.environ["NEST_ASYNCIO"] = "0"
+import copy
+
 import bittensor as bt
-import hivemind
+import numpy as np
 import torch
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
@@ -32,8 +37,8 @@ import threading
 
 # Bittensor Miner Template:
 import distributed_training
-
-# import base miner class which takes care of most of the boilerplate
+import hivemind
+from distributed_training import __spec_version__, __version__
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.gradient_averager import (
@@ -43,18 +48,15 @@ from distributed_training.utils.state_loader import (
     load_state_from_peer, ModelLoadingManager
 )
 
+from distributed_training.utils.chain import log_peerid_to_chain
+from distributed_training.utils.gradient_averager import DTGradientAverager
+from distributed_training.utils.misc import init_dht, load_wandb, setup_logging
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
     update_global_tracker_state,
 )
-from distributed_training.utils.misc import (
-    init_dht,
-    load_wandb,
-    setup_logging,
-)
-from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.utils.s3 import (
     get_indices_for_window,
     add_slice_for_window_to_buffer,
@@ -86,9 +88,11 @@ class Miner(BaseMinerNeuron):
             version=__version__,
             spec_version=__spec_version__,
             run_id=None,
-            ip=self.config.axon.ip
-            if self.config.axon.ip != "[::]"
-            else bt.utils.networking.get_external_ip(),
+            ip=(
+                self.config.axon.ip
+                if self.config.axon.ip != "[::]"
+                else bt.utils.networking.get_external_ip()
+            ),
             port=self.config.axon.port,
             uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
             neuron_type="miner",
@@ -172,21 +176,7 @@ class Miner(BaseMinerNeuron):
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
         # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
 
         # Load dataset
         self.dataset_loader = ()
@@ -292,6 +282,8 @@ class Miner(BaseMinerNeuron):
             rows=self.group,
         )
         bt.logging.info("DataLoader initialisation finished")
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {

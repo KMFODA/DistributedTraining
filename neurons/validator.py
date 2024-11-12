@@ -18,53 +18,49 @@
 
 
 import asyncio
-import datetime as dt
+import os
 import time
-import traceback
 from typing import Optional
 
-
-import bittensor as bt
-import hivemind
-import torch
-from bitarray import bitarray
-from hivemind.compression import deserialize_torch_tensor
-from hivemind.proto import averaging_pb2
-from hivemind.utils import get_logger
-from hivemind.utils.asyncio import aiter_with_timeout
-from hivemind.utils.streaming import combine_from_streaming
-from huggingface_hub import list_repo_refs
-from transformers import AutoModelForCausalLM
+os.environ["NEST_ASYNCIO"] = "0"
 import math
 
+import bittensor as bt
+import torch
+import threading
+from bitarray import bitarray
+from bitsandbytes.optim import LAMB
+from transformers import AutoModelForCausalLM
+
+import hivemind
+from distributed_training import __spec_version__, __version__
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.gradient_averager import (
-    DTGradientAverager,
-)
-from distributed_training.utils.state_loader import (
-    load_state_from_peer,
-)
-
-from distributed_training.utils.progress_tracker import (
-    GlobalTrainingProgress,
-    LocalTrainingProgress,
-    update_global_tracker_state,
-)
+from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
+from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.misc import (
     AsyncDendritePool,
     init_dht,
     load_wandb,
     setup_logging,
 )
-
+from distributed_training.utils.progress_tracker import (
+    GlobalTrainingProgress,
+    LocalTrainingProgress,
+    update_global_tracker_state,
+)
+from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
+    map_uid_to_peerid_background_task,
+    update_run_peerid_list,
 )
-
 from distributed_training.validator import forward
-from bitsandbytes.optim import LAMB
-from distributed_training import __version__, __spec_version__
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
 
 logger = get_logger(__name__)
 
@@ -81,9 +77,11 @@ class Validator(BaseValidatorNeuron):
             version=__version__,
             spec_version=__spec_version__,
             run_id=None,
-            ip=self.config.axon.ip
-            if self.config.axon.ip != "[::]"
-            else bt.utils.networking.get_external_ip(),
+            ip=(
+                self.config.axon.ip
+                if self.config.axon.ip != "[::]"
+                else bt.utils.networking.get_external_ip()
+            ),
             port=self.config.axon.port,
             uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
             neuron_type="validator",
@@ -153,7 +151,7 @@ class Validator(BaseValidatorNeuron):
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         self.master_uid = self.metagraph.hotkeys.index(
-            "5EnC86fRRRoaXUZvkrDFYpAihuyEAp3wGkY5r3Gak1kPTDVP"
+            self.config.neuron.master_ss58_address,
         )
 
         # Init All Reduce Variables
@@ -193,7 +191,7 @@ class Validator(BaseValidatorNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device("cuda"),
             start=True,
-            min_group_size=5,
+            min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
@@ -201,22 +199,7 @@ class Validator(BaseValidatorNeuron):
         )
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        # Create mapping between uids to peerids
-        self.uids_to_peerids = self.loop.run_until_complete(
-            map_uid_to_peerid(self, range(0, self.metagraph.n))
-        )
-        max_retries = 3
-        retries = 0
-        while all(value is None for value in self.uids_to_peerids.values()) and (
-            retries >= max_retries
-        ):
-            for retries in range(0, max_retries):
-                self.uids_to_peerids = self.loop.run_until_complete(
-                    map_uid_to_peerid(self, range(0, self.metagraph.n))
-                )
-                time.sleep(1)
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -224,6 +207,26 @@ class Validator(BaseValidatorNeuron):
 
         # Start Main Validation Loop
         bt.logging.info("Starting validator loop.")
+
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
+
+        # Start UID iterator and map_uids_to_peerid
+        self.uids_to_peerids = {
+            uid: (None, None) for uid in self.metagraph.uids.tolist()
+        }
+        self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
+
+        # Start UID to PeerID mapping
+        self.stop_event = threading.Event()
+        self.map_uid_to_peerid_thread = threading.Thread(
+            target=map_uid_to_peerid_background_task, args=(self,), daemon=True
+        )
+        # self.map_uid_to_peerid_thread.start()
+        map_uid_to_peerid(self, self.metagraph.uids.tolist())
+
+        # Update PeerID list
+        update_run_peerid_list(self)
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
