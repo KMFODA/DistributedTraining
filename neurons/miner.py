@@ -40,7 +40,7 @@ from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
 from distributed_training.utils.state_loader import (
-    load_state_from_peer,
+    load_state_from_peer, ModelLoadingManager
 )
 
 from distributed_training.utils.progress_tracker import (
@@ -216,41 +216,51 @@ class Miner(BaseMinerNeuron):
             target=self.load_dataloader, daemon=True
         )
         self.dataloader_thread.start()
+        
+        self.loading_manager = ModelLoadingManager()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
         )
         self.update_model_thread.start()
 
-        self.upload_gradient_buffers_to_s3_thread = threading.Thread(
-            target=self.upload_gradient_buffers_to_s3,
-            args=("distributed-training-second", self.wallet, "gradient"),
-            daemon=True,
-        )
-        self.upload_gradient_buffers_to_s3_thread.start()
-
+        # Keep for later
+        # self.upload_gradient_buffers_to_s3_thread = threading.Thread(
+        #     target=self.upload_gradient_buffers_to_s3,
+        #     args=("distributed-training-second", self.wallet, "gradient"),
+        #     daemon=True,
+        # )
+        # self.upload_gradient_buffers_to_s3_thread.start()
         # TODO: Add AWS credentials setup instructions in README.md
-
-    def upload_gradient_buffers_to_s3(self, bucket: str, wallet: "bt.wallet", key: str):
-        _ = asyncio.run(
-            upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
-        )
+    # def upload_gradient_buffers_to_s3(self, bucket: str, wallet: "bt.wallet", key: str):
+    #     _ = asyncio.run(
+    #         upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
+    #     )
 
     def load_latest_model(self):
         while not self.stop_event.is_set():
+            # Skip checking if we're currently loading
+            if self.loading_manager.is_loading:
+                time.sleep(5)  # Short sleep before checking again
+                continue
+                
             self.global_progress.epoch = get_global_epoch(self)
-            if (self.local_progress.epoch != self.global_progress.epoch) or (
+            current_epoch = self.global_progress.epoch
+            
+            # Skip if we've already loaded this epoch
+            if current_epoch == self.loading_manager.last_loaded_epoch:
+                time.sleep(30)
+                continue
+                
+            if (self.local_progress.epoch != current_epoch) or (
                 sum(
                     np.isnan(
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
                     )
-                )
-                > 1
+                ) > 1
             ):
-                bt.logging.info(
-                    "Local Epoch Behind Global Epoch. Loading Latest Model State."
-                )
-                load_state_from_peer(self, epoch=self.global_progress.epoch)
+                bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
+                load_state_from_peer(self, epoch=current_epoch)
             else:
                 time.sleep(30)
 
