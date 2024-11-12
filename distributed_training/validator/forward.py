@@ -17,22 +17,22 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import copy
 import random
 import time
 
 import bittensor as bt
+import numpy as np
+import torch
 from huggingface_hub import create_tag, list_repo_refs
+from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
-from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
-import copy
-import numpy as np
-from huggingface_hub.utils import HfHubHTTPError
-import torch
 
 
 async def forward(self):
@@ -46,12 +46,15 @@ async def forward(self):
 
     """
     gathered, failed_peers, participating_peers = [], [], []
+
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
         load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-    # Evaluate wether to run an AllReduce or a Train synapse based on the global samples accumulated
+    # Evaluate wether to run an AllReduce or a Train synapse based
+    # on the global samples accumulated
+
     if (
         (
             (
@@ -66,8 +69,12 @@ async def forward(self):
             or (self.local_progress.samples_accumulated != 0)
         )
     ):
-        # If running an AllReduce synapse, call as many miners as possible
-        sample_size = int(self.metagraph.n)
+        if self.uid == self.master_uid:
+            # If running an AllReduce synapse, call as many miners as possible
+            sample_size = int(self.metagraph.n)
+        else:
+            sample_size = self.config.neuron.sample_size
+
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
@@ -80,9 +87,9 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) < 30:
+            while len(self.miner_uids) < self.config.neuron.min_group_size:
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {10-len(self.miner_uids)} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size-len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -90,6 +97,7 @@ async def forward(self):
                     k=sample_size,
                     epoch=self.local_progress.epoch if all_reduce else None,
                 )
+
         else:
             if self.local_progress.samples_accumulated == 0 and (
                 self.uid == self.master_uid
@@ -108,7 +116,7 @@ async def forward(self):
         self.event.update({"uids": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-        if self.miner_uids.tolist() == []:
+        if len(self.miner_uids) == 0:
             responses = [[]]
             bt.logging.info("No Active Miners Found This Step.")
         else:
@@ -116,7 +124,7 @@ async def forward(self):
             if all_reduce:
                 bt.logging.info("Performing Gradient Averaging")
                 self.peerids_to_uids = {
-                    str(value): key for key, value in self.uids_to_peerids.items()
+                    str(value[0]): key for key, value in self.uids_to_peerids.items()
                 }
                 gradient_averaging_step = self.grad_averager.step(
                     gather=0, wait=False, peerids_to_uids=self.peerids_to_uids
@@ -141,16 +149,17 @@ async def forward(self):
                     for _ in self.miner_uids
                 ]
 
-            # Query the network
+            # # Query the network
             query_tasks.append(
                 self.dendrite_pool.async_forward(
                     self.miner_uids,
                     queries,
-                    timeout=self.all_reduce_timeout
-                    if all_reduce
-                    else self.train_timeout,
+                    timeout=(
+                        self.all_reduce_timeout if all_reduce else self.train_timeout
+                    ),
                 )
             )
+
             bt.logging.info("Query Sent Out")
             start_time = time.perf_counter()
             responses = await asyncio.gather(*query_tasks)
@@ -185,6 +194,16 @@ async def forward(self):
                     bt.logging.info(f"Failed allreduce: {failed_peers}")
                     bt.logging.info(f"Participating peers: {participating_peers}")
                     bt.logging.info(f"Batch Size: {batch_size}")
+
+                    self.event.update(
+                        {
+                            "batch_size": batch_size,
+                            "failed_peers_count": len(failed_peers),
+                            "participating_peers_count": len(participating_peers),
+                            "succesfull_peers_count": len(participating_peers)
+                            - len(failed_peers),
+                        }
+                    )
 
                     # Optimizer Step
                     with self.grad_averager.use_averaged_gradients():
@@ -292,24 +311,8 @@ async def forward(self):
                                     )
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
-                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}.",
+                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
-
-                                    # Log batch size to wandb
-                                    self.event.update(
-                                        {
-                                            "batch_size": batch_size,
-                                            "failed_peers_count": len(failed_peers),
-                                            "participating_peers_count": len(
-                                                participating_peers
-                                            ),
-                                            "succesfull_peers_count": len(
-                                                participating_peers
-                                            )
-                                            - len(failed_peers),
-                                        }
-                                    )
-
                                     create_tag(
                                         self.config.neuron.model_name,
                                         repo_type="model",
@@ -321,9 +324,6 @@ async def forward(self):
                                     )
                                     tag_name = max([int(tag.name) for tag in refs.tags])
                                     bt.logging.info(f"New Model Tag {tag_name}")
-
-                                    # Wait for other validators to query miners
-                                    time.sleep(120 * 6)
                                     break
 
                                 except HfHubHTTPError:
@@ -434,7 +434,7 @@ async def forward(self):
     )
 
     # Update the scores based on the rewards.
-    self.update_scores(rewards, self.miner_uids)
+    self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)
 
     self.event.update(self.get_validator_info())
     try:

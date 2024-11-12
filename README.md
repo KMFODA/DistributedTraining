@@ -52,12 +52,6 @@ btcli subnets register --subtensor.network finney --netuid $NETUID --wallet.name
 cp DistributedTraining/.env /root/
 ```
 
-6. Uninstall nest_asyncio as it isn't compatible with hivemind
-```bash
-python DistributedTraining/post_install.py
-```
-
-
 ---
 # Running a Miner
 Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.

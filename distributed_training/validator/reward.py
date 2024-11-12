@@ -16,16 +16,21 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
+import random
+import time
 from typing import List
 
 import bittensor as bt
-import torch
-from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import get_random_uids, map_uid_to_peerid
-import time
-import asyncio
-import random
 import numpy as np
+import torch
+
+from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.uids import (
+    get_random_uids,
+    update_run_peerid_list,
+    map_uid_to_peerid,
+)
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -51,9 +56,11 @@ def score_gradients(self, response, uid, threshold=0.85):
         else:
             # Create DataLoader
             dataloader = DataLoader(
-                batch_size=response.batch_size
-                if "batch_size" in response.__dict__
-                else self.config.neuron.local_batch_size_train,
+                batch_size=(
+                    response.batch_size
+                    if "batch_size" in response.__dict__
+                    else self.config.neuron.local_batch_size_train
+                ),
                 sequence_length=1024,
                 rows=response.dataset_indices,
             )
@@ -167,10 +174,12 @@ def score_gradients(self, response, uid, threshold=0.85):
 async def score_blacklist(self, uids):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        if self.uids_to_peerids[uid] == None:
+        if self.uids_to_peerids[uid][0] == None:
             scores[i] = 0.0
-        else:
+        elif self.uids_to_peerids[uid][0] in self.run_peer_id_list:
             scores[i] = 1.0
+        else:
+            scores[i] = 0.0
 
     return scores
 
@@ -210,7 +219,7 @@ async def score_bandwidth(self, uids, timeout=30):
 def score_failed_senders(self, uids, failed_peers, participating_peers):
     scores = torch.FloatTensor([0.0 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        peer_id = self.uids_to_peerids.get(uid)
+        peer_id = self.uids_to_peerids.get(uid)[0]
 
         if peer_id in participating_peers:
             if peer_id in failed_peers:
@@ -248,25 +257,27 @@ async def get_rewards(
     """
     # Score a non-empty AllReduce response
     if all_reduce and ((responses != [[]]) or (self.uid != self.master_uid)):
-        if self.uid != self.master_uid:
-            # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
-            # the scoring burden across all validators
-            self.miner_uids = await get_random_uids(
-                self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-            )
-            self.event.update({"uids": self.miner_uids})
-            bt.logging.info(f"UIDs:  {self.miner_uids}")
+        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
+        # the scoring burden across all validators
+        self.miner_uids = await get_random_uids(
+            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
+        )
+        self.event.update({"uids": self.miner_uids})
+        bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         # Set up the scores tensor
         scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
 
-        # Update mapping of uids to peerids
-        self.uids_to_peerids = await map_uid_to_peerid(self, range(0, self.metagraph.n))
-        self.uids_to_peerids[self.uid] = self.dht.peer_id
+        # Check if peer is connected to DHT & run_id and blacklist them if they are not
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        blacklist_scores = await score_blacklist(self, self.miner_uids.tolist())
+        # Update UID to PeerID mapping
+        map_uid_to_peerid(self, uids)
+
+        # Update PeerIDs list
+        update_run_peerid_list(self)
+
+        blacklist_scores = await score_blacklist(self, self.miner_uids)
         bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
         self.event.update(
             {
@@ -279,7 +290,7 @@ async def get_rewards(
         if self.uid == self.master_uid:
             # Apply penalty to failed senders if any
             failed_sender_scores = score_failed_senders(
-                self, self.miner_uids.tolist(), failed_peers, participating_peers
+                self, self.miner_uids, failed_peers, participating_peers
             )
             bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
             self.event.update(
@@ -292,7 +303,7 @@ async def get_rewards(
         else:
             # Score miners bandwidth
             bandwidth_scores = await score_bandwidth(
-                self, self.miner_uids.tolist(), self.load_state_timeout
+                self, self.miner_uids, self.load_state_timeout
             )
             bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
             self.event.update(
@@ -321,9 +332,11 @@ async def get_rewards(
     else:
         scores = torch.FloatTensor(
             [
-                1
-                if response.dendrite.status_code == 200 and response.loss != 0.0
-                else 0
+                (
+                    1
+                    if response.dendrite.status_code == 200 and response.loss != 0.0
+                    else 0
+                )
                 for _, response in zip(uids, responses[0])
             ]
         ).to(self.device)
@@ -331,15 +344,16 @@ async def get_rewards(
 
         # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
         if (self.step % 1) == 0:
-            # Update mapping of uids to peerids
-            self.uids_to_peerids = await map_uid_to_peerid(
-                self, range(0, self.metagraph.n)
-            )
-            self.uids_to_peerids[self.uid] = self.dht.peer_id
+            # Check if peer is connected to DHT & run_id and blacklist them if they are not
             bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            blacklist_scores = await score_blacklist(self, uids.tolist())
+            # Update UID to PeerID mapping
+            map_uid_to_peerid(self, uids)
+
+            # Update PeerIDs list
+            update_run_peerid_list(self)
+
+            blacklist_scores = await score_blacklist(self, uids)
             bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
             self.event.update(
                 {
@@ -353,7 +367,7 @@ async def get_rewards(
         gradient_scores = torch.FloatTensor(
             [
                 (
-                    score_gradients(self, response, uids.tolist()[index])
+                    score_gradients(self, response, uids[index])
                     if (response.dendrite.status_code == 200)
                     and (response.gradient_sums is not None)
                     else 0
@@ -365,7 +379,7 @@ async def get_rewards(
         self.event.update(
             {
                 f"rewards.gradient.uid{uid}": gradient_score
-                for uid, gradient_score in zip(uids.tolist(), gradient_scores)
+                for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
         scores *= gradient_scores

@@ -161,4 +161,6 @@ cython_debug/
 bittensor-subnet-template/
 wandb/
 .vscode/
+logs*
 bittensor/
+hivemind/

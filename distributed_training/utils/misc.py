@@ -16,38 +16,34 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-from math import floor
-from typing import Callable, Any
-from functools import lru_cache, update_wrapper
-import bittensor as bt
-from typing import Any, List
-from distributed_training.protocol import Train
 import asyncio
-import wandb
-import logging
-from loguru import logger as bt_logger
-from hivemind.utils.logging import use_hivemind_log_handler
-import speedtest
-import hivemind
-import logging_loki
-from logging.handlers import QueueHandler, QueueListener
-from multiprocessing import Queue
 import json
-from hivemind import utils
+import logging
+import os
 import re
-from ipaddress import ip_address
-import torch
-
-import os
 import shutil
-import random
-from distributed_training.data.dataset import DataLoader
-from bitarray import bitarray
+import time
+from functools import lru_cache, update_wrapper
+from ipaddress import ip_address
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from math import floor
+from multiprocessing import Queue
+from typing import Any, Callable, List
+
+import bittensor as bt
+import logging_loki
+import speedtest
 import wandb
-import os
 from dotenv import load_dotenv
-import asyncio
+from loguru import logger as bt_logger
+
+import hivemind
+from distributed_training.protocol import Train
+from hivemind import utils
+from hivemind.utils.logging import use_hivemind_log_handler
+
+EVENTS_LEVEL_NUM = 38
+DEFAULT_LOG_BACKUP_COUNT = 10
 
 load_dotenv()
 
@@ -363,26 +359,33 @@ def setup_logging(
     level=logging.INFO,
     ip=None,
     port=None,
-    local_logfile="/root/logs_mylogfile.txt",
+    local_logfile="logs_mylogfile.txt",
+    config=None,  # Add config parameter
 ):
-    # Function to force hivemind to log via bittensor
+    """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
+    # Initialize bittensor logging
     _ = bt.logging()
 
-    bt_logger_ = logging.getLogger("bittensor")
-    bt_logger_.propagate = False
+    # Setup formatters
+    formatter = logging.Formatter("%(message)s")
+
+    # Setup bittensor logger
+    bt_logger = logging.getLogger("bittensor")
+    bt_logger.setLevel(level)
+    bt_logger.propagate = False
 
     use_hivemind_log_handler("nowhere")
 
+    # Setup root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(
-        level
-    )  # Set this to logging.DEBUG to check hivemind debug messages -> Careful, it's a lot of output
+    root_logger.setLevel(level)
 
+    # Setup BittensorLogHandler
     bt_handler = BittensorLogHandler()
-    formatter = logging.Formatter("%(message)s")
     bt_handler.setFormatter(formatter)
     root_logger.addHandler(bt_handler)
 
+    # Add Loki handler
     add_loki_logger_handler(
         root_logger,
         network,
@@ -397,28 +400,55 @@ def setup_logging(
         neuron_type,
     )
 
-    # Create a file handler that logs debug and higher level messages
+    # Handle local file logging
     if os.path.exists(local_logfile):
-        # Archive any existing logfile
         shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
         os.remove(local_logfile)
 
-    hivemind_log_file = f"/root/logs_mylogfile.txt"
+    # Setup hivemind logger
     hivemind_logger = logging.getLogger("hivemind")
-    hivemind_logger.setLevel(logging.DEBUG)  # Capture all logs from hivemind
-    file_handler = logging.FileHandler(hivemind_log_file)
-    file_handler.setLevel(
-        logging.DEBUG
-    )  # Ensure file handler captures all levels for hivemind
+    hivemind_logger.handlers.clear()
+    hivemind_logger.setLevel(logging.DEBUG)
+    hivemind_logger.propagate = False
+
+    file_handler = logging.FileHandler(local_logfile)
+    file_handler.setLevel(logging.DEBUG)
     file_handler.addFilter(logging_filter)
-    formatter = logging.Formatter(
+    hivemind_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(hivemind_formatter)
     hivemind_logger.addHandler(file_handler)
-    hivemind_logger.propagate = (
-        False  # Stop hivemind logs from propagating to the root logger
-    )
+    hivemind_logger.propagate = False
+
+    # Setup events logger if config is provided
+    if config and not config.neuron.dont_save_events:
+        # Setup EVENT level
+        logging.addLevelName(EVENTS_LEVEL_NUM, "EVENT")
+        events_logger = logging.getLogger("event")
+        events_logger.handlers.clear()
+        events_logger.setLevel(logging.INFO)
+
+        def event(self, message, *args, **kws):
+            if self.isEnabledFor(EVENTS_LEVEL_NUM):
+                self._log(EVENTS_LEVEL_NUM, message, args, **kws)
+
+        logging.Logger.event = event
+
+        # Create events file handler
+        events_file = os.path.join(config.neuron.full_path, "events.log")
+        events_handler = RotatingFileHandler(
+            events_file,
+            maxBytes=config.neuron.events_retention_size,
+            backupCount=DEFAULT_LOG_BACKUP_COUNT,
+        )
+        events_handler.setFormatter(formatter)
+        events_handler.setLevel(logging.INFO)
+        events_logger.addHandler(events_handler)
+        events_logger.propagate = False
+
+        # Register as primary logger
+        bt.logging.register_primary_logger(events_logger.name)
 
 
 def get_bandwidth():
