@@ -176,10 +176,10 @@ def add_args(cls, parser):
 
     if neuron_type == "validator":
         parser.add_argument(
-            "--neuron.num_of_duplicates",
+            "--neuron.uid_isalive_limit",
             type=int,
-            help="The size of a group of miners duplicating work",
-            default=2,
+            help="The maximum number of uids to call concurrently",
+            default=25,
         )
 
         parser.add_argument(

@@ -88,9 +88,8 @@ async def get_random_uids(
 
     responses = []
     attempt = 0
-    limit = 25
-    while (sum(responses) < k) and (attempt < (int(self.metagraph.n / 25) - 1)):
-        print(attempt)
+    limit = self.config.neuron.uid_isalive_limit
+    while (sum(responses) < k) and (attempt < (int(self.metagraph.n / limit) - 1)):
         tasks = []
         for i in range((attempt * limit), (attempt * limit) + limit):
             # The dendrite client queries the network.
