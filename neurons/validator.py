@@ -228,6 +228,10 @@ class Validator(BaseValidatorNeuron):
         # Update PeerID list
         update_run_peerid_list(self)
 
+        # Init UID is_alive counter
+        self.is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
+        self.is_alive_counter_threshold = 10
+
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
             if (reward != 0) and (response.dataset_indices is not None):

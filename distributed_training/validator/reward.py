@@ -342,26 +342,24 @@ async def get_rewards(
         ).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
-        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-        if (self.step % 1) == 0:
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        # Check if peer is connected to DHT & run_id and blacklist them if they are not
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
-            # Update UID to PeerID mapping
-            map_uid_to_peerid(self, uids)
+        # Update UID to PeerID mapping
+        map_uid_to_peerid(self, uids)
 
-            # Update PeerIDs list
-            update_run_peerid_list(self)
+        # Update PeerIDs list
+        update_run_peerid_list(self)
 
-            blacklist_scores = await score_blacklist(self, uids)
-            bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-            self.event.update(
-                {
-                    f"rewards.blacklist.uid{uid}": blacklist_score
-                    for uid, blacklist_score in zip(uids, blacklist_scores)
-                }
-            )
-            scores *= blacklist_scores
+        blacklist_scores = await score_blacklist(self, uids)
+        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
+        self.event.update(
+            {
+                f"rewards.blacklist.uid{uid}": blacklist_score
+                for uid, blacklist_score in zip(uids, blacklist_scores)
+            }
+        )
+        scores *= blacklist_scores
 
         # Re-calculate gradients and score the difference between local gradients and the miner's gradients
         gradient_scores = torch.FloatTensor(
@@ -403,9 +401,29 @@ async def get_rewards(
         self.event.update(
             {
                 f"rewards.steps.uid{uid}": steps_score
-                for uid, steps_score in zip(uids.tolist(), steps_scores)
+                for uid, steps_score in zip(uids, steps_scores)
             }
         )
         scores *= steps_scores
+
+        # Score miners based off wether they where succesfull or not in the all_reduce round
+        all_reduce_scores = torch.FloatTensor(
+            [
+                (1 if (self.model.config.all_reduce_scores[uid] == "SUCCESS") else 0)
+                for uid in uids
+            ]
+        ).to(self.device)
+        bt.logging.info(f"All Reduce Scores: {steps_scores}")
+        self.event.update(
+            {
+                f"rewards.all_reduce.uid{uid}": all_reduce_score
+                for uid, all_reduce_score in zip(uids, all_reduce_scores)
+            }
+        )
+        scores *= all_reduce_scores
+
+        scores = blacklist_scores * (
+            (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
+        )
 
     return scores

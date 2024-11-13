@@ -375,6 +375,11 @@ class BaseValidatorNeuron(BaseNeuron):
         # shape: [ metagraph.n ]
         scattered_rewards: np.ndarray = self.scores.copy()
         scattered_rewards[uids_array] = rewards
+        for uid in range(len(scattered_rewards)):
+            if self.is_alive_counter[uid] > self.is_alive_counter_threshold:
+                # TODO test if this ever gets activated
+                scattered_rewards[uid] = 0
+
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
         # Update scores with rewards produced by this step.
