@@ -107,9 +107,9 @@ async def get_random_uids(
 
     for i, response in enumerate(responses):
         if response == False:
-            self.is_alive_counter[uids[i]] += 1
+            self.failed_is_alive_counter[uids[i]] += 1
         else:
-            self.is_alive_counter[uids[i]] = 0
+            self.failed_is_alive_counter[uids[i]] = 0
 
     for uid, uid_is_available in zip(range(self.metagraph.n.item()), (responses)):
         uid_is_not_excluded = exclude is None or uid not in exclude
