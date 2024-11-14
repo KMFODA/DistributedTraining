@@ -195,11 +195,11 @@ async def forward(self):
                     all_reduce_scores = {}
                     for uid in range(int(self.metagraph.n)):
                         if (uid in participating_uids) and (uid not in failed_uids):
-                            all_reduce_scores[uid] = "SUCCESS"
+                            all_reduce_scores[str(uid)] = "SUCCESS"
                         elif uid in failed_peers:
-                            all_reduce_scores[uid] = "FAIL"
+                            all_reduce_scores[str(uid)] = "FAIL"
                         else:
-                            all_reduce_scores[uid] = "NON_PARTICIPATING"
+                            all_reduce_scores[str(uid)] = "NON_PARTICIPATING"
 
                     self.model.config.all_reduce_scores = all_reduce_scores
                     bt.logging.info(f"Gathered {gathered} gradients")
@@ -419,38 +419,38 @@ async def forward(self):
         self.miner_uids = []
         responses = [[]]
 
+    # Adjust the scores based on responses from miners.
+    rewards = await get_rewards(
+        self,
+        uids=self.miner_uids,
+        responses=responses,
+        all_reduce=all_reduce,
+        failed_peers=failed_peers,
+        participating_peers=participating_peers,
+    )
+
+    # Normalise Rewards
+    if rewards.sum() != 0:
+        rewards = rewards / rewards.sum()
+    bt.logging.info(f"Final Scores: {rewards}")
+
     if not all_reduce:
-        # Adjust the scores based on responses from miners.
-        rewards = await get_rewards(
-            self,
-            uids=self.miner_uids,
-            responses=responses,
-            all_reduce=all_reduce,
-            failed_peers=failed_peers,
-            participating_peers=participating_peers,
-        )
-
-        # Normalise Rewards
-        if rewards.sum() != 0:
-            rewards = rewards / rewards.sum()
-        bt.logging.info(f"Final Scores: {rewards}")
-
         # Update the tracker based on the rewards
         self.update_local_tracker_state(rewards, responses)
 
-        self.event.update(
-            {
-                "local_samples_accumulated": self.local_progress.samples_accumulated,
-                "local_epoch": self.local_progress.epoch,
-                "global_samples_accumulated": self.global_progress.samples_accumulated,
-                "global_epoch": self.global_progress.epoch,
-                "average_miner_loss": self.average_loss,
-                "learning_rate": self.learning_rate,
-            }
-        )
+    self.event.update(
+        {
+            "local_samples_accumulated": self.local_progress.samples_accumulated,
+            "local_epoch": self.local_progress.epoch,
+            "global_samples_accumulated": self.global_progress.samples_accumulated,
+            "global_epoch": self.global_progress.epoch,
+            "average_miner_loss": self.average_loss,
+            "learning_rate": self.learning_rate,
+        }
+    )
 
-        # Update the scores based on the rewards.
-        self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)
+    # Update the scores based on the rewards.
+    self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)
 
     self.event.update(self.get_validator_info())
 

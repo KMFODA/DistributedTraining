@@ -409,24 +409,30 @@ class BaseValidatorNeuron(BaseNeuron):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
-            bt.logging.info(
-                "Pre-saved validator state found in .pt format. Loading validator state."
-            )
-            state = torch.load(self.config.neuron.full_path + "/state.pt")
-
-        elif os.path.isfile(self.config.neuron.full_path + "/state.npz"):
+        if os.path.isfile(self.config.neuron.full_path + "/state.npz"):
             bt.logging.info(
                 "Pre-saved validator state found in .npz format. Loading validator state."
             )
             # Load the state of the validator from file.
-            state = np.load(self.config.neuron.full_path + "/state.npz")
+            state = np.load(
+                self.config.neuron.full_path + "/state.npz", allow_pickle=True
+            )
+
+            self.step = state["step"]
+            self.scores = state["scores"]
+            self.hotkeys = state["hotkeys"]
+
+        elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+            bt.logging.info(
+                "Pre-saved validator state found in .pt format. Loading validator state."
+            )
+            state = torch.load(self.config.neuron.full_path + "/state.pt")
+            self.step = state["step"]
+            self.scores = state["scores"].cpu().numpy()
+            self.hotkeys = state["hotkeys"]
 
         else:
             bt.logging.info("Pre-saved validator state not found.")
 
-        self.step = state["step"]
-        self.scores = state["scores"].cpu().numpy()
-        self.hotkeys = state["hotkeys"]
         if "failed_is_alive_counter" in state:
-            self.failed_is_alive_counter = state["failed_is_alive_counter"]
+            self.failed_is_alive_counter = state["failed_is_alive_counter"].flatten()[0]
