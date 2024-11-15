@@ -292,9 +292,10 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                 f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
             )
             
-            # Load model state
+            # Load model state with max retries
+            MAX_ATTEMPTS = 3
             attempt = 0
-            while True:
+            while attempt < MAX_ATTEMPTS:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.config.neuron.model_name,
@@ -303,9 +304,19 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                     )
                     self.model.to(self.device)
                     
-                    # Load optimizer state
-                    optimizer_path = f"optimizer_state_{self.global_progress.epoch}.pt"
+                    # Initialize optimizer with model parameters
+                    param_dict = {pn: p for pn, p in self.model.named_parameters()}
+                    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+                    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+                    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+                    optim_groups = [
+                        {"params": decay_params, "weight_decay": self.weight_decay},
+                        {"params": nodecay_params, "weight_decay": 0.0},
+                    ]
+                    
+                    # Try to load optimizer state if it exists
                     try:
+                        optimizer_path = f"optimizer_state_{self.global_progress.epoch}.pt"
                         optimizer_state_path = hf_hub_download(
                             repo_id=self.config.neuron.model_name,
                             filename=optimizer_path,
@@ -313,31 +324,18 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         )
                         
                         optimizer_checkpoint = torch.load(optimizer_state_path)
-                        
-                        # Initialize optimizer with model parameters
-                        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-                        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-                        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-                        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-                        optim_groups = [
-                            {"params": decay_params, "weight_decay": self.weight_decay},
-                            {"params": nodecay_params, "weight_decay": 0.0},
-                        ]
-                        
                         self.opt = LAMB(
                             optim_groups, 
                             lr=optimizer_checkpoint['learning_rate'], 
                             betas=(0.9, 0.95), 
                             eps=1e-8
                         )
-                        
-                        # Load optimizer state
                         self.opt.load_state_dict(optimizer_checkpoint['optimizer_state_dict'])
                         bt.logging.info(f"Successfully loaded optimizer state from epoch {epoch}")
                         
                     except Exception as e:
-                        bt.logging.warning(f"Failed to load optimizer state: {str(e)}. Initializing fresh optimizer.")
-                        # Initialize fresh optimizer if loading fails
+                        bt.logging.warning(f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer.")
+                        # Initialize fresh optimizer
                         self.opt = LAMB(
                             optim_groups, 
                             lr=self.learning_rate_maximum, 
@@ -345,10 +343,13 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                             eps=1e-8
                         )
                     
-                    break
+                    break  # Successfully loaded model and created optimizer
+                    
                 except Exception as e:
                     attempt += 1
-                    bt.logging.warning(f"Failed to fetch data, retrying. Attempt {attempt}")
+                    if attempt == MAX_ATTEMPTS:
+                        raise Exception(f"Failed to load model after {MAX_ATTEMPTS} attempts: {str(e)}")
+                    bt.logging.warning(f"Failed to fetch data, retrying. Attempt {attempt}/{MAX_ATTEMPTS}")
             
             self.grad_averager.parameters = tuple(self.model.parameters())
             # Reset gradient buffers
