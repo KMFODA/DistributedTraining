@@ -44,7 +44,7 @@ def check_config(cls, config: "bt.Config"):
         os.makedirs(config.neuron.full_path, exist_ok=True)
 
 
-def add_args(cls, parser):
+def add_args(cls, parser, prefix=None):
     """
     Adds relevant arguments to the parser for operation.
     """
@@ -53,11 +53,51 @@ def add_args(cls, parser):
 
     neuron_type = "validator" if "miner" not in cls.__name__.lower() else "miner"
 
+    prefix_str = "" if prefix == None else prefix + "."
+    try:
+        default_name = os.getenv("BT_WALLET_NAME") or "default"
+        default_hotkey = os.getenv("BT_WALLET_NAME") or "default"
+        default_path = os.getenv("BT_WALLET_PATH") or "~/.bittensor/wallets/"
+        parser.add_argument(
+            "--no_prompt",
+            dest="no_prompt",
+            action="store_true",
+            help="""Set true to avoid prompting the user.""",
+            default=False,
+        )
+        parser.add_argument(
+            "--" + prefix_str + "wallet.name",
+            required=False,
+            default=default_name,
+            help="The name of the wallet to unlock for running bittensor "
+            "(name mock is reserved for mocking this wallet)",
+        )
+        parser.add_argument(
+            "--" + prefix_str + "wallet.hotkey",
+            required=False,
+            default=default_hotkey,
+            help="The name of the wallet's hotkey.",
+        )
+        parser.add_argument(
+            "--" + prefix_str + "wallet.path",
+            required=False,
+            default=default_path,
+            help="The path to your bittensor wallets",
+        )
+    except argparse.ArgumentError as e:
+        pass
+
     parser.add_argument(
         "--dht.port",
         type=int,
         help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
         default=8009,
+    )
+
+    parser.add_argument(
+        "--dht.ip",
+        type=str,
+        help="The IP address to use in announce_maddrs",
     )
 
     parser.add_argument(
@@ -168,12 +208,6 @@ def add_args(cls, parser):
         default="kmfoda",
     )
 
-    parser.add_argument(
-        "--dht.ip",
-        type=str,
-        help="The IP address to use in announce_maddrs",
-    )
-
     if neuron_type == "validator":
         parser.add_argument(
             "--neuron.uid_isalive_limit",
@@ -269,7 +303,6 @@ def config(cls):
     Returns the configuration object specific to this miner or validator after adding relevant arguments.
     """
     parser = argparse.ArgumentParser()
-    bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
     bt.logging.add_args(parser)
     bt.axon.add_args(parser)
