@@ -421,6 +421,10 @@ class BaseValidatorNeuron(BaseNeuron):
             self.step = state["step"]
             self.scores = state["scores"]
             self.hotkeys = state["hotkeys"]
+            if "failed_is_alive_counter" in state:
+                self.failed_is_alive_counter = state[
+                    "failed_is_alive_counter"
+                ].flatten()[0]
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(
@@ -433,6 +437,3 @@ class BaseValidatorNeuron(BaseNeuron):
 
         else:
             bt.logging.info("Pre-saved validator state not found.")
-
-        if "failed_is_alive_counter" in state:
-            self.failed_is_alive_counter = state["failed_is_alive_counter"].flatten()[0]
