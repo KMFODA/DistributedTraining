@@ -49,7 +49,7 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     update_global_tracker_state,
 )
-from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.state_loader import load_state_from_peer, ModelLoadingManager
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
     map_uid_to_peerid_background_task,
@@ -201,6 +201,9 @@ class Validator(BaseValidatorNeuron):
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
+        # Needed to ensure no concurrency
+        self.loading_manager = ModelLoadingManager()
+        
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
@@ -227,6 +230,7 @@ class Validator(BaseValidatorNeuron):
 
         # Update PeerID list
         update_run_peerid_list(self)
+        
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

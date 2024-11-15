@@ -57,11 +57,11 @@ from distributed_training.utils.progress_tracker import (
     get_global_epoch,
     update_global_tracker_state,
 )
-from distributed_training.utils.s3 import (
-    get_indices_for_window,
-    add_slice_for_window_to_buffer,
-    upload_gradient_buffers_to_s3,
-)
+# from distributed_training.utils.s3 import (
+#     get_indices_for_window,
+#     add_slice_for_window_to_buffer,
+#     upload_gradient_buffers_to_s3,
+# )
 from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 from queue import Queue
@@ -189,6 +189,9 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
+        # Needed to avoid concurrent loading
+        self.loading_manager = ModelLoadingManager()
+
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
@@ -207,7 +210,6 @@ class Miner(BaseMinerNeuron):
         )
         self.dataloader_thread.start()
         
-        self.loading_manager = ModelLoadingManager()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
