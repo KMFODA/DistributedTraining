@@ -189,7 +189,12 @@ async def score_blacklist(self, uids):
 async def score_bandwidth(self, uids, timeout=30):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        peer = PeerID(base58.b58decode(self.uids_to_peerids[uid][0]))
+        peer_id = self.uids_to_peerids[uid][0]
+
+        if peer_id is None:
+            peer = None
+        else:
+            peer = PeerID(base58.b58decode(peer_id))
 
         if peer is None:
             scores[i] = 0
