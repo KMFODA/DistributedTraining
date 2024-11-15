@@ -83,21 +83,27 @@ async def get_random_uids(
     """
     candidate_uids = []
     avail_uids = []
+    uids = [i for i in range(self.metagraph.n)]
+    random.shuffle(uids)
 
-    tasks = []
-    for uid in range(self.metagraph.n.item()):
-        # The dendrite client queries the network.
-        tasks.append(
-            check_uid_availability(
-                dendrite,
-                self.metagraph,
-                uid,
-                self.config.neuron.vpermit_tao_limit,
-                epoch,
+    responses = []
+    attempt = 0
+    limit = self.config.neuron.uid_isalive_limit
+    while (sum(responses) < k) and (attempt < (int(self.metagraph.n / limit) - 1)):
+        tasks = []
+        for i in range((attempt * limit), (attempt * limit) + limit):
+            # The dendrite client queries the network.
+            tasks.append(
+                check_uid_availability(
+                    dendrite,
+                    self.metagraph,
+                    uids[i],
+                    self.config.neuron.vpermit_tao_limit,
+                    None,
+                )
             )
-        )
-
-    responses = await asyncio.gather(*tasks)
+        responses += await asyncio.gather(*tasks)
+        attempt += 1
 
     for uid, uid_is_available in zip(range(self.metagraph.n.item()), (responses)):
         uid_is_not_excluded = exclude is None or uid not in exclude
