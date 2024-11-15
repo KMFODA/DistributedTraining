@@ -375,6 +375,16 @@ class BaseValidatorNeuron(BaseNeuron):
         # shape: [ metagraph.n ]
         scattered_rewards: np.ndarray = self.scores.copy()
         scattered_rewards[uids_array] = rewards
+        for uid in range(len(scattered_rewards)):
+            if (
+                self.failed_is_alive_counter[uid]
+                > self.failed_is_alive_counter_threshold
+            ):
+                bt.logging.info(
+                    f"UID {uid} above is_alive_failed_counter threshold. Setting score to 0."
+                )
+                scattered_rewards[uid] = 0
+
         bt.logging.debug(f"Scattered rewards: {rewards}")
 
         # Update scores with rewards produced by this step.
@@ -392,13 +402,31 @@ class BaseValidatorNeuron(BaseNeuron):
             step=self.step,
             scores=self.scores,
             hotkeys=self.hotkeys,
+            failed_is_alive_counter=self.failed_is_alive_counter,
         )
 
     def load_state(self):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        if os.path.isfile(self.config.neuron.full_path + "/state.pt"):
+        if os.path.isfile(self.config.neuron.full_path + "/state.npz"):
+            bt.logging.info(
+                "Pre-saved validator state found in .npz format. Loading validator state."
+            )
+            # Load the state of the validator from file.
+            state = np.load(
+                self.config.neuron.full_path + "/state.npz", allow_pickle=True
+            )
+
+            self.step = state["step"]
+            self.scores = state["scores"]
+            self.hotkeys = state["hotkeys"]
+            if "failed_is_alive_counter" in state:
+                self.failed_is_alive_counter = state[
+                    "failed_is_alive_counter"
+                ].flatten()[0]
+
+        elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(
                 "Pre-saved validator state found in .pt format. Loading validator state."
             )
@@ -407,14 +435,5 @@ class BaseValidatorNeuron(BaseNeuron):
             self.scores = state["scores"].cpu().numpy()
             self.hotkeys = state["hotkeys"]
 
-        elif os.path.isfile(self.config.neuron.full_path + "/state.npz"):
-            bt.logging.info(
-                "Pre-saved validator state found in .npz format. Loading validator state."
-            )
-            # Load the state of the validator from file.
-            state = np.load(self.config.neuron.full_path + "/state.npz")
-            self.step = state["step"]
-            self.scores = state["scores"]
-            self.hotkeys = state["hotkeys"]
         else:
             bt.logging.info("Pre-saved validator state not found.")

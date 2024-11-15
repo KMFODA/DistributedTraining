@@ -17,6 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import base58
 import random
 import time
 from typing import List
@@ -31,6 +32,7 @@ from distributed_training.utils.uids import (
     update_run_peerid_list,
     map_uid_to_peerid,
 )
+from hivemind.p2p import PeerID
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -42,7 +44,7 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
 
-def score_gradients(self, response, uid, threshold=0.85):
+def score_gradients(self, response, uid, threshold=0.75):
     try:
         if "gradient_sums" not in response.__dict__:
             bt.logging.info(
@@ -187,7 +189,12 @@ async def score_blacklist(self, uids):
 async def score_bandwidth(self, uids, timeout=30):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
     for i, uid in enumerate(uids):
-        peer = self.uids_to_peerids[uid]
+        peer_id = self.uids_to_peerids[uid][0]
+
+        if peer_id is None:
+            peer = None
+        else:
+            peer = PeerID(base58.b58decode(peer_id))
 
         if peer is None:
             scores[i] = 0
@@ -255,8 +262,8 @@ async def get_rewards(
     Returns:
     - torch.FloatTensor: A tensor of rewards for the given query and responses.
     """
-    # Score a non-empty AllReduce response
-    if all_reduce and ((responses != [[]]) or (self.uid != self.master_uid)):
+    # Score an AllReduce response
+    if all_reduce:
         # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
         # the scoring burden across all validators
         self.miner_uids = await get_random_uids(
@@ -287,34 +294,20 @@ async def get_rewards(
         )
         scores *= blacklist_scores
 
-        if self.uid == self.master_uid:
-            # Apply penalty to failed senders if any
-            failed_sender_scores = score_failed_senders(
-                self, self.miner_uids, failed_peers, participating_peers
-            )
-            bt.logging.info(f"Failed Sender Scores: {failed_sender_scores}")
-            self.event.update(
-                {
-                    f"rewards.failed_sender_score.uid{uid}": failed_sender_score
-                    for uid, failed_sender_score in zip(uids, failed_sender_scores)
-                }
-            )
-            scores *= failed_sender_scores
-        else:
-            # Score miners bandwidth
-            bandwidth_scores = await score_bandwidth(
-                self, self.miner_uids, self.load_state_timeout
-            )
-            bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-            self.event.update(
-                {
-                    f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                    for uid, bandwidth_score in zip(
-                        self.miner_uids.tolist(), bandwidth_scores
-                    )
-                }
-            )
-            scores *= bandwidth_scores
+        # Score miners bandwidth
+        bandwidth_scores = await score_bandwidth(
+            self, self.miner_uids, self.load_state_timeout
+        )
+        bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
+        self.event.update(
+            {
+                f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
+                for uid, bandwidth_score in zip(
+                    self.miner_uids.tolist(), bandwidth_scores
+                )
+            }
+        )
+        scores *= bandwidth_scores
 
     # Score an empty responses
     elif (responses == [[]]) or (
@@ -342,26 +335,24 @@ async def get_rewards(
         ).to(self.device)
         bt.logging.info(f"Timeout Scores: {scores}")
 
-        # Periodically check if peer is connected to DHT & run_id and blacklist them if they are not
-        if (self.step % 1) == 0:
-            # Check if peer is connected to DHT & run_id and blacklist them if they are not
-            bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
+        # Check if peer is connected to DHT & run_id and blacklist them if they are not
+        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
-            # Update UID to PeerID mapping
-            map_uid_to_peerid(self, uids)
+        # Update UID to PeerID mapping
+        map_uid_to_peerid(self, uids)
 
-            # Update PeerIDs list
-            update_run_peerid_list(self)
+        # Update PeerIDs list
+        update_run_peerid_list(self)
 
-            blacklist_scores = await score_blacklist(self, uids)
-            bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-            self.event.update(
-                {
-                    f"rewards.blacklist.uid{uid}": blacklist_score
-                    for uid, blacklist_score in zip(uids, blacklist_scores)
-                }
-            )
-            scores *= blacklist_scores
+        blacklist_scores = await score_blacklist(self, uids)
+        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
+        self.event.update(
+            {
+                f"rewards.blacklist.uid{uid}": blacklist_score
+                for uid, blacklist_score in zip(uids, blacklist_scores)
+            }
+        )
+        scores *= blacklist_scores
 
         # Re-calculate gradients and score the difference between local gradients and the miner's gradients
         gradient_scores = torch.FloatTensor(
@@ -403,9 +394,33 @@ async def get_rewards(
         self.event.update(
             {
                 f"rewards.steps.uid{uid}": steps_score
-                for uid, steps_score in zip(uids.tolist(), steps_scores)
+                for uid, steps_score in zip(uids, steps_scores)
             }
         )
         scores *= steps_scores
+
+        # Score miners based off wether they where succesfull or not in the all_reduce round
+        all_reduce_scores = torch.FloatTensor(
+            [
+                (
+                    1
+                    if (self.model.config.all_reduce_scores[str(uid)] == "SUCCESS")
+                    else 0
+                )
+                for uid in uids.tolist()
+            ]
+        ).to(self.device)
+        bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
+        self.event.update(
+            {
+                f"rewards.all_reduce.uid{uid}": all_reduce_score
+                for uid, all_reduce_score in zip(uids, all_reduce_scores)
+            }
+        )
+        scores *= all_reduce_scores
+
+        scores = blacklist_scores * (
+            (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
+        )
 
     return scores
