@@ -105,7 +105,13 @@ async def get_random_uids(
         responses += await asyncio.gather(*tasks)
         attempt += 1
 
-    for uid, uid_is_available in zip(range(self.metagraph.n.item()), (responses)):
+    for i, response in enumerate(responses):
+        if response == False:
+            self.failed_is_alive_counter[uids[i]] += 1
+        else:
+            self.failed_is_alive_counter[uids[i]] = 0
+
+    for uid, uid_is_available in zip(uids, (responses)):
         uid_is_not_excluded = exclude is None or uid not in exclude
         if uid_is_available:
             avail_uids.append(uid)
