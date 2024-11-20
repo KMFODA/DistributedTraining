@@ -532,16 +532,16 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
 
             # Add gradient to buffer
-            await add_slice_for_window_to_buffer(
-                self,
-                dataset_index=index,
-                model=self.model,
-                window=window,
-                seed=window,
-                compression=100,
-                key="gradient",
-            )
-            bt.logging.info("Added gradient to buffer")
+            # await add_slice_for_window_to_buffer(
+            #     self,
+            #     dataset_index=index,
+            #     model=self.model,
+            #     window=window,
+            #     seed=window,
+            #     compression=100,
+            #     key="gradient",
+            # )
+            # bt.logging.info("Added gradient to buffer")
 
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
