@@ -549,7 +549,9 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-
+        
+        self.dataloader_thread.stop()
+        
         self.dataloader_thread = threading.Thread(
             target=self.load_dataloader, daemon=True
         )
