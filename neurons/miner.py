@@ -199,13 +199,12 @@ class Miner(BaseMinerNeuron):
         self.event = {}
 
         # Init gradient queue
-        self.config.neuron.window_length = 2  # TODO: set this in config.py
-        self.grad_buff_queue = Queue(maxsize=0)
+        #self.config.neuron.window_length = 2  # TODO: set this in config.py
+        #self.grad_buff_queue = Queue(maxsize=0)
 
         # Init background threads
         self.stop_event = threading.Event()
-        self.dataloader_thread = DataLoaderThread(self)
-        self.dataloader_thread.start()
+        self.start_dataloader_thread()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
@@ -224,6 +223,19 @@ class Miner(BaseMinerNeuron):
     #     _ = asyncio.run(
     #         upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
     #     )
+    
+    def start_dataloader_thread(self):
+        """Start a new dataloader thread if the previous one is finished"""
+        if hasattr(self, 'dataloader_thread') and self.dataloader_thread.is_alive():
+            self.dataloader_thread.join()
+        
+        self.dataloader_thread = threading.Thread(target=self.load_dataloader, daemon=True)
+        self.dataloader_thread.start()
+
+    def is_dataloader_thread_alive(self):
+        """Check if dataloader thread is alive"""
+        return hasattr(self, 'dataloader_thread') and self.dataloader_thread.is_alive()
+
 
     def load_latest_model(self):
         while not self.stop_event.is_set():
@@ -488,6 +500,10 @@ class Miner(BaseMinerNeuron):
 
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
+        # Start dataloader if it hasn't been started
+        if not hasattr(self, 'dataloader_thread'):
+            self.start_dataloader_thread()
+            
         # Wait for the dataloader thread to complete if it is running
         while self.dataloader_thread.is_alive():
             bt.logging.info("Waiting for DataLoader thread to complete")
@@ -546,8 +562,8 @@ class Miner(BaseMinerNeuron):
             synapse.model_name = self.model.name_or_path
             return synapse
         
-        self.dataloader_thread.start()
-
+        self.start_dataloader_thread()
+        
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
 
