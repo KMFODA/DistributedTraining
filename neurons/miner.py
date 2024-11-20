@@ -50,7 +50,7 @@ from distributed_training.utils.state_loader import (
 
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import init_dht, load_wandb, setup_logging, SimpleDataLoaderThread
+from distributed_training.utils.misc import init_dht, load_wandb, setup_logging, DataLoaderThread
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
@@ -204,7 +204,7 @@ class Miner(BaseMinerNeuron):
 
         # Init background threads
         self.stop_event = threading.Event()
-        self.dataloader_thread = SimpleDataLoaderThread(self)
+        self.dataloader_thread = DataLoaderThread(self)
         
 
         self.update_model_thread = threading.Thread(
