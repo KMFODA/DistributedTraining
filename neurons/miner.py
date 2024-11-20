@@ -205,7 +205,7 @@ class Miner(BaseMinerNeuron):
         # Init background threads
         self.stop_event = threading.Event()
         self.dataloader_thread = DataLoaderThread(self)
-        
+        self.dataloader_thread.start()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
