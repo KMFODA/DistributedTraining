@@ -542,3 +542,19 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error(f"Retrying...")
+                
+class SimpleDataLoaderThread:
+    def __init__(self, neuron):
+        self.thread = None
+        
+    def start(self):
+        # If there's an existing thread, wait for it to finish
+        if self.thread and self.thread.is_alive():
+            self.thread.join()
+            
+        # Start new thread
+        self.thread = threading.Thread(target=self.load_dataloader, daemon=True)
+        self.thread.start()
+        
+    def is_alive(self):
+        return self.thread is not None and self.thread.is_alive()

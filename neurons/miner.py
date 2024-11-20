@@ -50,7 +50,7 @@ from distributed_training.utils.state_loader import (
 
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import init_dht, load_wandb, setup_logging
+from distributed_training.utils.misc import init_dht, load_wandb, setup_logging, SimpleDataLoaderThread
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
@@ -74,7 +74,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -203,12 +202,9 @@ class Miner(BaseMinerNeuron):
         self.config.neuron.window_length = 2  # TODO: set this in config.py
         self.grad_buff_queue = Queue(maxsize=0)
 
-        # Init bakcground threads
+        # Init background threads
         self.stop_event = threading.Event()
-        self.dataloader_thread = threading.Thread(
-            target=self.load_dataloader, daemon=True
-        )
-        self.dataloader_thread.start()
+        self.dataloader_thread = SimpleDataLoaderThread(self)
         
 
         self.update_model_thread = threading.Thread(
@@ -550,11 +546,6 @@ class Miner(BaseMinerNeuron):
             synapse.model_name = self.model.name_or_path
             return synapse
         
-        self.dataloader_thread.stop()
-        
-        self.dataloader_thread = threading.Thread(
-            target=self.load_dataloader, daemon=True
-        )
         self.dataloader_thread.start()
 
         # Store the list of gradient sums and projected gradients in the synapse
