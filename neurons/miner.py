@@ -206,10 +206,10 @@ class Miner(BaseMinerNeuron):
         self.stop_event = threading.Event()
         # self.start_dataloader_thread()
 
-        # self.update_model_thread = threading.Thread(
-        #     target=self.load_latest_model, daemon=True
-        # )
-        # self.update_model_thread.start()
+        self.update_model_thread = threading.Thread(
+            target=self.load_latest_model, daemon=True
+        )
+        self.update_model_thread.start()
 
         # Keep for later
         # self.upload_gradient_buffers_to_s3_thread = threading.Thread(
@@ -292,10 +292,10 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=self.group,
         )
+        # Log PeerID to chain
+        log_peerid_to_chain(self)
         bt.logging.info("DataLoader initialisation finished")
         print("DataLoader initialisation finished")
-        # Log PeerID to chain
-        # log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {
