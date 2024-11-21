@@ -323,6 +323,7 @@ async def get_rewards(
 
     # Score a non-empty Train response
     else:
+
         scores = torch.FloatTensor(
             [
                 (
@@ -425,4 +426,4 @@ async def get_rewards(
             # Final balanced score calculation without all_reduce
             scores = blacklist_scores * (gradient_scores * steps_scores)
 
-        return scores
+    return scores
