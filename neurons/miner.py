@@ -266,6 +266,7 @@ class Miner(BaseMinerNeuron):
 
     def load_dataloader(self):
         bt.logging.info("DataLoader initialisation started")
+        print("DataLoader initialisation started")
         search_start = random.choice(
             range(
                 len(self.dataset_indices)
@@ -292,6 +293,7 @@ class Miner(BaseMinerNeuron):
             rows=self.group,
         )
         bt.logging.info("DataLoader initialisation finished")
+        print("DataLoader initialisation finished")
         # Log PeerID to chain
         log_peerid_to_chain(self)
 
