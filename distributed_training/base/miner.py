@@ -129,8 +129,8 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
-                    if self.peer_id_logged_to_chain == False:
-                        log_peerid_to_chain(self)
+                    # if self.peer_id_logged_to_chain == False:
+                    #     log_peerid_to_chain(self)
 
                     if not self.config.neuron.dont_wandb_log:
                         if self.event != {}:
