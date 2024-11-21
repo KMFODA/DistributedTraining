@@ -478,7 +478,7 @@ class Miner(BaseMinerNeuron):
         """
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
-        window: int = int(self.subtensor.block / self.config.neuron.window_length)
+        #window: int = int(self.subtensor.block / self.config.neuron.window_length)
 
         self.global_progress.epoch = get_global_epoch(self)
         # TODO Skip this if already load_state_from_peers
