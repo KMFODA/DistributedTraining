@@ -204,7 +204,7 @@ class Miner(BaseMinerNeuron):
 
         # Init background threads
         self.stop_event = threading.Event()
-        self.start_dataloader_thread()
+        # self.start_dataloader_thread()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
@@ -500,14 +500,8 @@ class Miner(BaseMinerNeuron):
 
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
-        # Start dataloader if it hasn't been started
-        if not hasattr(self, 'dataloader_thread'):
-            self.start_dataloader_thread()
-            
-        # Wait for the dataloader thread to complete if it is running
-        while self.dataloader_thread.is_alive():
-            bt.logging.info("Waiting for DataLoader thread to complete")
-            time.sleep(1)
+        # Start dataloader
+        load_dataloader(self)
 
         # Training loop
         for index, batch in enumerate(self.dataloader):
@@ -561,9 +555,7 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-        
-        self.start_dataloader_thread()
-        
+                
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
 
