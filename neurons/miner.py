@@ -501,7 +501,7 @@ class Miner(BaseMinerNeuron):
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Start dataloader
-        load_dataloader(self)
+        self.load_dataloader()
 
         # Training loop
         for index, batch in enumerate(self.dataloader):
