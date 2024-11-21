@@ -163,7 +163,7 @@ class Miner(BaseMinerNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
-            min_group_size=5,
+            min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
