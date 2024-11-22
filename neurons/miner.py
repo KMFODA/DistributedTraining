@@ -247,18 +247,21 @@ class Miner(BaseMinerNeuron):
             self.global_progress.epoch = get_global_epoch(self)
             current_epoch = self.global_progress.epoch
             
-            # Skip if we've already loaded this epoch
-            if current_epoch == self.loading_manager.last_loaded_epoch:
+            if current_epoch is None:
                 time.sleep(30)
                 continue
-                
-            if (self.local_progress.epoch != current_epoch) or (
-                sum(
-                    np.isnan(
-                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
-                    )
-                ) > 1
-            ):
+            
+            if (current_epoch == self.loading_manager.last_loaded_epoch and 
+                current_epoch == self.local_progress.epoch):
+                time.sleep(30)
+                continue
+            
+            needs_update = (
+                self.local_progress.epoch != current_epoch or
+                sum(np.isnan([layer for layer in self.model.parameters()][-2][-10:].tolist())) > 1
+            )
+            
+            if needs_update:
                 bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
                 load_state_from_peer(self, epoch=current_epoch)
             else:
