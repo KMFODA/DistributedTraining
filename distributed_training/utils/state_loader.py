@@ -1,7 +1,7 @@
 import copy
 
 import bittensor as bt
-from bitsandbytes.optim import LAMB
+from bitsandbytes.optim import LAMB8bit
 from huggingface_hub import scan_cache_dir
 from transformers import AutoModelForCausalLM
 
@@ -49,7 +49,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB(
+        self.opt = LAMB8bit(
             optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
         )
         self.grad_averager.parameters = tuple(self.model.parameters())
