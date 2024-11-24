@@ -29,7 +29,7 @@ import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
-from bitsandbytes.optim import LAMB
+from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
 
 # Bittensor Miner Template:
@@ -133,7 +133,7 @@ class Miner(BaseMinerNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB(
+        self.opt = LAMB8bit(
             optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
         )
 
