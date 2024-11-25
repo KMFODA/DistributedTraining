@@ -263,7 +263,8 @@ class Miner(BaseMinerNeuron):
             
             if needs_update:
                 bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
-                load_state_from_peer(self, epoch=current_epoch)
+                if not self.loading_manager.is_loading:
+                    load_state_from_peer(self, epoch=current_epoch)
             else:
                 time.sleep(30)
 
@@ -323,6 +324,9 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
+        
+        # Set to avoid concurrent loading during allreduce
+        self.loading_manager.set_loading_state(True)
 
         # Update the gradient averaging kwargs
         if synapse.next_chunk_timeout is not None:
