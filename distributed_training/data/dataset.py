@@ -42,7 +42,7 @@ class DataLoader(IterableDataset):
         self.tokenizer = tokenizer
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
-            "dataset": "HuggingFaceFW/fineweb-edu",
+            "dataset": "HuggingFaceFW/fineweb",
             "config": "sample-350BT",
             "split": "train",
         }
