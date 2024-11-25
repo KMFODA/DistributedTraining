@@ -332,11 +332,17 @@ async def forward(self):
                                         f"Pushing New Model Weights To HF Hub for epoch {self.local_progress.epoch}"
                                     )
 
+                                    # Convert model to fp16
+                                    self.model.to(dtype=torch.float16)
+
                                     # Push model to hub
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
                                         commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
+
+                                    # Revert model back to fp32
+                                    self.model.to(dtype=torch.float32)
 
                                     # Save and upload optimizer state
                                     optimizer_saved = save_optimizer_state(
