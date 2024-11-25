@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import bittensor as bt
 import hivemind
 import torch
-from bitsandbytes.optim import LAMB
+from bitsandbytes.optim import LAMB8bit
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.p2p import PeerID
 from hivemind.proto import averaging_pb2
@@ -259,7 +259,6 @@ class ModelLoadingManager:
             if not is_loading and epoch is not None:
                 self._last_loaded_epoch = epoch
                 
-
 def load_state_from_peer(self, epoch=None, keep_recent=5):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.loading_manager.is_loading:
@@ -324,7 +323,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         )
                         
                         optimizer_checkpoint = torch.load(optimizer_state_path)
-                        self.opt = LAMB(
+                        self.opt = LAMB8bit(
                             optim_groups, 
                             lr=optimizer_checkpoint['learning_rate'], 
                             betas=(0.9, 0.95), 
@@ -336,7 +335,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                     except Exception as e:
                         bt.logging.warning(f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer.")
                         # Initialize fresh optimizer
-                        self.opt = LAMB(
+                        self.opt = LAMB8bit(
                             optim_groups, 
                             lr=self.learning_rate_maximum, 
                             betas=(0.9, 0.95), 

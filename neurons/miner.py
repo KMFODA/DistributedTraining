@@ -29,7 +29,6 @@ import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
-from bitsandbytes.optim import LAMB
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
@@ -55,14 +54,8 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
-    update_global_tracker_state,
 )
-# from distributed_training.utils.s3 import (
-#     get_indices_for_window,
-#     add_slice_for_window_to_buffer,
-#     upload_gradient_buffers_to_s3,
-# )
-from bitsandbytes.optim import LAMB
+from bitsandbytes.optim import LAMB8bit
 from distributed_training import __version__, __spec_version__
 from queue import Queue
 
@@ -149,7 +142,7 @@ class Miner(BaseMinerNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB(
+        self.opt = LAMB8bit(
             optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
         )
 
