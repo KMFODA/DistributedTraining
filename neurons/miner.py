@@ -297,9 +297,9 @@ class Miner(BaseMinerNeuron):
             rows=self.group,
         )
         # Log PeerID to chain
-        log_peerid_to_chain(self)
         bt.logging.info("DataLoader initialisation finished")
-        print("DataLoader initialisation finished")
+        bt.logging.info("Logging PeerID to chain")
+        log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {
