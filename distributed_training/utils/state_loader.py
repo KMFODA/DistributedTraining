@@ -22,8 +22,10 @@ from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import upload_file, hf_hub_download, scan_cache_dir
 from transformers import AutoModelForCausalLM
 
-from distributed_training.utils.progress_tracker import (LocalTrainingProgress,
-                                                         get_global_epoch)
+from distributed_training.utils.progress_tracker import (
+    LocalTrainingProgress,
+    get_global_epoch,
+)
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -237,41 +239,43 @@ def load_optimizer_state(
         nested_pack(flat_optimizer_state, structure=optimizer.state_dict())
     )
 
+
 class ModelLoadingManager:
     def __init__(self):
         self.loading_lock = threading.Lock()
         self._is_loading = False
         self._last_loaded_epoch = None
-        
+
     @property
     def is_loading(self):
         with self.loading_lock:
             return self._is_loading
-            
+
     @property
     def last_loaded_epoch(self):
         with self.loading_lock:
             return self._last_loaded_epoch
-            
+
     def set_loading_state(self, is_loading, epoch=None):
         with self.loading_lock:
             self._is_loading = is_loading
             if not is_loading and epoch is not None:
                 self._last_loaded_epoch = epoch
-                
+
+
 def load_state_from_peer(self, epoch=None, keep_recent=5):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.loading_manager.is_loading:
         bt.logging.info("Model loading already in progress, skipping...")
         return False
-        
+
     if epoch == self.loading_manager.last_loaded_epoch:
         bt.logging.info(f"Already loaded epoch {epoch}, skipping...")
         return False
 
     # Set loading state
     self.loading_manager.set_loading_state(True, epoch)
-    
+
     try:
         state_loaded = False
         if epoch == None:
@@ -285,12 +289,12 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
         bt.logging.info(current_model_weights_sample)
 
         bt.logging.info(f"Old Model Tag: {self.local_progress.epoch}")
-        
+
         if self.global_progress.epoch is not None:
             bt.logging.info(
                 f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
             )
-            
+
             # Load model state with max retries
             MAX_ATTEMPTS = 3
             attempt = 0
@@ -302,54 +306,68 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         trust_remote_code=True,
                     )
                     self.model.to(self.device)
-                    
+
                     # Initialize optimizer with model parameters
                     param_dict = {pn: p for pn, p in self.model.named_parameters()}
-                    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+                    param_dict = {
+                        pn: p for pn, p in param_dict.items() if p.requires_grad
+                    }
                     decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
                     nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
                     optim_groups = [
                         {"params": decay_params, "weight_decay": self.weight_decay},
                         {"params": nodecay_params, "weight_decay": 0.0},
                     ]
-                    
+
                     # Try to load optimizer state if it exists
                     try:
-                        optimizer_path = f"optimizer_state_{self.global_progress.epoch}.pt"
+                        optimizer_path = (
+                            f"optimizer_state_{self.global_progress.epoch}.pt"
+                        )
                         optimizer_state_path = hf_hub_download(
                             repo_id=self.config.neuron.model_name,
                             filename=optimizer_path,
-                            revision=str(self.global_progress.epoch)
+                            revision=str(self.global_progress.epoch),
                         )
-                        
+
                         optimizer_checkpoint = torch.load(optimizer_state_path)
                         self.opt = LAMB8bit(
-                            optim_groups, 
-                            lr=optimizer_checkpoint['learning_rate'], 
-                            betas=(0.9, 0.95), 
-                            eps=1e-8
+                            optim_groups,
+                            lr=optimizer_checkpoint["learning_rate"],
+                            betas=(0.9, 0.95),
+                            eps=1e-8,
                         )
-                        self.opt.load_state_dict(optimizer_checkpoint['optimizer_state_dict'])
-                        bt.logging.info(f"Successfully loaded optimizer state from epoch {epoch}")
-                        
+                        self.opt.load_state_dict(
+                            optimizer_checkpoint["optimizer_state_dict"]
+                        )
+                        bt.logging.info(
+                            f"Successfully loaded optimizer state from epoch {epoch}"
+                        )
+
                     except Exception as e:
-                        bt.logging.warning(f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer.")
+                        bt.logging.warning(
+                            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+                        )
                         # Initialize fresh optimizer
                         self.opt = LAMB8bit(
-                            optim_groups, 
-                            lr=self.learning_rate_maximum, 
-                            betas=(0.9, 0.95), 
-                            eps=1e-8
+                            optim_groups,
+                            lr=self.learning_rate_maximum,
+                            betas=(0.9, 0.95),
+                            eps=1e-8,
                         )
-                    
+
                     break  # Successfully loaded model and created optimizer
-                    
+
                 except Exception as e:
                     attempt += 1
                     if attempt == MAX_ATTEMPTS:
-                        raise Exception(f"Failed to load model after {MAX_ATTEMPTS} attempts: {str(e)}")
-                    bt.logging.warning(f"Failed to fetch data, retrying. Attempt {attempt}/{MAX_ATTEMPTS}")
-            
+                        raise Exception(
+                            f"Failed to load model after {MAX_ATTEMPTS} attempts: {str(e)}"
+                        )
+                    bt.logging.warning(
+                        f"Failed to fetch data, retrying. Attempt {attempt}/{MAX_ATTEMPTS}"
+                    )
+
             self.grad_averager.parameters = tuple(self.model.parameters())
             # Reset gradient buffers
             self.grad_averager.reset_accumulated_grads_()
@@ -373,18 +391,19 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
 
         else:
             bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
-            
+
         if state_loaded:
             self.loading_manager.set_loading_state(False, epoch)
         else:
             self.loading_manager.set_loading_state(False, None)
-            
+
         return state_loaded
-    
+
     except Exception as e:
         bt.logging.error(f"Error loading state: {str(e)}")
         self.loading_manager.set_loading_state(False, None)
         return False
+
 
 def cleanup_old_cache(self, keep_recent):
     """Helper method to clean up old cache files"""
@@ -404,37 +423,36 @@ def cleanup_old_cache(self, keep_recent):
                 None,
             )
             if current_index is not None:
-                for revision in revisions[
-                    max(current_index + 1, keep_recent) :
-                ]:
+                for revision in revisions[max(current_index + 1, keep_recent) :]:
                     cache_info.delete_revisions(revision.commit_hash).execute()
             break
-        
+
+
 def save_optimizer_state(self, epoch, batch_size, participating_peers, failed_peers):
     """Save optimizer state to a file and upload to HuggingFace Hub"""
     try:
         # Create a temporary file to save optimizer state
-        with tempfile.NamedTemporaryFile(suffix='.pt', delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp_file:
             optimizer_state = {
-                'optimizer_state_dict': self.opt.state_dict(),
-                'epoch': epoch,
-                'learning_rate': self.learning_rate_maximum
+                "optimizer_state_dict": self.opt.state_dict(),
+                "epoch": epoch,
+                "learning_rate": self.learning_rate_maximum,
             }
             torch.save(optimizer_state, tmp_file.name)
-            
+
             # Upload the optimizer state file
             optimizer_path = f"optimizer_state_{epoch}.pt"
             upload_file(
                 path_or_fileobj=tmp_file.name,
                 path_in_repo=optimizer_path,
                 repo_id=self.config.neuron.model_name,
-                commit_message=f"Optimizer state for epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+                commit_message=f"Optimizer state for epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}.",
             )
-        
+
         # Clean up temporary file
         os.unlink(tmp_file.name)
         return True
-    
+
     except Exception as e:
         bt.logging.error(f"Failed to save optimizer state: {str(e)}")
         return False

@@ -49,7 +49,10 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     update_global_tracker_state,
 )
-from distributed_training.utils.state_loader import load_state_from_peer, ModelLoadingManager
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    ModelLoadingManager,
+)
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
     map_uid_to_peerid_background_task,
@@ -203,7 +206,7 @@ class Validator(BaseValidatorNeuron):
 
         # Needed to ensure no concurrency
         self.loading_manager = ModelLoadingManager()
-        
+
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
@@ -230,7 +233,6 @@ class Validator(BaseValidatorNeuron):
 
         # Update PeerID list
         update_run_peerid_list(self)
-        
 
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}

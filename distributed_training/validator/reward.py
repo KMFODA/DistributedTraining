@@ -323,7 +323,6 @@ async def get_rewards(
 
     # Score a non-empty Train response
     else:
-
         scores = torch.FloatTensor(
             [
                 (
@@ -398,11 +397,11 @@ async def get_rewards(
         )
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
-        if hasattr(self.model.config, 'all_reduce_scores'):
+        if hasattr(self.model.config, "all_reduce_scores"):
             all_reduce_scores = torch.FloatTensor(
                 [
                     (
-                        1 
+                        1
                         if (self.model.config.all_reduce_scores[str(uid)] == "SUCCESS")
                         else 0
                     )
@@ -417,7 +416,7 @@ async def get_rewards(
                     for uid, all_reduce_score in zip(uids, all_reduce_scores)
                 }
             )
-            
+
             # Final balanced score calculation with all_reduce
             scores = blacklist_scores * (
                 (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)

@@ -30,7 +30,10 @@ from huggingface_hub.utils import HfHubHTTPError
 import distributed_training
 from distributed_training.utils.misc import get_bandwidth
 
-from distributed_training.utils.state_loader import load_state_from_peer, save_optimizer_state
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    save_optimizer_state,
+)
 from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
@@ -88,7 +91,7 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids)+1 < self.config.neuron.min_group_size:
+            while len(self.miner_uids) + 1 < self.config.neuron.min_group_size:
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size-len(self.miner_uids)} more UIDs."
                 )
@@ -308,23 +311,27 @@ async def forward(self):
 
                         # Push to HF Hub if the current validator is the first to update
                         refs = list_repo_refs(
-                            self.config.neuron.model_name, 
-                            repo_type="model"
+                            self.config.neuron.model_name, repo_type="model"
                         )
                         current_tag = (
                             max([int(tag.name) for tag in refs.tags])
                             if refs.tags
                             else None
                         )
-                        
+
                         bt.logging.info(f"Old Model Tag {current_tag}")
-                        
-                        if current_tag is None or self.local_progress.epoch > current_tag:
+
+                        if (
+                            current_tag is None
+                            or self.local_progress.epoch > current_tag
+                        ):
                             attempt = 0
                             while attempt < self.model_upload_retry_limit:
                                 try:
-                                    bt.logging.info(f"Pushing New Model Weights To HF Hub for epoch {self.local_progress.epoch}")
-                                    
+                                    bt.logging.info(
+                                        f"Pushing New Model Weights To HF Hub for epoch {self.local_progress.epoch}"
+                                    )
+
                                     # Push model to hub
                                     self.model.push_to_hub(
                                         self.config.neuron.model_name,
@@ -337,19 +344,26 @@ async def forward(self):
                                         epoch=self.local_progress.epoch,
                                         batch_size=batch_size,
                                         participating_peers=participating_peers,
-                                        failed_peers=failed_peers
+                                        failed_peers=failed_peers,
                                     )
-                                    
+
                                     if not optimizer_saved:
-                                        bt.logging.warning("Failed to save optimizer state, but model was uploaded successfully.")
+                                        bt.logging.warning(
+                                            "Failed to save optimizer state, but model was uploaded successfully."
+                                        )
 
                                     # Log batch size to wandb
                                     self.event.update(
                                         {
                                             "batch_size": batch_size,
                                             "failed_peers_count": len(failed_peers),
-                                            "participating_peers_count": len(participating_peers),
-                                            "succesfull_peers_count": len(participating_peers) - len(failed_peers),
+                                            "participating_peers_count": len(
+                                                participating_peers
+                                            ),
+                                            "succesfull_peers_count": len(
+                                                participating_peers
+                                            )
+                                            - len(failed_peers),
                                         }
                                     )
 
@@ -359,32 +373,50 @@ async def forward(self):
                                         tag=str(self.local_progress.epoch),
                                         tag_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
                                     )
-                                    
+
                                     # Verify the upload
-                                    updated_refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-                                    new_tag = max([int(tag.name) for tag in updated_refs.tags])
-                                    bt.logging.info(f"Successfully pushed new model with tag {new_tag}")
+                                    updated_refs = list_repo_refs(
+                                        self.config.neuron.model_name, repo_type="model"
+                                    )
+                                    new_tag = max(
+                                        [int(tag.name) for tag in updated_refs.tags]
+                                    )
+                                    bt.logging.info(
+                                        f"Successfully pushed new model with tag {new_tag}"
+                                    )
                                     break
 
                                 except HfHubHTTPError as e:
                                     attempt += 1
                                     bt.logging.info(f"{e}. Loading State from Peer.")
-                                    state_loaded = load_state_from_peer(self, epoch=self.global_progress.epoch)
+                                    state_loaded = load_state_from_peer(
+                                        self, epoch=self.global_progress.epoch
+                                    )
                                     if state_loaded:
                                         break
                                 except Exception as e:
                                     attempt += 1
-                                    bt.logging.warning(f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}.")
+                                    bt.logging.warning(
+                                        f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
+                                    )
                                     if attempt < self.model_upload_retry_limit:
                                         time.sleep(self.model_upload_retry_delay)
                                     else:
-                                        bt.logging.error("Maximum Retry Limit Reached. Unable To Upload Model To HF Hub.")
+                                        bt.logging.error(
+                                            "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
+                                        )
                                         raise
                         else:
-                            bt.logging.info(f"Skipping upload: current epoch {self.local_progress.epoch} not greater than remote epoch {current_tag}")
+                            bt.logging.info(
+                                f"Skipping upload: current epoch {self.local_progress.epoch} not greater than remote epoch {current_tag}"
+                            )
                             if current_tag > self.local_progress.epoch:
-                                bt.logging.info(f"Local epoch behind remote, syncing to remote epoch {current_tag}")
-                                state_loaded = load_state_from_peer(self, epoch=current_tag)
+                                bt.logging.info(
+                                    f"Local epoch behind remote, syncing to remote epoch {current_tag}"
+                                )
+                                state_loaded = load_state_from_peer(
+                                    self, epoch=current_tag
+                                )
 
                 else:
                     bt.logging.info("Averaging Failed. Loading Latest Model State.")

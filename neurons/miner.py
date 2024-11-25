@@ -44,12 +44,18 @@ from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
 from distributed_training.utils.state_loader import (
-    load_state_from_peer, ModelLoadingManager
+    load_state_from_peer,
+    ModelLoadingManager,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import init_dht, load_wandb, setup_logging, DataLoaderThread
+from distributed_training.utils.misc import (
+    init_dht,
+    load_wandb,
+    setup_logging,
+    DataLoaderThread,
+)
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
@@ -67,6 +73,7 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+
 
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
@@ -192,8 +199,8 @@ class Miner(BaseMinerNeuron):
         self.event = {}
 
         # Init gradient queue
-        #self.config.neuron.window_length = 2  # TODO: set this in config.py
-        #self.grad_buff_queue = Queue(maxsize=0)
+        # self.config.neuron.window_length = 2  # TODO: set this in config.py
+        # self.grad_buff_queue = Queue(maxsize=0)
 
         # Init background threads
         self.stop_event = threading.Event()
@@ -212,23 +219,25 @@ class Miner(BaseMinerNeuron):
         # )
         # self.upload_gradient_buffers_to_s3_thread.start()
         # TODO: Add AWS credentials setup instructions in README.md
+
     # def upload_gradient_buffers_to_s3(self, bucket: str, wallet: "bt.wallet", key: str):
     #     _ = asyncio.run(
     #         upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
     #     )
-    
+
     def start_dataloader_thread(self):
         """Start a new dataloader thread if the previous one is finished"""
-        if hasattr(self, 'dataloader_thread') and self.dataloader_thread.is_alive():
+        if hasattr(self, "dataloader_thread") and self.dataloader_thread.is_alive():
             self.dataloader_thread.join()
-        
-        self.dataloader_thread = threading.Thread(target=self.load_dataloader, daemon=True)
+
+        self.dataloader_thread = threading.Thread(
+            target=self.load_dataloader, daemon=True
+        )
         self.dataloader_thread.start()
 
     def is_dataloader_thread_alive(self):
         """Check if dataloader thread is alive"""
-        return hasattr(self, 'dataloader_thread') and self.dataloader_thread.is_alive()
-
+        return hasattr(self, "dataloader_thread") and self.dataloader_thread.is_alive()
 
     def load_latest_model(self):
         while not self.stop_event.is_set():
@@ -236,26 +245,35 @@ class Miner(BaseMinerNeuron):
             if self.loading_manager.is_loading:
                 time.sleep(5)  # Short sleep before checking again
                 continue
-                
+
             self.global_progress.epoch = get_global_epoch(self)
             current_epoch = self.global_progress.epoch
-            
+
             if current_epoch is None:
                 time.sleep(30)
                 continue
-            
-            if (current_epoch == self.loading_manager.last_loaded_epoch and 
-                current_epoch == self.local_progress.epoch):
+
+            if (
+                current_epoch == self.loading_manager.last_loaded_epoch
+                and current_epoch == self.local_progress.epoch
+            ):
                 time.sleep(30)
                 continue
-            
+
             needs_update = (
-                self.local_progress.epoch != current_epoch or
-                sum(np.isnan([layer for layer in self.model.parameters()][-2][-10:].tolist())) > 1
+                self.local_progress.epoch != current_epoch
+                or sum(
+                    np.isnan(
+                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
+                    )
+                )
+                > 1
             )
-            
+
             if needs_update:
-                bt.logging.info("Local Epoch Behind Global Epoch. Loading Latest Model State.")
+                bt.logging.info(
+                    "Local Epoch Behind Global Epoch. Loading Latest Model State."
+                )
                 if not self.loading_manager.is_loading:
                     load_state_from_peer(self, epoch=current_epoch)
             else:
@@ -317,7 +335,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
-        
+
         # Set to avoid concurrent loading during allreduce
         self.loading_manager.set_loading_state(True)
 
@@ -478,7 +496,7 @@ class Miner(BaseMinerNeuron):
         """
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
-        #window: int = int(self.subtensor.block / self.config.neuron.window_length)
+        # window: int = int(self.subtensor.block / self.config.neuron.window_length)
 
         self.global_progress.epoch = get_global_epoch(self)
         # TODO Skip this if already load_state_from_peers
@@ -557,7 +575,7 @@ class Miner(BaseMinerNeuron):
             )
             synapse.model_name = self.model.name_or_path
             return synapse
-                
+
         # Store the list of gradient sums and projected gradients in the synapse
         synapse.gradient_sums = gradient_sum_list
 
