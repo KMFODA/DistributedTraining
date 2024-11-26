@@ -63,6 +63,8 @@ from distributed_training.utils.progress_tracker import (
 from bitsandbytes.optim import LAMB8bit
 from distributed_training import __version__, __spec_version__
 
+from huggingface_hub import hf_hub_download
+
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -109,6 +111,7 @@ class Miner(BaseMinerNeuron):
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
+        self.local_progress.epoch = self.global_progress.epoch
 
         # Init Device & Model
         self.device = self.config.neuron.device
@@ -147,9 +150,39 @@ class Miner(BaseMinerNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB8bit(
-            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
-        )
+        # Try to load optimizer state if it exists
+        try:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=self.config.neuron.model_name,
+                    filename="optimizer.pt",
+                    revision=str(self.global_progress.epoch),
+                ),
+                weights_only=True,
+            )
+
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=optimizer_state["learning_rate"],
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
+            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+            bt.logging.info(
+                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
+            )
+
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
+            # Initialize fresh optimizer
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=self.learning_rate_maximum,
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
 
         # Init Gradient Averager
         self.all_reduce_timeout = 360
@@ -188,7 +221,7 @@ class Miner(BaseMinerNeuron):
 
         # Init model_loading_manager
         self.model_loading_manager = ModelLoadingManager()
-
+        breakpoint()
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)

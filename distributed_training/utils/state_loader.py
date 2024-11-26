@@ -112,7 +112,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             while attempt < MAX_ATTEMPTS:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
-                        f"{self.config.neuron.model_name}/model_opt",
+                        f"{self.config.neuron.model_name}",
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
                         torch_dtype=torch.float32,
@@ -136,9 +136,10 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         optimizer_state = torch.load(
                             hf_hub_download(
                                 repo_id=self.config.neuron.model_name,
-                                filename="model_opt/optimizer.pt",
-                                revision=str(epoch),
-                            )
+                                filename="optimizer.pt",
+                                revision=str(self.global_progress.epoch),
+                            ),
+                            weights_only=True,
                         )
 
                         self.opt = LAMB8bit(
@@ -151,7 +152,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                             optimizer_state["optimizer_state_dict"]
                         )
                         bt.logging.info(
-                            f"Successfully loaded optimizer state for epoch {epoch}"
+                            f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
                         )
 
                     except Exception as e:
@@ -175,7 +176,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                             f"Failed to load model after {MAX_ATTEMPTS} attempts: {str(e)}"
                         )
                     bt.logging.warning(
-                        f"Failed to fetch data, retrying. Attempt {attempt}/{MAX_ATTEMPTS}"
+                        f"Failed to load model, retrying. Attempt {attempt}/{MAX_ATTEMPTS}"
                     )
 
             self.grad_averager.parameters = tuple(self.model.parameters())
