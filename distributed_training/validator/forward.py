@@ -53,7 +53,9 @@ async def forward(self):
 
     update_global_tracker_state(self)
     if self.local_progress.epoch != self.global_progress.epoch:
-        bt.logging.info(f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State.")
+        bt.logging.info(
+            f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+        )
         load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     # Evaluate wether to run an AllReduce or a Train synapse based
@@ -308,12 +310,18 @@ async def forward(self):
                         # Update local progress
                         self.local_progress.epoch += 1
                         self.local_progress.samples_accumulated = 0
-                        
+
                         try:
-                            contents = list_repo_files(self.config.neuron.model_name, repo_type="model")
-                            has_model_opt = any(file.startswith('model_opt/') for file in contents)
+                            contents = list_repo_files(
+                                self.config.neuron.model_name, repo_type="model"
+                            )
+                            has_model_opt = any(
+                                file.startswith("model_opt/") for file in contents
+                            )
                         except Exception as e:
-                            bt.logging.warning(f"Error checking repository contents: {str(e)}")
+                            bt.logging.warning(
+                                f"Error checking repository contents: {str(e)}"
+                            )
                             has_model_opt = False
 
                         if has_model_opt:
@@ -348,14 +356,14 @@ async def forward(self):
                                         epoch=self.local_progress.epoch,
                                         batch_size=batch_size,
                                         participating_peers=participating_peers,
-                                        failed_peers=failed_peers
+                                        failed_peers=failed_peers,
                                     )
 
                                     if upload_success:
-
                                         # Verify the upload
                                         updated_refs = list_repo_refs(
-                                            self.config.neuron.model_name, repo_type="model"
+                                            self.config.neuron.model_name,
+                                            repo_type="model",
                                         )
                                         new_tag = max(
                                             [int(tag.name) for tag in updated_refs.tags]

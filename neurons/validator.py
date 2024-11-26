@@ -204,8 +204,8 @@ class Validator(BaseValidatorNeuron):
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
-        # Needed to ensure no concurrency
-        self.loading_manager = ModelLoadingManager()
+        # Init model_loading_manager
+        self.model_loading_manager = ModelLoadingManager()
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:

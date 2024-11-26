@@ -25,11 +25,6 @@ class LocalTrainingProgress(BaseModel):
 
 def get_global_epoch(self):
     try:
-        contents = list_repo_files(self.config.neuron.model_name, repo_type="model")
-        if not any(file.startswith('model_opt/') for file in contents):
-            bt.logging.warning("No model found in model_opt/ directory")
-            return None
-            
         refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
         global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         return global_epoch

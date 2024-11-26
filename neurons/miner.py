@@ -126,8 +126,7 @@ class Miner(BaseMinerNeuron):
             )
             if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, 
-                trust_remote_code=True
+                self.config.neuron.model_name, trust_remote_code=True
             )
         )
 
@@ -189,8 +188,8 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
-        # Needed to avoid concurrent loading
-        self.loading_manager = ModelLoadingManager()
+        # Init model_loading_manager
+        self.model_loading_manager = ModelLoadingManager()
 
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
@@ -208,7 +207,6 @@ class Miner(BaseMinerNeuron):
         self.update_model_thread.start()
 
         # Log PeerID to chain
-        bt.logging.info("DataLoader initialisation finished")
         bt.logging.info("Logging PeerID to chain")
         log_peerid_to_chain(self)
 
@@ -229,7 +227,7 @@ class Miner(BaseMinerNeuron):
     def load_latest_model(self):
         while not self.stop_event.is_set():
             # Skip checking if we're currently loading
-            if self.loading_manager.is_loading:
+            if self.model_loading_manager.is_loading:
                 time.sleep(5)  # Short sleep before checking again
                 continue
 
@@ -241,7 +239,7 @@ class Miner(BaseMinerNeuron):
                 continue
 
             if (
-                current_epoch == self.loading_manager.last_loaded_epoch
+                current_epoch == self.model_loading_manager.last_loaded_epoch
                 and current_epoch == self.local_progress.epoch
             ):
                 time.sleep(30)
@@ -261,7 +259,7 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(
                     f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {current_epoch}. Loading Latest Model State."
                 )
-                if not self.loading_manager.is_loading:
+                if not self.model_loading_manager.is_loading:
                     load_state_from_peer(self, epoch=current_epoch)
             else:
                 time.sleep(30)
