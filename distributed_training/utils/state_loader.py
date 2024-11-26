@@ -20,7 +20,8 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import upload_file, hf_hub_download, scan_cache_dir, create_tag, upload_folder
+from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder, HfApi
+
 
 
 from transformers import AutoModelForCausalLM
@@ -304,7 +305,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             while attempt < MAX_ATTEMPTS:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
-                        self.config.neuron.model_name,
+                        f"{self.config.neuron.model_name}/model_opt/model", 
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
                         torch_dtype=torch.float32
@@ -328,7 +329,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         optimizer_state = torch.load(
                             hf_hub_download(
                                 repo_id=self.config.neuron.model_name,
-                                filename="optimizer.pt",
+                                filename="model_opt/optimizer.pt",
                                 revision=str(epoch)
                             )
                         )
@@ -447,17 +448,23 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 }
                 torch.save(optimizer_state, os.path.join(tmp_folder, "optimizer.pt"))
                 
+                # Initialize API
+                api = HfApi()
+                
+                bt.logging.info(f"Uploading to repo: {self.config.neuron.model_name}")
+                
                 # Upload everything in one go
                 commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
-                upload_folder(
+                api.upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.model_name,
                     repo_type="model",
+                    path_in_repo="model_opt",
                     commit_message=commit_message
                 )
                 
                 # Create a tag for this version
-                create_tag(
+                api.create_tag(
                     self.config.neuron.model_name,
                     repo_type="model",
                     tag=str(epoch),
