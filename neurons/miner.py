@@ -54,7 +54,6 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
-    DataLoaderThread,
 )
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
@@ -63,7 +62,6 @@ from distributed_training.utils.progress_tracker import (
 )
 from bitsandbytes.optim import LAMB8bit
 from distributed_training import __version__, __spec_version__
-from queue import Queue
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -232,21 +230,21 @@ class Miner(BaseMinerNeuron):
                 continue
 
             self.global_progress.epoch = get_global_epoch(self)
-            current_epoch = self.global_progress.epoch
 
-            if current_epoch is None:
+            if self.global_progress.epoch is None:
                 time.sleep(30)
                 continue
 
             if (
-                current_epoch == self.model_loading_manager.last_loaded_epoch
-                and current_epoch == self.local_progress.epoch
+                self.global_progress.epoch
+                == self.model_loading_manager.last_loaded_epoch
+                and self.global_progress.epoch == self.local_progress.epoch
             ):
                 time.sleep(30)
                 continue
 
             needs_update = (
-                self.local_progress.epoch != current_epoch
+                self.local_progress.epoch != self.global_progress.epoch
                 or sum(
                     np.isnan(
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
@@ -257,10 +255,10 @@ class Miner(BaseMinerNeuron):
 
             if needs_update:
                 bt.logging.info(
-                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {current_epoch}. Loading Latest Model State."
+                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                 )
                 if not self.model_loading_manager.is_loading:
-                    load_state_from_peer(self, epoch=current_epoch)
+                    load_state_from_peer(self, epoch=self.global_progress.epoch)
             else:
                 time.sleep(30)
 
@@ -318,7 +316,7 @@ class Miner(BaseMinerNeuron):
         failed_gradient_all_reduce = False
 
         # Set to avoid concurrent loading during allreduce
-        self.loading_manager.set_loading_state(True)
+        self.model_loading_manager.set_loading_state(True)
 
         # Update the gradient averaging kwargs
         if synapse.next_chunk_timeout is not None:
