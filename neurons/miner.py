@@ -259,7 +259,7 @@ class Miner(BaseMinerNeuron):
 
             if needs_update:
                 bt.logging.info(
-                    "Local Epoch Behind Global Epoch. Loading Latest Model State."
+                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {current_epoch}. Loading Latest Model State."
                 )
                 if not self.loading_manager.is_loading:
                     load_state_from_peer(self, epoch=current_epoch)
@@ -491,7 +491,7 @@ class Miner(BaseMinerNeuron):
             > 1
         ):
             bt.logging.info(
-                "Local Epoch Behind Global Epoch. Loading Latest Model State."
+                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 

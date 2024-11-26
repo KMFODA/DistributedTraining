@@ -90,7 +90,7 @@ def update_global_tracker_state(self):
                 continue
 
         # Update global epoch
-        self.global_progress.epoch = global_epoch
+        self.global_progress.epoch = global_epoch if global_epoch is not None else 0
 
         # Add local samples
         if self.global_progress.epoch == self.local_progress.epoch:
