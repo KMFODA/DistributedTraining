@@ -121,7 +121,7 @@ class Miner(BaseMinerNeuron):
         self.model = (
             AutoModelForCausalLM.from_pretrained(
                 self.config.neuron.model_name,
-                revision=str(1),
+                revision=str(self.global_progress.epoch),
                 trust_remote_code=True,
             )
             if self.global_progress.epoch
@@ -198,32 +198,18 @@ class Miner(BaseMinerNeuron):
         # Init Tracking event
         self.event = {}
 
-        # Init gradient queue
-        # self.config.neuron.window_length = 2  # TODO: set this in config.py
-        # self.grad_buff_queue = Queue(maxsize=0)
-
         # Init background threads
         self.stop_event = threading.Event()
-        # self.start_dataloader_thread()
 
         self.update_model_thread = threading.Thread(
             target=self.load_latest_model, daemon=True
         )
         self.update_model_thread.start()
 
-        # Keep for later
-        # self.upload_gradient_buffers_to_s3_thread = threading.Thread(
-        #     target=self.upload_gradient_buffers_to_s3,
-        #     args=("distributed-training-second", self.wallet, "gradient"),
-        #     daemon=True,
-        # )
-        # self.upload_gradient_buffers_to_s3_thread.start()
-        # TODO: Add AWS credentials setup instructions in README.md
-
-    # def upload_gradient_buffers_to_s3(self, bucket: str, wallet: "bt.wallet", key: str):
-    #     _ = asyncio.run(
-    #         upload_gradient_buffers_to_s3(self, bucket=bucket, wallet=wallet, key=key)
-    #     )
+        # Log PeerID to chain
+        bt.logging.info("DataLoader initialisation finished")
+        bt.logging.info("Logging PeerID to chain")
+        log_peerid_to_chain(self)
 
     def start_dataloader_thread(self):
         """Start a new dataloader thread if the previous one is finished"""
@@ -307,10 +293,6 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=self.group,
         )
-        # Log PeerID to chain
-        bt.logging.info("DataLoader initialisation finished")
-        bt.logging.info("Logging PeerID to chain")
-        log_peerid_to_chain(self)
 
     def get_miner_info(self):
         return {
@@ -496,7 +478,6 @@ class Miner(BaseMinerNeuron):
         """
         timeout: float = synapse.timeout
         start_time: float = time.perf_counter()
-        # window: int = int(self.subtensor.block / self.config.neuron.window_length)
 
         self.global_progress.epoch = get_global_epoch(self)
         # TODO Skip this if already load_state_from_peers
@@ -512,13 +493,6 @@ class Miner(BaseMinerNeuron):
                 "Local Epoch Behind Global Epoch. Loading Latest Model State."
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
-
-        synapse.batch_size = self.config.neuron.local_batch_size_train
-
-        total_loss = 0
-        gradient_sum_list = []
-
-        target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Start dataloader
         search_start = random.choice(
@@ -546,6 +520,13 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=self.group,
         )
+
+        synapse.batch_size = self.config.neuron.local_batch_size_train
+
+        total_loss = 0
+        gradient_sum_list = []
+
+        target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Training loop
         for index, batch in enumerate(self.dataloader):
@@ -580,18 +561,6 @@ class Miner(BaseMinerNeuron):
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
-
-            # Add gradient to buffer
-            # await add_slice_for_window_to_buffer(
-            #     self,
-            #     dataset_index=index,
-            #     model=self.model,
-            #     window=window,
-            #     seed=window,
-            #     compression=100,
-            #     key="gradient",
-            # )
-            # bt.logging.info("Added gradient to buffer")
 
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
