@@ -20,7 +20,7 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder, HfApi
+from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
 
 
@@ -448,14 +448,11 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 }
                 torch.save(optimizer_state, os.path.join(tmp_folder, "optimizer.pt"))
                 
-                # Initialize API
-                api = HfApi()
-                
                 bt.logging.info(f"Uploading to repo: {self.config.neuron.model_name}")
                 
                 # Upload everything in one go
                 commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
-                api.upload_folder(
+                upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.model_name,
                     repo_type="model",
@@ -464,7 +461,7 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 )
                 
                 # Create a tag for this version
-                api.create_tag(
+                create_tag(
                     self.config.neuron.model_name,
                     repo_type="model",
                     tag=str(epoch),

@@ -126,7 +126,8 @@ class Miner(BaseMinerNeuron):
             )
             if self.global_progress.epoch
             else AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, trust_remote_code=True
+                self.config.neuron.model_name, 
+                trust_remote_code=True
             )
         )
 
