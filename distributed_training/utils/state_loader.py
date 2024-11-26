@@ -248,9 +248,8 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 bt.logging.info(
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
-
                 # Save model in fp16 for efficiency
-                self.model.to(dtype=torch.float16)
+                # self.model.to(dtype=torch.float16)
                 self.model.save_pretrained(tmp_folder)
                 self.model.to(dtype=torch.float32)
 

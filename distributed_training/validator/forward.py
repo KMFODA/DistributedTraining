@@ -311,38 +311,9 @@ async def forward(self):
                         self.local_progress.epoch += 1
                         self.local_progress.samples_accumulated = 0
 
-                        try:
-                            contents = list_repo_files(
-                                self.config.neuron.model_name, repo_type="model"
-                            )
-                            has_model_opt = any(
-                                file.startswith("model_opt/") for file in contents
-                            )
-                        except Exception as e:
-                            bt.logging.warning(
-                                f"Error checking repository contents: {str(e)}"
-                            )
-                            has_model_opt = False
+                        bt.logging.info(f"Old Model Tag {self.local_progress.epoch}")
 
-                        if has_model_opt:
-                            # Push to HF Hub if the current validator is the first to update
-                            refs = list_repo_refs(
-                                self.config.neuron.model_name, repo_type="model"
-                            )
-                            current_tag = (
-                                max([int(tag.name) for tag in refs.tags])
-                                if refs.tags
-                                else None
-                            )
-                        else:
-                            current_tag = None
-
-                        bt.logging.info(f"Old Model Tag {current_tag}")
-
-                        if (
-                            current_tag is None
-                            or self.local_progress.epoch > current_tag
-                        ):
+                        if self.local_progress.epoch > self.global_progress.epoch:
                             attempt = 0
                             while attempt < self.model_upload_retry_limit:
                                 try:
@@ -395,14 +366,14 @@ async def forward(self):
                                         raise
                         else:
                             bt.logging.info(
-                                f"Skipping upload: current epoch {self.local_progress.epoch} not greater than remote epoch {current_tag}"
+                                f"Skipping upload: current epoch {self.local_progress.epoch} not greater than remote epoch {self.global_progress.epoch}"
                             )
-                            if current_tag > self.local_progress.epoch:
+                            if self.global_progress.epoch > self.local_progress.epoch:
                                 bt.logging.info(
-                                    f"Local epoch behind remote, syncing to remote epoch {current_tag}"
+                                    f"Local epoch behind remote, syncing to remote epoch {self.global_progress.epoch}"
                                 )
                                 state_loaded = load_state_from_peer(
-                                    self, epoch=current_tag
+                                    self, epoch=self.global_progress.epoch
                                 )
 
                 else:
