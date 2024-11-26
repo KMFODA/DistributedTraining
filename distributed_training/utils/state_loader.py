@@ -305,7 +305,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             while attempt < MAX_ATTEMPTS:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
-                        f"{self.config.neuron.model_name}/model_opt/model", 
+                        f"{self.config.neuron.model_name}/model_opt", 
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
                         torch_dtype=torch.float32
@@ -437,7 +437,7 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 
                 # Save model in fp16 for efficiency
                 self.model.to(dtype=torch.float16)
-                self.model.save_pretrained(os.path.join(tmp_folder, "model"))
+                self.model.save_pretrained(tmp_folder)
                 self.model.to(dtype=torch.float32)
                 
                 # Save optimizer state

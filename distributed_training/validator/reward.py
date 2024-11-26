@@ -247,8 +247,6 @@ async def get_rewards(
     uids: List[int],
     responses: list,
     all_reduce: bool,
-    failed_peers=None,
-    participating_peers=None,
 ) -> torch.FloatTensor:
     """
     Returns a tensor of rewards for the given query and responses.
