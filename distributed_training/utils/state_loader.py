@@ -1,6 +1,7 @@
 import os
 import re
 import copy
+import time
 import random
 import logging
 import tempfile
@@ -19,7 +20,9 @@ from hivemind.utils import MPFuture, get_logger, nested_pack
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 from hivemind.utils.timed_storage import ValueWithExpiration
-from huggingface_hub import upload_file, hf_hub_download, scan_cache_dir
+from huggingface_hub import upload_file, hf_hub_download, scan_cache_dir, create_tag, upload_folder
+
+
 from transformers import AutoModelForCausalLM
 
 from distributed_training.utils.progress_tracker import (
@@ -305,6 +308,8 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
                     )
+                    # Convert to back to fp32
+                    self.model.to(dtype=torch.float32)
                     self.model.to(self.device)
 
                     # Initialize optimizer with model parameters
@@ -321,28 +326,22 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
 
                     # Try to load optimizer state if it exists
                     try:
-                        optimizer_path = (
-                            f"optimizer_state_{self.global_progress.epoch}.pt"
+                        optimizer_state = torch.load(
+                            hf_hub_download(
+                                repo_id=self.config.neuron.model_name,
+                                filename="optimizer.pt",
+                                revision=str(epoch)
+                            )
                         )
-                        optimizer_state_path = hf_hub_download(
-                            repo_id=self.config.neuron.model_name,
-                            filename=optimizer_path,
-                            revision=str(self.global_progress.epoch),
-                        )
-
-                        optimizer_checkpoint = torch.load(optimizer_state_path)
+                        
                         self.opt = LAMB8bit(
                             optim_groups,
-                            lr=optimizer_checkpoint["learning_rate"],
+                            lr=optimizer_state["learning_rate"],
                             betas=(0.9, 0.95),
-                            eps=1e-8,
+                            eps=1e-8
                         )
-                        self.opt.load_state_dict(
-                            optimizer_checkpoint["optimizer_state_dict"]
-                        )
-                        bt.logging.info(
-                            f"Successfully loaded optimizer state from epoch {epoch}"
-                        )
+                        self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+                        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
 
                     except Exception as e:
                         bt.logging.warning(
@@ -428,31 +427,55 @@ def cleanup_old_cache(self, keep_recent):
             break
 
 
-def save_optimizer_state(self, epoch, batch_size, participating_peers, failed_peers):
-    """Save optimizer state to a file and upload to HuggingFace Hub"""
-    try:
-        # Create a temporary file to save optimizer state
-        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp_file:
-            optimizer_state = {
-                "optimizer_state_dict": self.opt.state_dict(),
-                "epoch": epoch,
-                "learning_rate": self.learning_rate_maximum,
-            }
-            torch.save(optimizer_state, tmp_file.name)
-
-            # Upload the optimizer state file
-            optimizer_path = f"optimizer_state_{epoch}.pt"
-            upload_file(
-                path_or_fileobj=tmp_file.name,
-                path_in_repo=optimizer_path,
-                repo_id=self.config.neuron.model_name,
-                commit_message=f"Optimizer state for epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}.",
+def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_peers):
+    """Unified function to save and upload both model and optimizer state"""
+    attempt = 0
+    while attempt < self.model_upload_retry_limit:
+        try:
+            with tempfile.TemporaryDirectory() as tmp_folder:
+                bt.logging.info(f"Preparing model and optimizer state for epoch {epoch}")
+                
+                # Save model in fp16 for efficiency
+                self.model.to(dtype=torch.float16)
+                self.model.save_pretrained(os.path.join(tmp_folder, "model"))
+                self.model.to(dtype=torch.float32)
+                
+                # Save optimizer state
+                optimizer_state = {
+                    "optimizer_state_dict": self.opt.state_dict(),
+                    "learning_rate": self.learning_rate_maximum,
+                    "epoch": epoch
+                }
+                torch.save(optimizer_state, os.path.join(tmp_folder, "optimizer.pt"))
+                
+                # Upload everything in one go
+                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+                upload_folder(
+                    folder_path=tmp_folder,
+                    repo_id=self.config.neuron.model_name,
+                    repo_type="model",
+                    commit_message=commit_message
+                )
+                
+                # Create a tag for this version
+                create_tag(
+                    self.config.neuron.model_name,
+                    repo_type="model",
+                    tag=str(epoch),
+                    tag_message=commit_message
+                )
+                
+                bt.logging.info(f"Successfully pushed new model and optimizer state with tag {epoch}")
+                return True
+                
+        except Exception as e:
+            attempt += 1
+            bt.logging.warning(
+                f"Failed to upload state to HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}. Error: {str(e)}"
             )
-
-        # Clean up temporary file
-        os.unlink(tmp_file.name)
-        return True
-
-    except Exception as e:
-        bt.logging.error(f"Failed to save optimizer state: {str(e)}")
-        return False
+            if attempt < self.model_upload_retry_limit:
+                time.sleep(self.model_upload_retry_delay)
+            else:
+                bt.logging.error("Maximum retry limit reached. Unable to upload state to HF Hub.")
+                raise
+    return False

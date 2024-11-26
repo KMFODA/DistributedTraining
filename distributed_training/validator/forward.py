@@ -24,7 +24,7 @@ import time
 import bittensor as bt
 import numpy as np
 import torch
-from huggingface_hub import create_tag, list_repo_refs
+from huggingface_hub import list_repo_refs
 from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
@@ -32,7 +32,7 @@ from distributed_training.utils.misc import get_bandwidth
 
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
-    save_optimizer_state,
+    save_and_upload_state,
 )
 from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.uids import get_random_uids
@@ -329,68 +329,31 @@ async def forward(self):
                             while attempt < self.model_upload_retry_limit:
                                 try:
                                     bt.logging.info(
-                                        f"Pushing New Model Weights To HF Hub for epoch {self.local_progress.epoch}"
+                                        f"Pushing new model and optimizer state to HF Hub for epoch {self.local_progress.epoch}"
                                     )
 
-                                    # Convert model to fp16
-                                    self.model.to(dtype=torch.float16)
-
-                                    # Push model to hub
-                                    self.model.push_to_hub(
-                                        self.config.neuron.model_name,
-                                        commit_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
-                                    )
-
-                                    # Revert model back to fp32
-                                    self.model.to(dtype=torch.float32)
-
-                                    # Save and upload optimizer state
-                                    optimizer_saved = save_optimizer_state(
+                                    # Save and upload both model and optimizer state
+                                    upload_success = save_and_upload_state(
                                         self,
                                         epoch=self.local_progress.epoch,
                                         batch_size=batch_size,
                                         participating_peers=participating_peers,
-                                        failed_peers=failed_peers,
+                                        failed_peers=failed_peers
                                     )
 
-                                    if not optimizer_saved:
-                                        bt.logging.warning(
-                                            "Failed to save optimizer state, but model was uploaded successfully."
+                                    if upload_success:
+
+                                        # Verify the upload
+                                        updated_refs = list_repo_refs(
+                                            self.config.neuron.model_name, repo_type="model"
                                         )
-
-                                    # Log batch size to wandb
-                                    self.event.update(
-                                        {
-                                            "batch_size": batch_size,
-                                            "failed_peers_count": len(failed_peers),
-                                            "participating_peers_count": len(
-                                                participating_peers
-                                            ),
-                                            "succesfull_peers_count": len(
-                                                participating_peers
-                                            )
-                                            - len(failed_peers),
-                                        }
-                                    )
-
-                                    create_tag(
-                                        self.config.neuron.model_name,
-                                        repo_type="model",
-                                        tag=str(self.local_progress.epoch),
-                                        tag_message=f"Epoch {self.local_progress.epoch}. Batch Size {self.event['batch_size']}. Peers {self.event['participating_peers_count']-self.event['failed_peers_count']}.",
-                                    )
-
-                                    # Verify the upload
-                                    updated_refs = list_repo_refs(
-                                        self.config.neuron.model_name, repo_type="model"
-                                    )
-                                    new_tag = max(
-                                        [int(tag.name) for tag in updated_refs.tags]
-                                    )
-                                    bt.logging.info(
-                                        f"Successfully pushed new model with tag {new_tag}"
-                                    )
-                                    break
+                                        new_tag = max(
+                                            [int(tag.name) for tag in updated_refs.tags]
+                                        )
+                                        bt.logging.info(
+                                            f"Successfully pushed new model with tag {new_tag}"
+                                        )
+                                        break
 
                                 except HfHubHTTPError as e:
                                     attempt += 1
