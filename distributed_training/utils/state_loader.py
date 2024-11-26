@@ -307,9 +307,8 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         self.config.neuron.model_name,
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
+                        torch_dtype=torch.float32
                     )
-                    # Convert to back to fp32
-                    self.model.to(dtype=torch.float32)
                     self.model.to(self.device)
 
                     # Initialize optimizer with model parameters
