@@ -221,7 +221,7 @@ class Miner(BaseMinerNeuron):
 
         # Init model_loading_manager
         self.model_loading_manager = ModelLoadingManager()
-        breakpoint()
+
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
