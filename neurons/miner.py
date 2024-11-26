@@ -521,7 +521,31 @@ class Miner(BaseMinerNeuron):
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Start dataloader
-        self.load_dataloader()
+        search_start = random.choice(
+            range(
+                len(self.dataset_indices)
+                - self.config.neuron.training_examples_per_miner
+                + 1
+            )
+        )
+        start = self.dataset_indices.index(
+            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+        )
+        self.group = [
+            i
+            for i in range(
+                start, start + self.config.neuron.training_examples_per_miner
+            )
+        ]
+
+        self.dataset_indices[self.group] = True
+
+        # Create Dataloader
+        self.dataloader = DataLoader(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            rows=self.group,
+        )
 
         # Training loop
         for index, batch in enumerate(self.dataloader):
