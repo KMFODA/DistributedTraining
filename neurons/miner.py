@@ -348,7 +348,7 @@ class Miner(BaseMinerNeuron):
         bt.logging.info("Received All Reduce Call")
         failed_gradient_all_reduce = False
 
-        # Set to avoid concurrent loading during allreduce
+        # Set to True to avoid state loading during allreduce
         self.model_loading_manager.set_loading_state(True)
 
         # Update the gradient averaging kwargs
@@ -383,7 +383,7 @@ class Miner(BaseMinerNeuron):
                 gather=self.local_progress.samples_accumulated,
             )
             start_time = time.perf_counter()
-
+            # asds
             while (gradient_averaging_step.done() is False) and (
                 (time.perf_counter() - start_time) <= synapse.timeout
             ):
@@ -439,6 +439,9 @@ class Miner(BaseMinerNeuron):
                     # Reset gradient buffers
                     self.grad_averager.reset_accumulated_grads_()
 
+                # Set back to false to allow state loading
+                self.model_loading_manager.set_loading_state(False)
+
                 bt.logging.info("Model Weights After Optimizer Step")
                 new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-2][-10:].tolist()
@@ -474,6 +477,8 @@ class Miner(BaseMinerNeuron):
             else:
                 bt.logging.info("Averaging Failed. Loading Latest Model State.")
                 failed_gradient_all_reduce = True
+                # Set back to false to allow state loading
+                self.model_loading_manager.set_loading_state(False)
                 load_state_from_peer(self)
 
         except Exception as e:
@@ -482,6 +487,8 @@ class Miner(BaseMinerNeuron):
             )
             failed_gradient_all_reduce = True
             self.global_progress.epoch = get_global_epoch(self)
+            # Set back to false to allow state loading
+            self.model_loading_manager.set_loading_state(False)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
 
@@ -510,7 +517,12 @@ class Miner(BaseMinerNeuron):
         start_time: float = time.perf_counter()
 
         self.global_progress.epoch = get_global_epoch(self)
-        # TODO Skip this if already load_state_from_peers
+
+        # Wait for model to load if it is currently loading
+        while self.model_loading_manager.is_loading:
+            time.sleep(1)
+
+        # Load the latest model if self.local_progress.epoch != self.global_progress.epoch
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
@@ -535,20 +547,20 @@ class Miner(BaseMinerNeuron):
         start = self.dataset_indices.index(
             bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
         )
-        self.group = [
+        group = [
             i
             for i in range(
                 start, start + self.config.neuron.training_examples_per_miner
             )
         ]
 
-        self.dataset_indices[self.group] = True
+        self.dataset_indices[group] = True
 
         # Create Dataloader
-        self.dataloader = DataLoader(
+        dataloader = DataLoader(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
-            rows=self.group,
+            rows=group,
         )
 
         synapse.batch_size = self.config.neuron.local_batch_size_train
@@ -559,7 +571,7 @@ class Miner(BaseMinerNeuron):
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Training loop
-        for index, batch in enumerate(self.dataloader):
+        for index, batch in enumerate(dataloader):
             # Extract inputs and labels
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
@@ -604,7 +616,7 @@ class Miner(BaseMinerNeuron):
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
-        synapse.dataset_indices = self.group
+        synapse.dataset_indices = group
 
         if not self.config.neuron.dont_wandb_log:
             self.event.update(
