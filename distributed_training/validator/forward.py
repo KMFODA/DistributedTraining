@@ -93,7 +93,7 @@ async def forward(self):
     if (self.uid == self.master_uid) or (all_reduce == False):
         if all_reduce:
             # Get active miners
-            while len(self.miner_uids) + 1 < self.config.neuron.min_group_size:
+            while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
                 bt.logging.info(
                     f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size-len(self.miner_uids)} more UIDs."
                 )

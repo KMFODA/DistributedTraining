@@ -77,11 +77,9 @@ def load_optimizer_state(
 def load_state_from_peer(self, epoch=None, keep_recent=5):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.model_loading_manager.is_loading:
-        bt.logging.info("Model loading already in progress, skipping...")
-        return False
-
-    if epoch == self.model_loading_manager.last_loaded_epoch:
-        bt.logging.info(f"Already loaded epoch {epoch}, skipping...")
+        bt.logging.info(
+            "Model loading already in progress. Skipping load_state_from_peer."
+        )
         return False
 
     # Set loading state
@@ -248,10 +246,10 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 bt.logging.info(
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
-                # Save model in fp16 for efficiency
+                # # Save model in fp16 for efficiency
                 # self.model.to(dtype=torch.float16)
                 self.model.save_pretrained(tmp_folder)
-                self.model.to(dtype=torch.float32)
+                # self.model.to(dtype=torch.float32)
 
                 # Save optimizer state
                 optimizer_state = {
