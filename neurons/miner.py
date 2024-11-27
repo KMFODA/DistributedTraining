@@ -277,7 +277,7 @@ class Miner(BaseMinerNeuron):
                 continue
 
             needs_update = (
-                self.local_progress.epoch != self.global_progress.epoch
+                self.local_progress.epoch < self.global_progress.epoch
                 or sum(
                     np.isnan(
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
@@ -346,6 +346,11 @@ class Miner(BaseMinerNeuron):
         self, synapse: distributed_training.protocol.AllReduce
     ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+
+        # Wait for model to load if it is currently loading
+        while self.model_loading_manager.is_loading:
+            time.sleep(1)
+
         failed_gradient_all_reduce = False
 
         # Set to True to avoid state loading during allreduce

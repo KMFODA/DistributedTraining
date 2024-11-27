@@ -415,9 +415,9 @@ async def forward(self):
 
     else:
         bt.logging.info(
-            f"Waiting {self.all_reduce_timeout + self.load_state_timeout} seconds whilst master UID completes all reduce."
+            f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
         )
-        time.sleep(self.all_reduce_timeout + self.load_state_timeout)
+        time.sleep(self.all_reduce_timeout + 30)
         self.miner_uids = []
         responses = [[]]
 
