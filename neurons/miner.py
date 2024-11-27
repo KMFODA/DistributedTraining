@@ -383,7 +383,7 @@ class Miner(BaseMinerNeuron):
                 gather=self.local_progress.samples_accumulated,
             )
             start_time = time.perf_counter()
-            # asds
+
             while (gradient_averaging_step.done() is False) and (
                 (time.perf_counter() - start_time) <= synapse.timeout
             ):

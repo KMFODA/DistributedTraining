@@ -163,7 +163,7 @@ class Validator(BaseValidatorNeuron):
         # Init All Reduce Variables
         self.train_timeout = 120
         self.all_reduce_timeout = 420
-        self.load_state_timeout = 120
+        self.load_state_timeout = 90
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
         self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)

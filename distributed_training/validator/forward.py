@@ -311,70 +311,60 @@ async def forward(self):
                         self.local_progress.epoch += 1
                         self.local_progress.samples_accumulated = 0
 
-                        bt.logging.info(f"Old Model Tag {self.local_progress.epoch}")
+                        bt.logging.info(f"Old Model Tag {self.global_progress.epoch}")
 
-                        if self.local_progress.epoch > self.global_progress.epoch:
-                            attempt = 0
-                            while attempt < self.model_upload_retry_limit:
-                                try:
-                                    bt.logging.info(
-                                        f"Pushing new model and optimizer state to HF Hub for epoch {self.local_progress.epoch}"
-                                    )
-
-                                    # Save and upload both model and optimizer state
-                                    upload_success = save_and_upload_state(
-                                        self,
-                                        epoch=self.local_progress.epoch,
-                                        batch_size=batch_size,
-                                        participating_peers=participating_peers,
-                                        failed_peers=failed_peers,
-                                    )
-
-                                    if upload_success:
-                                        # Verify the upload
-                                        updated_refs = list_repo_refs(
-                                            self.config.neuron.model_name,
-                                            repo_type="model",
-                                        )
-                                        new_tag = max(
-                                            [int(tag.name) for tag in updated_refs.tags]
-                                        )
-                                        bt.logging.info(
-                                            f"Successfully pushed new model with tag {new_tag}"
-                                        )
-                                        break
-
-                                except HfHubHTTPError as e:
-                                    attempt += 1
-                                    bt.logging.info(f"{e}. Loading State from Peer.")
-                                    state_loaded = load_state_from_peer(
-                                        self, epoch=self.global_progress.epoch
-                                    )
-                                    if state_loaded:
-                                        break
-                                except Exception as e:
-                                    attempt += 1
-                                    bt.logging.warning(
-                                        f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
-                                    )
-                                    if attempt < self.model_upload_retry_limit:
-                                        time.sleep(self.model_upload_retry_delay)
-                                    else:
-                                        bt.logging.error(
-                                            "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
-                                        )
-                                        raise
-                        else:
-                            bt.logging.info(
-                                f"Skipping upload: current epoch {self.local_progress.epoch} not greater than remote epoch {self.global_progress.epoch}"
-                            )
-                            if self.global_progress.epoch > self.local_progress.epoch:
+                        attempt = 0
+                        while attempt < self.model_upload_retry_limit:
+                            try:
                                 bt.logging.info(
-                                    f"Local epoch behind remote, syncing to remote epoch {self.global_progress.epoch}"
+                                    f"Pushing new model and optimizer state to HF Hub with tag {self.local_progress.epoch}"
                                 )
+
+                                # Save and upload both model and optimizer state
+                                upload_success = save_and_upload_state(
+                                    self,
+                                    epoch=self.local_progress.epoch,
+                                    batch_size=batch_size,
+                                    participating_peers=participating_peers,
+                                    failed_peers=failed_peers,
+                                )
+
+                                if upload_success:
+                                    # Verify the upload
+                                    updated_refs = list_repo_refs(
+                                        self.config.neuron.model_name,
+                                        repo_type="model",
+                                    )
+                                    new_tag = max(
+                                        [int(tag.name) for tag in updated_refs.tags]
+                                    )
+                                    bt.logging.info(
+                                        f"Successfully pushed new model with tag {new_tag}"
+                                    )
+                                    # Wait to allow out of sync miners to donwload new model state
+                                    time.sleep(self.load_state_timeout)
+                                    break
+
+                            except HfHubHTTPError as e:
+                                attempt += 1
+                                bt.logging.info(f"{e}. Loading State from Peer.")
                                 state_loaded = load_state_from_peer(
                                     self, epoch=self.global_progress.epoch
                                 )
+                                if state_loaded:
+                                    break
+                            except Exception as e:
+                                attempt += 1
+                                bt.logging.warning(
+                                    f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
+                                )
+                                if attempt < self.model_upload_retry_limit:
+                                    time.sleep(self.model_upload_retry_delay)
+                                else:
+                                    bt.logging.error(
+                                        "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
+                                    )
+                                    raise
 
                 else:
                     bt.logging.info("Averaging Failed. Loading Latest Model State.")
@@ -425,9 +415,9 @@ async def forward(self):
 
     else:
         bt.logging.info(
-            f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
+            f"Waiting {self.all_reduce_timeout + self.load_state_timeout} seconds whilst master UID completes all reduce."
         )
-        time.sleep(self.all_reduce_timeout + 30)
+        time.sleep(self.all_reduce_timeout + self.load_state_timeout)
         self.miner_uids = []
         responses = [[]]
 

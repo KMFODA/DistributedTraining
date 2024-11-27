@@ -370,6 +370,9 @@ async def get_rewards(
                 for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
+        gradient_scores = torch.nn.functional.normalize(
+            torch.tensor([gradient_scores.tolist()]).to(self.device)
+        )
 
         # Score miners based off the size of the data they have trained on this step
         steps_scores = torch.FloatTensor(
@@ -392,6 +395,9 @@ async def get_rewards(
                 f"rewards.steps.uid{uid}": steps_score
                 for uid, steps_score in zip(uids, steps_scores)
             }
+        )
+        steps_scores = torch.nn.functional.normalize(
+            torch.tensor([steps_scores.tolist()]).to(self.device)
         )
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
@@ -416,11 +422,15 @@ async def get_rewards(
             )
 
             # Final balanced score calculation with all_reduce
-            scores = blacklist_scores * (
-                (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
+            scores = (
+                blacklist_scores
+                * ((0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores))[
+                    0
+                ]
             )
+
         else:
             # Final balanced score calculation without all_reduce
-            scores = blacklist_scores * (gradient_scores * steps_scores)
+            scores = blacklist_scores * (gradient_scores * steps_scores)[0]
 
     return scores
