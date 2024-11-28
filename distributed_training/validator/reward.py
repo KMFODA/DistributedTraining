@@ -370,9 +370,6 @@ async def get_rewards(
                 for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
-        gradient_scores = torch.nn.functional.normalize(
-            torch.tensor([gradient_scores.tolist()]).to(self.device)
-        )
 
         # Score miners based off the size of the data they have trained on this step
         steps_scores = torch.FloatTensor(
@@ -396,22 +393,16 @@ async def get_rewards(
                 for uid, steps_score in zip(uids, steps_scores)
             }
         )
-        steps_scores = torch.nn.functional.normalize(
-            torch.tensor([steps_scores.tolist()]).to(self.device)
-        )
+        steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
         if hasattr(self.model.config, "all_reduce_scores"):
-            all_reduce_scores = torch.FloatTensor(
-                [
-                    (
-                        1
-                        if (self.model.config.all_reduce_scores[str(uid)] == "SUCCESS")
+            all_reduce_scores = torch.FloatTensor([
+                        1 if str(uid) in self.model.config.all_reduce_scores 
+                        and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
                         else 0
-                    )
                     for uid in uids.tolist()
-                ]
-            ).to(self.device)
+                ]).to(self.device)
             bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
 
             self.event.update(
@@ -424,13 +415,11 @@ async def get_rewards(
             # Final balanced score calculation with all_reduce
             scores = (
                 blacklist_scores
-                * ((0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores))[
-                    0
-                ]
+                * ((0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores))
             )
 
         else:
             # Final balanced score calculation without all_reduce
-            scores = blacklist_scores * (gradient_scores * steps_scores)[0]
+            scores = blacklist_scores * (gradient_scores * steps_scores)
 
     return scores
