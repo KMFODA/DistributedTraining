@@ -159,6 +159,7 @@ class Miner(BaseMinerNeuron):
                     revision=str(self.global_progress.epoch),
                 ),
                 weights_only=True,
+                map_location='cpu'
             )
 
             self.opt = LAMB8bit(

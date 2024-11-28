@@ -1,32 +1,21 @@
 import os
-import re
 import copy
 import time
-import random
 import logging
 import tempfile
 import threading
-from itertools import chain
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Dict, Sequence
 
 import bittensor as bt
-import hivemind
 import torch
 from bitsandbytes.optim import LAMB8bit
-from hivemind.compression import deserialize_torch_tensor
-from hivemind.p2p import PeerID
-from hivemind.proto import averaging_pb2
-from hivemind.utils import MPFuture, get_logger, nested_pack
-from hivemind.utils.asyncio import aiter_with_timeout
-from hivemind.utils.streaming import combine_from_streaming
-from hivemind.utils.timed_storage import ValueWithExpiration
+from hivemind.utils import get_logger, nested_pack
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
 
 from transformers import AutoModelForCausalLM
 
 from distributed_training.utils.progress_tracker import (
-    LocalTrainingProgress,
     get_global_epoch,
 )
 
@@ -107,14 +96,17 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             # Load model state with max retries
             MAX_ATTEMPTS = 3
             attempt = 0
+            torch.cuda.empty_cache()
+
             while attempt < MAX_ATTEMPTS:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
                         f"{self.config.neuron.model_name}",
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
-                        torch_dtype=torch.float32,
+                        torch_dtype=torch.float16,
                     )
+                    self.model.to(dtype=torch.float32)
                     self.model.to(self.device)
 
                     # Initialize optimizer with model parameters
@@ -138,6 +130,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                                 revision=str(self.global_progress.epoch),
                             ),
                             weights_only=True,
+                            map_location='cpu'
                         )
 
                         self.opt = LAMB8bit(
@@ -152,6 +145,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         bt.logging.info(
                             f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
                         )
+                        torch.cuda.empty_cache()
 
                     except Exception as e:
                         bt.logging.warning(
@@ -247,9 +241,8 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
                 # # Save model in fp16 for efficiency
-                # self.model.to(dtype=torch.float16)
+                self.model.to(dtype=torch.float16)
                 self.model.save_pretrained(tmp_folder)
-                # self.model.to(dtype=torch.float32)
 
                 # Save optimizer state
                 optimizer_state = {
