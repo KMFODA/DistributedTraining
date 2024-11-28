@@ -237,35 +237,6 @@ async def forward(self):
                         )
                         bt.logging.info(current_model_weights_sample)
 
-                        bt.logging.info("Model Gradients Before Clipping")
-                        # Copy gradients
-                        gradients = tuple(
-                            (
-                                param.grad.detach().cpu().clone()
-                                if param.grad is not None
-                                else torch.zeros_like(param)
-                            )
-                            for param in self.model.parameters()
-                        )
-                        bt.logging.info(gradients[-1][-10:].tolist())
-
-                        bt.logging.info("Clipping Grads")
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-                        bt.logging.info(
-                            "Model Gradients After Clipping Before Optimizer Step"
-                        )
-                        # Copy gradients
-                        gradients = tuple(
-                            (
-                                param.grad.detach().cpu().clone()
-                                if param.grad is not None
-                                else torch.zeros_like(param)
-                            )
-                            for param in self.model.parameters()
-                        )
-                        bt.logging.info(gradients[-1][-10:].tolist())
-
                         bt.logging.info(
                             f"Updating Optimizer Learning Rate To: {self.learning_rate}"
                         )
@@ -275,7 +246,6 @@ async def forward(self):
                         # Update model parameters using averaged gradients
                         bt.logging.info("Performing Optimizer Step")
                         self.opt.step()
-
                         # Reset gradient buffers
                         self.grad_averager.reset_accumulated_grads_()
 
