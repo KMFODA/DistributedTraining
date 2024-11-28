@@ -301,7 +301,7 @@ async def forward(self):
 
                                 if upload_success:
                                     # Cast back to float32 outside of upload context:
-                                    #self.model.to(dtype=torch.float32)
+                                    # self.model.to(dtype=torch.float32)
 
                                     # Verify the upload
                                     updated_refs = list_repo_refs(

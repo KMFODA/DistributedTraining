@@ -8,7 +8,7 @@ from typing import Dict, Sequence
 
 import bittensor as bt
 import torch
-from bitsandbytes.optim import LAMB8bit
+from bitsandbytes.optim import LAMB
 from hivemind.utils import get_logger, nested_pack
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
@@ -96,7 +96,6 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
             # Load model state with max retries
             MAX_ATTEMPTS = 3
             attempt = 0
-            torch.cuda.empty_cache()
 
             while attempt < MAX_ATTEMPTS:
                 try:
@@ -104,9 +103,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                         f"{self.config.neuron.model_name}",
                         revision=str(self.global_progress.epoch),
                         trust_remote_code=True,
-                       # torch_dtype=torch.float16,
                     )
-                    #self.model.to(dtype=torch.float32)
                     self.model.to(self.device)
 
                     # Initialize optimizer with model parameters
@@ -130,36 +127,23 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                                 revision=str(self.global_progress.epoch),
                             ),
                             weights_only=True,
-                            map_location='cpu'
+                            map_location="cpu",
                         )
 
-                        self.opt = LAMB8bit(
-                            optim_groups,
-                            lr=optimizer_state["learning_rate"],
-                            betas=(0.9, 0.95),
-                            eps=1e-8,
-                        )
                         self.opt.load_state_dict(
                             optimizer_state["optimizer_state_dict"]
                         )
                         bt.logging.info(
                             f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
                         )
-                        torch.cuda.empty_cache()
 
                     except Exception as e:
                         bt.logging.warning(
-                            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-                        )
-                        # Initialize fresh optimizer
-                        self.opt = LAMB8bit(
-                            optim_groups,
-                            lr=self.learning_rate_maximum,
-                            betas=(0.9, 0.95),
-                            eps=1e-8,
+                            f"No optimizer state found or failed to load optimizer with error: {str(e)}. Proceeding with current optimizer state.."
                         )
 
-                    break  # Successfully loaded model and created optimizer
+                    # Successfully loaded model and created optimizer
+                    break
 
                 except Exception as e:
                     attempt += 1

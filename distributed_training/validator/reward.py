@@ -397,12 +397,15 @@ async def get_rewards(
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
         if hasattr(self.model.config, "all_reduce_scores"):
-            all_reduce_scores = torch.FloatTensor([
-                        1 if str(uid) in self.model.config.all_reduce_scores 
-                        and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
-                        else 0
+            all_reduce_scores = torch.FloatTensor(
+                [
+                    1
+                    if str(uid) in self.model.config.all_reduce_scores
+                    and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
+                    else 0
                     for uid in uids.tolist()
-                ]).to(self.device)
+                ]
+            ).to(self.device)
             bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
 
             self.event.update(
@@ -413,9 +416,8 @@ async def get_rewards(
             )
 
             # Final balanced score calculation with all_reduce
-            scores = (
-                blacklist_scores
-                * ((0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores))
+            scores = blacklist_scores * (
+                (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
             )
 
         else:
