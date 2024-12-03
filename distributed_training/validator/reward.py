@@ -352,7 +352,6 @@ async def get_rewards(
                 for uid, blacklist_score in zip(uids, blacklist_scores)
             }
         )
-        scores *= blacklist_scores
 
         # Re-calculate gradients and score the difference between local gradients and the miner's gradients
         gradient_scores = torch.FloatTensor(
@@ -373,7 +372,6 @@ async def get_rewards(
                 for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
-        scores *= gradient_scores
 
         # Score miners based off the size of the data they have trained on this step
         steps_scores = torch.FloatTensor(
@@ -397,7 +395,7 @@ async def get_rewards(
                 for uid, steps_score in zip(uids, steps_scores)
             }
         )
-        scores *= steps_scores
+        steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
         all_reduce_scores = torch.FloatTensor(
@@ -417,7 +415,6 @@ async def get_rewards(
                 for uid, all_reduce_score in zip(uids, all_reduce_scores)
             }
         )
-        scores *= all_reduce_scores
 
         scores = blacklist_scores * (
             (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
