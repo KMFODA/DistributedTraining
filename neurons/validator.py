@@ -202,7 +202,11 @@ class Validator(BaseValidatorNeuron):
                 betas=(0.9, 0.95),
                 eps=1e-8,
             )
+
             self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+
+            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
+
             bt.logging.info(
                 f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
             )

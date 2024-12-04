@@ -130,9 +130,20 @@ def load_state_from_peer(self, epoch=None, keep_recent=5):
                             map_location="cpu",
                         )
 
+                        self.opt.param_groups = optim_groups
+
                         self.opt.load_state_dict(
                             optimizer_state["optimizer_state_dict"]
                         )
+
+                        del (
+                            param_dict,
+                            decay_params,
+                            nodecay_params,
+                            optim_groups,
+                            optimizer_state,
+                        )
+
                         bt.logging.info(
                             f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
                         )

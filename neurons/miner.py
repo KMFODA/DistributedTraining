@@ -168,7 +168,11 @@ class Miner(BaseMinerNeuron):
                 betas=(0.9, 0.95),
                 eps=1e-8,
             )
+
             self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+
+            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
+
             bt.logging.info(
                 f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
             )
@@ -402,6 +406,35 @@ class Miner(BaseMinerNeuron):
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
                     )
                     bt.logging.info(current_model_weights_sample)
+
+                    bt.logging.info("Model Gradients Before Clipping")
+                    # Copy gradients
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:].tolist())
+
+                    bt.logging.info("Clipping Grads")
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                    bt.logging.info(
+                        "Model Gradients After Clipping Before Optimizer Step"
+                    )
+                    # Copy gradients
+                    gradients = tuple(
+                        (
+                            param.grad.detach().cpu().clone()
+                            if param.grad is not None
+                            else torch.zeros_like(param)
+                        )
+                        for param in self.model.parameters()
+                    )
+                    bt.logging.info(gradients[-1][-10:].tolist())
 
                     if synapse.learning_rate is not None:
                         bt.logging.info(
