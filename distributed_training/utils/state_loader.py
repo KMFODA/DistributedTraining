@@ -46,23 +46,6 @@ class ModelLoadingManager:
                 self._last_loaded_epoch = epoch
 
 
-def load_optimizer_state(
-    optimizer: torch.optim.Optimizer,
-    flat_metadata: Dict,
-    flat_tensors: Sequence[torch.Tensor],
-):
-    """Load a state obtained by dump_optimizer_state back into the optimizer"""
-    flat_optimizer_state = []
-    for elem in flat_metadata:
-        if elem.get("type") == "tensor" and isinstance(elem.get("index"), int):
-            flat_optimizer_state.append(flat_tensors[elem["index"]])
-        elif elem.get("type") == "value" and "value" in elem:
-            flat_optimizer_state.append(elem["value"])
-    return optimizer.load_state_dict(
-        nested_pack(flat_optimizer_state, structure=optimizer.state_dict())
-    )
-
-
 def load_state_from_peer(self, epoch=None, keep_recent=5):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.model_loading_manager.is_loading:
