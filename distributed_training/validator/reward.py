@@ -294,7 +294,8 @@ async def get_rewards(
 
         # Score miners bandwidth
         bandwidth_scores = await score_bandwidth(
-            self, self.miner_uids, self.load_state_timeout
+            self,
+            self.miner_uids,
         )
         bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
         self.event.update(
