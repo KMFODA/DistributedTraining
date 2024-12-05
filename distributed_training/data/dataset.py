@@ -43,7 +43,6 @@ class DataLoader(IterableDataset):
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
             "dataset": "HuggingFaceFW/fineweb",
-            # "dataset" : "tiiuae/falcon-refinedweb",
             "config": "sample-350BT",
             "split": "train",
         }

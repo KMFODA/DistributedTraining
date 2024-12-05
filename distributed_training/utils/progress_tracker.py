@@ -24,9 +24,13 @@ class LocalTrainingProgress(BaseModel):
 
 
 def get_global_epoch(self):
-    refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-    global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
-    return global_epoch
+    try:
+        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        return global_epoch
+    except Exception as e:
+        bt.logging.warning(f"Error in get_global_epoch: {str(e)}")
+        return None
 
 
 def update_global_tracker_state(self):
@@ -81,7 +85,7 @@ def update_global_tracker_state(self):
                 continue
 
         # Update global epoch
-        self.global_progress.epoch = global_epoch
+        self.global_progress.epoch = global_epoch if global_epoch is not None else 0
 
         # Add local samples
         if self.global_progress.epoch == self.local_progress.epoch:
