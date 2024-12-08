@@ -247,8 +247,6 @@ async def get_rewards(
     uids: List[int],
     responses: list,
     all_reduce: bool,
-    failed_peers=None,
-    participating_peers=None,
 ) -> torch.FloatTensor:
     """
     Returns a tensor of rewards for the given query and responses.
@@ -296,7 +294,8 @@ async def get_rewards(
 
         # Score miners bandwidth
         bandwidth_scores = await score_bandwidth(
-            self, self.miner_uids, self.load_state_timeout
+            self,
+            self.miner_uids,
         )
         bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
         self.event.update(
@@ -352,7 +351,6 @@ async def get_rewards(
                 for uid, blacklist_score in zip(uids, blacklist_scores)
             }
         )
-        scores *= blacklist_scores
 
         # Re-calculate gradients and score the difference between local gradients and the miner's gradients
         gradient_scores = torch.FloatTensor(
@@ -373,7 +371,6 @@ async def get_rewards(
                 for uid, gradient_score in zip(uids, gradient_scores)
             }
         )
-        scores *= gradient_scores
 
         # Score miners based off the size of the data they have trained on this step
         steps_scores = torch.FloatTensor(
@@ -397,30 +394,35 @@ async def get_rewards(
                 for uid, steps_score in zip(uids, steps_scores)
             }
         )
-        scores *= steps_scores
+        steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
-        all_reduce_scores = torch.FloatTensor(
-            [
-                (
+        if hasattr(self.model.config, "all_reduce_scores"):
+            all_reduce_scores = torch.FloatTensor(
+                [
                     1
-                    if (self.model.config.all_reduce_scores[str(uid)] == "SUCCESS")
+                    if str(uid) in self.model.config.all_reduce_scores
+                    and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
                     else 0
-                )
-                for uid in uids.tolist()
-            ]
-        ).to(self.device)
-        bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
-        self.event.update(
-            {
-                f"rewards.all_reduce.uid{uid}": all_reduce_score
-                for uid, all_reduce_score in zip(uids, all_reduce_scores)
-            }
-        )
-        scores *= all_reduce_scores
+                    for uid in uids.tolist()
+                ]
+            ).to(self.device)
+            bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
 
-        scores = blacklist_scores * (
-            (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
-        )
+            self.event.update(
+                {
+                    f"rewards.all_reduce.uid{uid}": all_reduce_score
+                    for uid, all_reduce_score in zip(uids, all_reduce_scores)
+                }
+            )
+
+            # Final balanced score calculation with all_reduce
+            scores = blacklist_scores * (
+                (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
+            )
+
+        else:
+            # Final balanced score calculation without all_reduce
+            scores = blacklist_scores * (gradient_scores * steps_scores)
 
     return scores

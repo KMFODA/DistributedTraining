@@ -49,7 +49,10 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     update_global_tracker_state,
 )
-from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    ModelLoadingManager,
+)
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
     map_uid_to_peerid_background_task,
@@ -61,6 +64,8 @@ from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
+
+from huggingface_hub import hf_hub_download
 
 logger = get_logger(__name__)
 
@@ -109,6 +114,7 @@ class Validator(BaseValidatorNeuron):
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         update_global_tracker_state(self)
+        self.local_progress.epoch = self.global_progress.epoch
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -178,10 +184,44 @@ class Validator(BaseValidatorNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB8bit(
-            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
-        )
+        # Try to load optimizer state if it exists
+        try:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=self.config.neuron.model_name,
+                    filename="optimizer.pt",
+                    revision=str(self.global_progress.epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
 
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=optimizer_state["learning_rate"],
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
+
+            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+
+            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
+
+            bt.logging.info(
+                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
+            )
+
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
+            # Initialize fresh optimizer
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=self.learning_rate_maximum,
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
             self.model.parameters(),
@@ -200,6 +240,9 @@ class Validator(BaseValidatorNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
+
+        # Init model_loading_manager
+        self.model_loading_manager = ModelLoadingManager()
 
         # Load state from peers if validator is not on latest global epoch
         if self.local_progress.epoch < self.global_progress.epoch:

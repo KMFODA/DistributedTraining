@@ -31,6 +31,9 @@ import torch
 from bitarray import bitarray
 from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
+import copy
+import numpy as np
+import threading
 
 # Bittensor Miner Template:
 import distributed_training
@@ -38,22 +41,35 @@ import hivemind
 from distributed_training import __spec_version__, __version__
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DataLoader
+from distributed_training.utils.gradient_averager import (
+    DTGradientAverager,
+)
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    ModelLoadingManager,
+)
+
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
-from distributed_training.utils.misc import init_dht, load_wandb, setup_logging
+from distributed_training.utils.misc import (
+    init_dht,
+    load_wandb,
+    setup_logging,
+)
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
-    update_global_tracker_state,
 )
-from distributed_training.utils.state_loader import load_state_from_peer
-from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training import __version__, __spec_version__
+
+from huggingface_hub import hf_hub_download
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
@@ -94,7 +110,8 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        update_global_tracker_state(self)
+        self.global_progress.epoch = get_global_epoch(self)
+        self.local_progress.epoch = self.global_progress.epoch
 
         # Init Device & Model
         self.device = self.config.neuron.device
@@ -133,9 +150,44 @@ class Miner(BaseMinerNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        self.opt = LAMB8bit(
-            optim_groups, lr=self.learning_rate_maximum, betas=(0.9, 0.95), eps=1e-8
-        )
+        # Try to load optimizer state if it exists
+        try:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=self.config.neuron.model_name,
+                    filename="optimizer.pt",
+                    revision=str(self.global_progress.epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
+
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=optimizer_state["learning_rate"],
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
+
+            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+
+            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
+
+            bt.logging.info(
+                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
+            )
+
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
+            # Initialize fresh optimizer
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=self.learning_rate_maximum,
+                betas=(0.9, 0.95),
+                eps=1e-8,
+            )
 
         # Init Gradient Averager
         self.all_reduce_timeout = 360
@@ -147,7 +199,7 @@ class Miner(BaseMinerNeuron):
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
             start=True,
-            min_group_size=5,
+            min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
@@ -157,9 +209,6 @@ class Miner(BaseMinerNeuron):
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
-        self.peer_id = self.dht.peer_id
-        self.get_stub = self.grad_averager.get_stub
-        self.serializer = self.grad_averager.serializer
 
         # Create mapping between uids to peerids
         self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
@@ -175,6 +224,9 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
+        # Init model_loading_manager
+        self.model_loading_manager = ModelLoadingManager()
+
         # Load state from peers if miner is not on latest global epoch
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
@@ -182,8 +234,100 @@ class Miner(BaseMinerNeuron):
         # Init Tracking event
         self.event = {}
 
+        # Init background threads
+        self.stop_event = threading.Event()
+
+        self.update_model_thread = threading.Thread(
+            target=self.load_latest_model, daemon=True
+        )
+        self.update_model_thread.start()
+
         # Log PeerID to chain
+        bt.logging.info("Logging PeerID to chain")
         log_peerid_to_chain(self)
+
+    def start_dataloader_thread(self):
+        """Start a new dataloader thread if the previous one is finished"""
+        if hasattr(self, "dataloader_thread") and self.dataloader_thread.is_alive():
+            self.dataloader_thread.join()
+
+        self.dataloader_thread = threading.Thread(
+            target=self.load_dataloader, daemon=True
+        )
+        self.dataloader_thread.start()
+
+    def is_dataloader_thread_alive(self):
+        """Check if dataloader thread is alive"""
+        return hasattr(self, "dataloader_thread") and self.dataloader_thread.is_alive()
+
+    def load_latest_model(self):
+        while not self.stop_event.is_set():
+            # Skip checking if we're currently loading
+            if self.model_loading_manager.is_loading:
+                time.sleep(5)  # Short sleep before checking again
+                continue
+
+            self.global_progress.epoch = get_global_epoch(self)
+
+            if self.global_progress.epoch is None:
+                time.sleep(30)
+                continue
+
+            if (
+                self.global_progress.epoch
+                == self.model_loading_manager.last_loaded_epoch
+                and self.global_progress.epoch == self.local_progress.epoch
+            ):
+                time.sleep(30)
+                continue
+
+            needs_update = (
+                self.local_progress.epoch < self.global_progress.epoch
+                or sum(
+                    np.isnan(
+                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
+                    )
+                )
+                > 1
+            )
+
+            if needs_update:
+                bt.logging.info(
+                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                )
+                if not self.model_loading_manager.is_loading:
+                    load_state_from_peer(self, epoch=self.global_progress.epoch)
+            else:
+                time.sleep(30)
+
+    def load_dataloader(self):
+        bt.logging.info("DataLoader initialisation started")
+        print("DataLoader initialisation started")
+        search_start = random.choice(
+            range(
+                len(self.dataset_indices)
+                - self.config.neuron.training_examples_per_miner
+                + 1
+            )
+        )
+        start = self.dataset_indices.index(
+            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
+        )
+        self.group = [
+            i
+            for i in range(
+                start, start + self.config.neuron.training_examples_per_miner
+            )
+        ]
+
+        self.dataset_indices[self.group] = True
+
+        # Create Dataloader
+        self.dataloader = DataLoader(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            rows=self.group,
+        )
 
     def get_miner_info(self):
         return {
@@ -207,7 +351,15 @@ class Miner(BaseMinerNeuron):
         self, synapse: distributed_training.protocol.AllReduce
     ) -> distributed_training.protocol.AllReduce:
         bt.logging.info("Received All Reduce Call")
+
+        # Wait for model to load if it is currently loading
+        while self.model_loading_manager.is_loading:
+            time.sleep(1)
+
         failed_gradient_all_reduce = False
+
+        # Set to True to avoid state loading during allreduce
+        self.model_loading_manager.set_loading_state(True)
 
         # Update the gradient averaging kwargs
         if synapse.next_chunk_timeout is not None:
@@ -297,6 +449,9 @@ class Miner(BaseMinerNeuron):
                     # Reset gradient buffers
                     self.grad_averager.reset_accumulated_grads_()
 
+                # Set back to false to allow state loading
+                self.model_loading_manager.set_loading_state(False)
+
                 bt.logging.info("Model Weights After Optimizer Step")
                 new_model_weights_sample = copy.copy(
                     [layer for layer in self.model.parameters()][-2][-10:].tolist()
@@ -332,6 +487,8 @@ class Miner(BaseMinerNeuron):
             else:
                 bt.logging.info("Averaging Failed. Loading Latest Model State.")
                 failed_gradient_all_reduce = True
+                # Set back to false to allow state loading
+                self.model_loading_manager.set_loading_state(False)
                 load_state_from_peer(self)
 
         except Exception as e:
@@ -339,7 +496,9 @@ class Miner(BaseMinerNeuron):
                 f"Gradient Averaging Step Failed With Error: {e}. Loading Latest Model State."
             )
             failed_gradient_all_reduce = True
-            update_global_tracker_state(self)
+            self.global_progress.epoch = get_global_epoch(self)
+            # Set back to false to allow state loading
+            self.model_loading_manager.set_loading_state(False)
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             synapse.completion = "False"
 
@@ -368,6 +527,12 @@ class Miner(BaseMinerNeuron):
         start_time: float = time.perf_counter()
 
         self.global_progress.epoch = get_global_epoch(self)
+
+        # Wait for model to load if it is currently loading
+        while self.model_loading_manager.is_loading:
+            time.sleep(1)
+
+        # Load the latest model if self.local_progress.epoch != self.global_progress.epoch
         if (self.local_progress.epoch != self.global_progress.epoch) or (
             sum(
                 np.isnan(
@@ -377,10 +542,11 @@ class Miner(BaseMinerNeuron):
             > 1
         ):
             bt.logging.info(
-                "Local Epoch Behind Global Epoch. Loading Latest Model State."
+                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
             )
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
+        # Start dataloader
         search_start = random.choice(
             range(
                 len(self.dataset_indices)
@@ -397,6 +563,7 @@ class Miner(BaseMinerNeuron):
                 start, start + self.config.neuron.training_examples_per_miner
             )
         ]
+
         self.dataset_indices[group] = True
 
         # Create Dataloader
@@ -405,6 +572,7 @@ class Miner(BaseMinerNeuron):
             sequence_length=1024,
             rows=group,
         )
+
         synapse.batch_size = self.config.neuron.local_batch_size_train
 
         total_loss = 0
