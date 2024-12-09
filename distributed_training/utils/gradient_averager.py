@@ -10,6 +10,7 @@ from typing import (
     Optional,
     Sequence,
     Union,
+    List,
 )
 
 import bittensor as bt
@@ -38,6 +39,9 @@ from hivemind.utils.asyncio import (
     attach_event_on_finished,
     azip,
     enter_asynchronously,
+)
+from hivemind.optim.state_averager import (
+    TorchOptimizer,
 )
 from hivemind.utils.streaming import split_for_streaming
 from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
@@ -544,7 +548,8 @@ class DTAverager(hivemind.DecentralizedAverager):
 class DTGradientAverager(DTAverager):
     def __init__(
         self,
-        parameters: Iterable[torch.nn.Parameter],
+        main_parameters: List[torch.nn.Parameter],
+        offloaded_optimizer: TorchOptimizer,
         *,
         dht: DHT,
         prefix: str,
@@ -552,20 +557,38 @@ class DTGradientAverager(DTAverager):
         accumulate_grads_on: Optional[torch.device] = None,
         client_mode: bool = None,
         warn: bool = True,
-        averaged_grads: Sequence[torch.Tensor] = (),
         **kwargs,
     ):
         if reuse_grad_buffers and accumulate_grads_on is not None:
             logger.warning(
                 "Setting 'accumulate_grads_on' has no effect if reuse_grad_buffers=True"
             )
-        client_mode = client_mode if client_mode is not None else dht.client_mode
-        self.parameters = tuple(parameters)
-        self.reuse_grad_buffers = reuse_grad_buffers
+
+        if "client_mode" in kwargs:
+            if kwargs["client_mode"] is not None and kwargs["client_mode"]:
+                raise KeyError("client_mode is not supported in DiLoCoGradAverager")
+            else:
+                kwargs.pop("client_mode")
+
+        if "averaged_grads" in kwargs:
+            raise KeyError(
+                "DiLoCoGradAverager does not support averaged_grads since it use the offloaded optimizer gradients directly"
+            )
+
+        if not isinstance(main_parameters, (list, tuple)):
+            raise ValueError(
+                "main_parameters must be a list or tuple of torch.nn.Parameter and not an iterator otherwise parameters will be consumed"
+            )
+        self.main_parameters = list(main_parameters)
+        self.offloaded_optimizer = offloaded_optimizer
+
+        # # self.parameters = tuple(parameters)
+        # self.reuse_grad_buffers = reuse_grad_buffers
+
         self.warn = warn
         self.local_samples_accumulated = 0
         self.local_times_accumulated = 0
-        self._anchor_batch_size = None
+        # self._anchor_batch_size = None
         self._local_accumulators = None
         if not reuse_grad_buffers:
             self._local_accumulators = tuple(
@@ -573,24 +596,28 @@ class DTGradientAverager(DTAverager):
                 for grad in self._grads_from_parameters()
             )
         self._accumulators_used_in_step = False
+
         self._new_averaged_grads = False
 
-        with torch.no_grad():
-            if not averaged_grads:
-                averaged_grads = tuple(
-                    grad.detach().cpu().clone().share_memory_()
-                    for grad in self._grads_from_parameters()
-                )
-            else:
-                if any(
-                    param_grad.size() != grad.size()
-                    for param_grad, grad in zip(
-                        self._grads_from_parameters(), averaged_grads
-                    )
-                ):
-                    raise ValueError(
-                        "Averaged gradients don't have same shape as gradients from parameters"
-                    )
+        # with torch.no_grad():
+        #     if not averaged_grads:
+        #         averaged_grads = tuple(
+        #             grad.detach().cpu().clone().share_memory_()
+        #             for grad in self._grads_from_parameters()
+        #         )
+        #     else:
+        #         if any(
+        #             param_grad.size() != grad.size()
+        #             for param_grad, grad in zip(
+        #                 self._grads_from_parameters(), averaged_grads
+        #             )
+        #         ):
+        #             raise ValueError(
+        #                 "Averaged gradients don't have same shape as gradients from parameters"
+        #             )
+
+        averaged_grads = tuple(grad for grad in self._grads_from_optimizer())
+
         super().__init__(
             averaged_tensors=averaged_grads,
             dht=dht,
@@ -601,7 +628,7 @@ class DTGradientAverager(DTAverager):
 
     def _grads_from_parameters(self) -> Iterator[torch.Tensor]:
         """gradient buffers associated with parameters"""
-        for param in self.parameters:
+        for param in self.main_parameters:
             if param.grad is None:
                 param.grad = torch.zeros_like(param)
             yield param.grad
@@ -639,6 +666,15 @@ class DTGradientAverager(DTAverager):
             ):
                 grad_acc.add_(grad_buf.to(grad_acc.device), alpha=alpha)
 
+    def _grads_from_optimizer(self) -> Iterator[torch.Tensor]:
+        """gradient buffers associated optimizer"""
+        param_groups = self.offloaded_optimizer.param_groups
+        for param_group in param_groups:
+            for param in param_group["params"]:
+                if param.grad is None:
+                    param.grad = torch.zeros_like(param)
+                yield param.grad
+
     def schedule_step(
         self, scheduled_time: Optional[DHTExpiration] = None, **kwargs
     ) -> StepControl:
@@ -660,8 +696,6 @@ class DTGradientAverager(DTAverager):
 
     def step(
         self,
-        weight: Optional[float] = None,
-        reset_accumulators: bool = True,
         control: Optional[StepControl] = None,
         timeout: Optional[float] = None,
         wait: bool = True,
@@ -678,27 +712,32 @@ class DTGradientAverager(DTAverager):
         """
         if control is None:
             control = self.schedule_step(timeout=timeout, **kwargs)
-        elif len(kwargs) > 0:
-            raise RuntimeError(
-                f"Averaging with a pre-scheduled group, parameters {kwargs} will have no effect"
-            )
-        assert not control.triggered, f"This {type(control)} instance was already used"
-        if self._new_averaged_grads and self.warn:
-            logger.warning(
-                "[warn=True] Starting new averaging round, but previous round results were not used. "
-                "This may be a sign of incorrect optimizer behavior"
-            )
 
-        self.load_accumulators_into_averager_()
-        self._accumulators_used_in_step = True
-        self._new_averaged_grads = True
-
-        control.weight = self.local_samples_accumulated if weight is None else weight
-        if reset_accumulators:
-            self.reset_accumulated_grads_()
+        self.compute_and_load_pseudo_grad_into_averager()
         control.allow_allreduce()
 
         return control.result(timeout) if wait else control
+
+    @torch.no_grad()
+    def compute_and_load_pseudo_grad_into_averager(self):
+        """compute pseudo gradient by subtracting the offloaded optimizer parameters with the main parameters and load them in the averager"""
+        opt_parameters = [
+            param
+            for group in self.offloaded_optimizer.param_groups
+            for param in group["params"]
+        ]
+        with self.get_tensors() as averaged_grads:
+            for opt_param, averaged_grad, main_param in zip(
+                opt_parameters, averaged_grads, self.main_parameters
+            ):
+                # opt_param is the param that will be all_reduce, it is suppose to be on cpu
+                # main_param is the param that has been updated by the inner optimizer, it is suppose to be on gpu
+                grad = opt_param.data - main_param.detach().to(opt_param.device)
+                averaged_grad.copy_(grad, non_blocking=True)
+
+    def notify_used_averaged_gradients(self):
+        """Notify averager that the results of a previous averaging round are accounted for"""
+        self._new_averaged_grads = False
 
     @torch.no_grad()
     def load_accumulators_into_averager_(self):

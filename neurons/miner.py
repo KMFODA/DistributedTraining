@@ -33,6 +33,7 @@ from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
 import threading
+from functools import partial
 
 # Bittensor Miner Template:
 import distributed_training
@@ -50,6 +51,7 @@ from distributed_training.utils.state_loader import (
 
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.gradient_averager import DTGradientAverager
+from distributed_training.utils.state_averager import DTStateAverager
 from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
@@ -150,51 +152,42 @@ class Miner(BaseMinerNeuron):
             {"params": decay_params, "weight_decay": self.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
-        # Try to load optimizer state if it exists
-        try:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=self.config.neuron.model_name,
-                    filename="optimizer.pt",
-                    revision=str(self.global_progress.epoch),
-                ),
-                weights_only=True,
-                map_location="cpu",
-            )
+        self.inner_optimizer = torch.optim.AdamW(
+            params=optim_groups, lr=self.learning_rate_maximum
+        )
+        self.outer_optimizer = partial(
+            torch.optim.SGD, lr=self.learning_rate_maximum, momentum=0.9, nesterov=True
+        )
 
-            self.opt = LAMB(
-                optim_groups,
-                lr=optimizer_state["learning_rate"],
-                betas=(0.9, 0.95),
-                eps=1e-8,
-            )
-
-            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
-
-            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
-
-            bt.logging.info(
-                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
-            )
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-            # Initialize fresh optimizer
-            self.opt = LAMB(
-                optim_groups,
-                lr=self.learning_rate_maximum,
-                betas=(0.9, 0.95),
-                eps=1e-8,
-            )
+        # Init State Averager
+        self.all_reduce_timeout = 360
+        self.num_inner_steps = 500
+        self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
+        self.state_averager = DTStateAverager(
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            optimizer=self.outer_optimizer,
+            params=self.model.parameters(),
+            initialize_optimizer=True,
+            offload_optimizer=self.offload_optimizer,
+            custom_gradients=self.offload_optimizer,
+            start=True,
+            num_inner_steps=self.num_inner_steps,
+            inner_optimizer=self.inner_optimizer,
+            min_group_size=self.config.neuron.min_group_size,
+            min_matchmaking_time=30.0,
+            request_timeout=10.0,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+        )
 
         # Init Gradient Averager
         self.all_reduce_timeout = 360
         self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
+            main_parameters=self.state_averager.main_parameters,
+            offloaded_optimizer=self.state_averager.optimizer,
             compression=hivemind.Uniform8BitQuantization(),
             state_compression=hivemind.Uniform8BitQuantization(),
             accumulate_grads_on=torch.device(self.device),
@@ -440,11 +433,11 @@ class Miner(BaseMinerNeuron):
                         bt.logging.info(
                             f"Updating Optimizer Learning Rate To: {synapse.learning_rate}"
                         )
-                        for param_group in self.opt.param_groups:
+                        for param_group in self.outer_optimizer.param_groups:
                             param_group["lr"] = synapse.learning_rate
 
                     bt.logging.info("Performing Optimizer Step")
-                    self.opt.step()
+                    self.outer_optimizer.step()
 
                     # Reset gradient buffers
                     self.grad_averager.reset_accumulated_grads_()
@@ -506,7 +499,7 @@ class Miner(BaseMinerNeuron):
             gradient_averaging_step.cancel()
             bt.logging.info("Gradient Step Cancelled")
             with self.grad_averager.use_averaged_gradients():
-                self.opt.zero_grad()
+                self.outer_optimizer.zero_grad()
             bt.logging.info("Optimizer Gradients Zeroed")
 
         return synapse
@@ -586,9 +579,6 @@ class Miner(BaseMinerNeuron):
             inputs = batch[0].to(self.device)
             labels = batch[1].to(self.device)
 
-            # Zero Gradients
-            self.opt.zero_grad()
-
             # Forward pass
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
@@ -613,6 +603,12 @@ class Miner(BaseMinerNeuron):
 
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
+
+            # Optimizer step
+            self.inner_optimizer.step()
+
+            # Zero Gradients
+            self.inner_optimizer.zero_grad()
 
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
