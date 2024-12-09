@@ -32,7 +32,7 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class DataLoader(IterableDataset):
-    max_pages: int = 519_000_000
+    max_rows: int = 339_347_842
 
     def __init__(
         self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer

@@ -123,7 +123,7 @@ class Validator(BaseValidatorNeuron):
             )
 
         # Init Dataset
-        dataset_length = DataLoader.max_pages
+        dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device & Model

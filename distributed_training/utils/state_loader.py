@@ -46,7 +46,7 @@ class ModelLoadingManager:
                 self._last_loaded_epoch = epoch
 
 
-def load_state_from_peer(self, epoch=None, keep_recent=5):
+def load_state_from_peer(self, epoch=None, keep_recent=3):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.model_loading_manager.is_loading:
         bt.logging.info(

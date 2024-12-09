@@ -215,7 +215,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = DataLoader.max_pages
+        dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
