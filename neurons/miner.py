@@ -29,6 +29,7 @@ import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
@@ -60,7 +61,6 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     get_global_epoch,
 )
-from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 from huggingface_hub import hf_hub_download
@@ -162,7 +162,7 @@ class Miner(BaseMinerNeuron):
                 map_location="cpu",
             )
 
-            self.opt = LAMB(
+            self.opt = LAMB8bit(
                 optim_groups,
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
@@ -182,7 +182,7 @@ class Miner(BaseMinerNeuron):
                 f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
             )
             # Initialize fresh optimizer
-            self.opt = LAMB(
+            self.opt = LAMB8bit(
                 optim_groups,
                 lr=self.learning_rate_maximum,
                 betas=(0.9, 0.95),
@@ -215,7 +215,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = DataLoader.max_pages
+        dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
