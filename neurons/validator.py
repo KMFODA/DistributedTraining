@@ -29,7 +29,7 @@ import bittensor as bt
 import torch
 import threading
 from bitarray import bitarray
-from bitsandbytes.optim import LAMB
+from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
 
 import hivemind
@@ -123,7 +123,7 @@ class Validator(BaseValidatorNeuron):
             )
 
         # Init Dataset
-        dataset_length = DataLoader.max_pages
+        dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Device & Model
@@ -196,7 +196,7 @@ class Validator(BaseValidatorNeuron):
                 map_location="cpu",
             )
 
-            self.opt = LAMB(
+            self.opt = LAMB8bit(
                 optim_groups,
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
@@ -216,7 +216,7 @@ class Validator(BaseValidatorNeuron):
                 f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
             )
             # Initialize fresh optimizer
-            self.opt = LAMB(
+            self.opt = LAMB8bit(
                 optim_groups,
                 lr=self.learning_rate_maximum,
                 betas=(0.9, 0.95),
