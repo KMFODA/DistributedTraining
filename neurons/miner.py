@@ -29,7 +29,7 @@ import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import copy
 import numpy as np
 import threading
@@ -40,13 +40,14 @@ import distributed_training
 import hivemind
 from distributed_training import __spec_version__, __version__
 from distributed_training.base.miner import BaseMinerNeuron
-from distributed_training.data.dataset import DataLoader
+from distributed_training.data.dataset import DataLoader, DatasetLoader
 from distributed_training.utils.gradient_averager import (
     DTGradientAverager,
 )
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
+    save_and_upload_state,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -75,6 +76,9 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+
+import tempfile
+from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
 
 class Miner(BaseMinerNeuron):
@@ -132,6 +136,11 @@ class Miner(BaseMinerNeuron):
                 self.config.neuron.model_name, trust_remote_code=True
             )
         )
+
+        # Init tokenizer
+        model_name = "distilgpt2"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -238,6 +247,69 @@ class Miner(BaseMinerNeuron):
         # Log PeerID to chain
         bt.logging.info("Logging PeerID to chain")
         log_peerid_to_chain(self)
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 6
+        self.config.neuron.hf_repo_id = "kmfoda/gpt2-1b-miner-1"
+        while True:
+            bt.logging.info("Model Weights Before Loading State")
+            current_model_weights_sample = copy.copy(
+                [layer for layer in self.model.parameters()][-2][-10:].tolist()
+            )
+            bt.logging.info(current_model_weights_sample)
+            self.loop.run_until_complete(self.forward(distributed_training.protocol.Train(gradient_test_index=2, timeout=120)))
+            
+    def upload_model(self, epoch, batch_size):
+        """Unified function to save and upload both model and optimizer state"""
+        attempt = 0
+        while attempt < self.model_upload_retry_limit:
+            try:
+                with tempfile.TemporaryDirectory() as tmp_folder:
+                    bt.logging.info(f"Saving model state locally for epoch {epoch}")
+                    self.model.save_pretrained(tmp_folder)
+
+                    bt.logging.info(
+                        f"Uploading model and optimizer states to repo: {self.config.neuron.hf_repo_id}"
+                    )
+                    commit_message = f"Block {epoch}. Batch Size {batch_size}."
+                    upload_folder(
+                        folder_path=tmp_folder,
+                        repo_id=self.config.neuron.hf_repo_id,
+                        repo_type="model",
+                        commit_message=commit_message,
+                    )
+
+                    # Create a tag for this version
+                    create_tag(
+                        self.config.neuron.hf_repo_id,
+                        repo_type="model",
+                        tag=str(epoch),
+                        tag_message=commit_message,
+                    )
+
+                    bt.logging.info(
+                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.model_name}"
+                    )
+                    return True
+
+            except Exception as e:
+                attempt += 1
+                bt.logging.warning(
+                    f"Failed to upload state to HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}. Error: {str(e)}"
+                )
+                if attempt < self.model_upload_retry_limit:
+                    time.sleep(self.model_upload_retry_delay)
+                else:
+                    bt.logging.error(
+                        "Maximum retry limit reached. Unable to upload state to HF Hub."
+                    )
+                    raise
+        return False
+
+    def upload_state_in_background(self, epoch, batch_size):
+        self.state_upload_thread = threading.Thread(
+            target=self.upload_model, args=(epoch, batch_size), daemon=True
+        )
+        self.state_upload_thread.start()
 
     def start_dataloader_thread(self):
         """Start a new dataloader thread if the previous one is finished"""
@@ -520,6 +592,7 @@ class Miner(BaseMinerNeuron):
         start_time: float = time.perf_counter()
 
         self.global_progress.epoch = get_global_epoch(self)
+        block = self.block
 
         # Wait for model to load if it is currently loading
         while self.model_loading_manager.is_loading:
@@ -540,30 +613,17 @@ class Miner(BaseMinerNeuron):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Start dataloader
-        search_start = random.choice(
-            range(
-                len(self.dataset_indices)
-                - self.config.neuron.training_examples_per_miner
-                + 1
-            )
+        pages = await DatasetLoader.next_pages(
+            offset=block,
+            n_pages=5,
+            seed=self.uid if not self.config.random else random.randint(0, 1000),
         )
-        start = self.dataset_indices.index(
-            bitarray("0" * self.config.neuron.training_examples_per_miner), search_start
-        )
-        group = [
-            i
-            for i in range(
-                start, start + self.config.neuron.training_examples_per_miner
-            )
-        ]
-
-        self.dataset_indices[group] = True
-
-        # Create Dataloader
-        dataloader = DataLoader(
+        random.shuffle(pages)
+        dataset = await DatasetLoader.create(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
-            rows=group,
+            pages_info=pages,
+            tokenizer=self.tokenizer,
         )
 
         synapse.batch_size = self.config.neuron.local_batch_size_train
@@ -574,10 +634,10 @@ class Miner(BaseMinerNeuron):
         target_param = list(self.model.parameters())[synapse.gradient_test_index]
 
         # Training loop
-        for index, batch in enumerate(dataloader):
+        for index, batch in enumerate(dataset):
             # Extract inputs and labels
-            inputs = batch[0].to(self.device)
-            labels = batch[1].to(self.device)
+            inputs = torch.tensor(batch).to(self.device)
+            labels = torch.tensor(batch).to(self.device)
 
             # Forward pass
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -590,9 +650,6 @@ class Miner(BaseMinerNeuron):
             # Backward Pass
             loss.backward()
 
-            # Accumulate Gradients
-            self.grad_averager.accumulate_grads_(batch_size=inputs.size(0))
-
             # Update Tracker
             self.local_progress.samples_accumulated += inputs.size(0)
 
@@ -604,11 +661,12 @@ class Miner(BaseMinerNeuron):
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
 
-            # Optimizer step
-            self.inner_optimizer.step()
+        # TODO divide gradients by gradient_accumulation_steps
+        # Optimizer step
+        self.inner_optimizer.step()
 
-            # Zero Gradients
-            self.inner_optimizer.zero_grad()
+        # Zero Gradients
+        self.inner_optimizer.zero_grad()
 
         if synapse.gradient_test_index >= len(gradient):
             bt.logging.error(
@@ -622,7 +680,7 @@ class Miner(BaseMinerNeuron):
 
         average_loss = total_loss / (index + 1)
         synapse.loss = average_loss
-        synapse.dataset_indices = group
+        synapse.dataset_indices = [block]
 
         if not self.config.neuron.dont_wandb_log:
             self.event.update(
@@ -642,6 +700,9 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(
                 f"Succesfully responded to request from {synapse.dendrite.hotkey} in {time.perf_counter() - start_time} seconds."
             )
+
+        if self.step % 4 == 0:
+            self.upload_state_in_background(epoch=block, batch_size=index)
 
         return synapse
 

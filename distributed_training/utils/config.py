@@ -227,7 +227,7 @@ def add_args(cls, parser, prefix=None):
             "--neuron.training_examples_per_miner",
             type=int,
             help="The number of rows to train on per miner",
-            default=500,
+            default=1024,
         )
 
         parser.add_argument(
