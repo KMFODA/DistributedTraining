@@ -54,6 +54,28 @@ class DTAllReduceRunner(AllReduceRunner):
         self.count = 0
         self.peerids_to_uids = peerids_to_uids
         bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
+        self.nan_count = 0
+        self.max_nan_tolerance = 3  # Max number of NaN tensors before banning peer
+        
+    def _check_tensor_for_nan(self, tensor: torch.Tensor, peer_id: str, part_index: int) -> bool:
+        """Check if tensor contains NaN and log appropriately"""
+        if torch.isnan(tensor).any():
+            uid = self.peerids_to_uids.get(str(peer_id), "'''")
+            peer_id_abbreviated = str(peer_id)[-3:]
+            bt.logging.warning(
+                f"UID:{uid} - PeerID:{peer_id_abbreviated} - NaN detected in tensor part {part_index}"
+            )
+            return True
+        return False
+
+    def _handle_nan_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Replace NaN values with zeros"""
+        nan_mask = torch.isnan(tensor)
+        if nan_mask.any():
+            clean_tensor = tensor.clone()
+            clean_tensor[nan_mask] = 0.0
+            return clean_tensor
+        return tensor
 
     async def _communicate_with_peer(self, peer_id: PeerID):
         """Send a part of local tensors and metadata to a single peer, receive the average for that part of tensors"""
@@ -67,13 +89,25 @@ class DTAllReduceRunner(AllReduceRunner):
         if peer_id == self.peer_id:
             sender_index = self.sender_peer_ids.index(peer_id)
             for part_index, tensor_part in enumerate(self.parts_for_local_averaging):
+                # Check local tensor for NaN before averaging
+                if self._check_tensor_for_nan(tensor_part, peer_id, part_index):
+                    tensor_part = self._handle_nan_tensor(tensor_part)
+                    
                 averaged_part = await self.tensor_part_reducer.accumulate_part(
                     sender_index, part_index, tensor_part, weight=self.weight
                 )
+                # Check averaged result for NaN
+                if self._check_tensor_for_nan(averaged_part, peer_id, part_index):
+                    averaged_part = self._handle_nan_tensor(averaged_part)
+                    
+                delta = averaged_part - tensor_part
+                if self._check_tensor_for_nan(delta, peer_id, part_index):
+                    delta = torch.zeros_like(delta)
+                    
                 self.tensor_part_container.register_processed_part(
                     peer_index,
                     part_index,
-                    averaged_part - tensor_part,
+                    delta,
                 )
 
         else:
@@ -106,7 +140,17 @@ class DTAllReduceRunner(AllReduceRunner):
                         raise AllreduceException(
                             f"{peer_id_abreviated} sent {averaging_pb2.MessageCode.Name(msg.code)}"
                         )
-                    return deserialize_torch_tensor(msg.tensor_part), msg
+                    tensor, msg = deserialize_torch_tensor(msg.tensor_part), msg
+                    
+                    # Check received tensor for NaN
+                    if self._check_tensor_for_nan(tensor, peer_id, part_index):
+                        self.nan_count += 1
+                        if self.nan_count >= self.max_nan_tolerance:
+                            bt.logging.warning(f"NaN count exceeded for peer {peer_id_abbreviated}, banning")
+                            raise AllreduceException(f"Too many NaN tensors from peer {peer_id_abbreviated}")
+                        tensor = self._handle_nan_tensor(tensor)
+                    
+                    return tensor, msg
 
                 async for delta, msg in amap_in_executor(
                     _try_deserialize,
@@ -228,6 +272,11 @@ class DTAllReduceRunner(AllReduceRunner):
         try:
             parts_aiter = self.tensor_part_container.iterate_input_parts_for(peer_index)
             first_part = await anext(parts_aiter)
+            
+            # Check first part for NaN before sending
+            if self._check_tensor_for_nan(first_part, peer_id, 0):
+                first_part = self._handle_nan_tensor(first_part)
+                
             yield averaging_pb2.AveragingData(
                 code=averaging_pb2.PART_FOR_AVERAGING,
                 group_id=self.group_id,
@@ -239,6 +288,8 @@ class DTAllReduceRunner(AllReduceRunner):
             )
 
             async for part in parts_aiter:
+                if self._check_tensor_for_nan(part, peer_id, -1):
+                    part = self._handle_nan_tensor(part)
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
         except Exception as e:
