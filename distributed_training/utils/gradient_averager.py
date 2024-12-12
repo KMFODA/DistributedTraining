@@ -56,25 +56,31 @@ class DTAllReduceRunner(AllReduceRunner):
         bt.logging.info(f"PeerID to UID mapping: {self.peerids_to_uids}")
         self.nan_count = 0
         self.max_nan_tolerance = 3  # Max number of NaN tensors before banning peer
-        
+    
+    @staticmethod
+    @torch.jit.script
+    def _fast_nan_check(tensor: torch.Tensor) -> bool:
+        """JIT-optimized NaN check"""
+        return torch.isnan(tensor).any()
+
     def _check_tensor_for_nan(self, tensor: torch.Tensor, peer_id: str, part_index: int) -> bool:
-        """Check if tensor contains NaN and log appropriately"""
-        if torch.isnan(tensor).any():
+        """Check tensor and handle logging"""
+        has_nan = self._fast_nan_check(tensor)
+        if has_nan:
             uid = self.peerids_to_uids.get(str(peer_id), "'''")
             peer_id_abbreviated = str(peer_id)[-3:]
             bt.logging.warning(
                 f"UID:{uid} - PeerID:{peer_id_abbreviated} - NaN detected in tensor part {part_index}"
             )
-            return True
-        return False
-
-    def _handle_nan_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        return has_nan
+    
+    @staticmethod
+    @torch.jit.script
+    def _handle_nan_tensor(tensor: torch.Tensor) -> torch.Tensor:
         """Replace NaN values with zeros"""
         nan_mask = torch.isnan(tensor)
         if nan_mask.any():
-            clean_tensor = tensor.clone()
-            clean_tensor[nan_mask] = 0.0
-            return clean_tensor
+            tensor.masked_fill_(nan_mask, 0.0)
         return tensor
 
     async def _communicate_with_peer(self, peer_id: PeerID):
