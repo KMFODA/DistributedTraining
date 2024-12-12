@@ -61,7 +61,7 @@ class DTAllReduceRunner(AllReduceRunner):
     @torch.jit.script
     def _fast_nan_check(tensor: torch.Tensor) -> bool:
         """JIT-optimized NaN check"""
-        return torch.isnan(tensor).any()
+        return bool(torch.isnan(tensor).any().item())
 
     def _check_tensor_for_nan(self, tensor: torch.Tensor, peer_id: str, part_index: int) -> bool:
         """Check tensor and handle logging"""
@@ -73,13 +73,13 @@ class DTAllReduceRunner(AllReduceRunner):
                 f"UID:{uid} - PeerID:{peer_id_abbreviated} - NaN detected in tensor part {part_index}"
             )
         return has_nan
-    
+
     @staticmethod
     @torch.jit.script
     def _handle_nan_tensor(tensor: torch.Tensor) -> torch.Tensor:
-        """Replace NaN values with zeros"""
+        """Replace NaN values with zeros in-place"""
         nan_mask = torch.isnan(tensor)
-        if nan_mask.any():
+        if bool(nan_mask.any().item()):
             tensor.masked_fill_(nan_mask, 0.0)
         return tensor
 
