@@ -25,11 +25,13 @@ import typing
 os.environ["NEST_ASYNCIO"] = "0"
 import copy
 
+import bitsandbytes
 import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
 from bitsandbytes.optim import LAMB8bit
+from bitsandbytes.cextension import lib
 from transformers import AutoModelForCausalLM
 import copy
 import numpy as np
@@ -47,6 +49,7 @@ from distributed_training.utils.gradient_averager import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
+    replace_embeddings_with_stable,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -73,6 +76,14 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+
+# Add lamb to bnb str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
+    lib.cadam_8bit_blockwise_grad_fp32,
+    lib.cadam_8bit_blockwise_grad_fp16,
+    lib.cadam_8bit_blockwise_grad_bf16,
+)
 
 
 class Miner(BaseMinerNeuron):
@@ -130,6 +141,7 @@ class Miner(BaseMinerNeuron):
                 self.config.neuron.model_name, trust_remote_code=True
             )
         )
+        self.model = replace_embeddings_with_stable(self.model)
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)
@@ -167,6 +179,7 @@ class Miner(BaseMinerNeuron):
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
                 eps=1e-8,
+                block_wise=True,
             )
 
             self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
@@ -187,6 +200,7 @@ class Miner(BaseMinerNeuron):
                 lr=self.learning_rate_maximum,
                 betas=(0.9, 0.95),
                 eps=1e-8,
+                block_wise=True,
             )
 
         # Init Gradient Averager

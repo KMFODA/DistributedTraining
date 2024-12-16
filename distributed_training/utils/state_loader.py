@@ -7,9 +7,9 @@ import threading
 from typing import Dict, Sequence
 
 import bittensor as bt
+import bitsandbytes
 import torch
-from bitsandbytes.optim import LAMB
-from hivemind.utils import get_logger, nested_pack
+from hivemind.utils import get_logger
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
 
@@ -268,3 +268,39 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 )
                 raise
     return False
+
+
+def replace_embeddings_with_stable(model):
+    """
+    Replace standard embeddings with StableEmbedding in a pre-initialized model.
+
+    Args:
+        model: The initialized GPTOptim model
+    """
+    # Get current embeddings' parameters
+    wte_config = {
+        "num_embeddings": model.model.transformer.wte.num_embeddings,
+        "embedding_dim": model.model.transformer.wte.embedding_dim,
+    }
+    wpe_config = {
+        "num_embeddings": model.model.transformer.wpe.num_embeddings,
+        "embedding_dim": model.model.transformer.wpe.embedding_dim,
+    }
+
+    # Create new StableEmbedding layers
+    new_wte = bitsandbytes.nn.StableEmbedding(**wte_config)
+    new_wpe = bitsandbytes.nn.StableEmbedding(**wpe_config)
+
+    # Copy existing weights
+    with torch.no_grad():
+        new_wte.weight.copy_(model.model.transformer.wte.weight.data)
+        new_wpe.weight.copy_(model.model.transformer.wpe.weight.data)
+
+    # Replace embeddings
+    model.model.transformer.wte = new_wte
+    model.model.transformer.wpe = new_wpe
+
+    # Update weight tying for language model head
+    model.model.lm_head.weight = model.model.transformer.wte.weight
+
+    return model

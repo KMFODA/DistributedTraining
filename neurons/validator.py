@@ -25,11 +25,13 @@ from typing import Optional
 os.environ["NEST_ASYNCIO"] = "0"
 import math
 
+import bitsandbytes
 import bittensor as bt
 import torch
 import threading
 from bitarray import bitarray
 from bitsandbytes.optim import LAMB8bit
+from bitsandbytes.cextension import lib
 from transformers import AutoModelForCausalLM
 
 import hivemind
@@ -52,6 +54,7 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
+    replace_embeddings_with_stable,
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
@@ -66,6 +69,14 @@ from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 
 from huggingface_hub import hf_hub_download
+
+# Add lamb to bnb str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
+    lib.cadam_8bit_blockwise_grad_fp32,
+    lib.cadam_8bit_blockwise_grad_fp16,
+    lib.cadam_8bit_blockwise_grad_bf16,
+)
 
 logger = get_logger(__name__)
 
@@ -143,6 +154,7 @@ class Validator(BaseValidatorNeuron):
                 self.config.neuron.model_name, trust_remote_code=True
             )
         )
+        self.model = replace_embeddings_with_stable(self.model)
 
         # Move the model to the appropriate device
         self.model.to(self.device)
@@ -201,6 +213,7 @@ class Validator(BaseValidatorNeuron):
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
                 eps=1e-8,
+                block_wise=True,
             )
 
             self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
@@ -221,6 +234,7 @@ class Validator(BaseValidatorNeuron):
                 lr=self.learning_rate_maximum,
                 betas=(0.9, 0.95),
                 eps=1e-8,
+                block_wise=True,
             )
         # Init Gradient Averager
         self.grad_averager = DTGradientAverager(
