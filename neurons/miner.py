@@ -49,7 +49,6 @@ from distributed_training.utils.gradient_averager import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
-    replace_embeddings_with_stable,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -141,7 +140,6 @@ class Miner(BaseMinerNeuron):
                 self.config.neuron.model_name, trust_remote_code=True
             )
         )
-        self.model = replace_embeddings_with_stable(self.model)
 
         # Move the model to the appropriate device
         self.model = self.model.to(self.device)

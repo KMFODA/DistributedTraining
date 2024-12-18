@@ -54,7 +54,6 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
-    replace_embeddings_with_stable,
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
@@ -154,7 +153,6 @@ class Validator(BaseValidatorNeuron):
                 self.config.neuron.model_name, trust_remote_code=True
             )
         )
-        self.model = replace_embeddings_with_stable(self.model)
 
         # Move the model to the appropriate device
         self.model.to(self.device)
