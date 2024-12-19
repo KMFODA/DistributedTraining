@@ -4,12 +4,11 @@ import time
 import logging
 import tempfile
 import threading
-from typing import Dict, Sequence
+from typing import Dict
 
 import bittensor as bt
 import torch
-from bitsandbytes.optim import LAMB
-from hivemind.utils import get_logger, nested_pack
+from hivemind.utils import get_logger
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
 
