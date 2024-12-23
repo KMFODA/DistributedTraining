@@ -18,6 +18,7 @@
 
 import asyncio
 import os
+import gc
 import random
 import time
 import typing
@@ -49,6 +50,7 @@ from distributed_training.utils.gradient_averager import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
+    load_model_optimizer_gradient_averager,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -122,102 +124,26 @@ class Miner(BaseMinerNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = self.global_progress.epoch
-
-        # Init Device & Model
-        self.device = self.config.neuron.device
         if self.global_progress.epoch is None:
             bt.logging.error(
                 f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
             )
-        self.model = (
-            AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name,
-                revision=str(self.global_progress.epoch),
-                trust_remote_code=True,
-            )
-            if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, trust_remote_code=True
-            )
-        )
 
-        # Move the model to the appropriate device
-        self.model = self.model.to(self.device)
+        # Init Device
+        self.device = self.config.neuron.device
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        # Init Optimizer
+        # Init Optimizer & Gradient Averager Variables
         self.learning_rate_maximum = 6e-4
         self.weight_decay = 0.1
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": self.weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
-        ]
-        # Try to load optimizer state if it exists
-        try:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=self.config.neuron.model_name,
-                    filename="optimizer.pt",
-                    revision=str(self.global_progress.epoch),
-                ),
-                weights_only=True,
-                map_location="cpu",
-            )
-
-            self.opt = LAMB8bit(
-                optim_groups,
-                lr=optimizer_state["learning_rate"],
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                block_wise=True,
-            )
-
-            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
-
-            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
-
-            bt.logging.info(
-                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
-            )
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-            # Initialize fresh optimizer
-            self.opt = LAMB8bit(
-                optim_groups,
-                lr=self.learning_rate_maximum,
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                block_wise=True,
-            )
-
-        # Init Gradient Averager
         self.all_reduce_timeout = 360
-        self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
-            start=True,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-        )
 
+        # Init Model, Optimizer & Gradient Averager
+        load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+
+        # Init Background Loop
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -447,6 +373,11 @@ class Miner(BaseMinerNeuron):
                         for param in self.model.parameters()
                     )
                     bt.logging.info(gradients[-1][-10:].tolist())
+
+                    for i in gradients:
+                        del i
+                    del gradients
+                    gc.colelct()
 
                     if synapse.learning_rate is not None:
                         bt.logging.info(
