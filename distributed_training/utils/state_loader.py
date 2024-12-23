@@ -107,13 +107,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
             map_location="cpu",
         )
 
-        self.opt = LAMB8bit(
-            optim_groups,
-            lr=optimizer_state["learning_rate"],
-            betas=(0.9, 0.95),
-            eps=1e-8,
-            block_wise=True,
-        )
+        self.opt.param_groups = optim_groups
 
         self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
 
