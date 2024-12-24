@@ -80,12 +80,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
 
-    # Delete existing optimizer
-    if hasattr(self, "opt"):
-        del self.opt
-        gc.collect()
-        torch.cuda.empty_cache()
-
     # Load a new optimizer
     param_dict = {pn: p for pn, p in self.model.named_parameters()}
     param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
