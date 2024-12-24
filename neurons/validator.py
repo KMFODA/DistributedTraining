@@ -54,6 +54,7 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
+    load_model_optimizer_gradient_averager,
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
@@ -136,33 +137,8 @@ class Validator(BaseValidatorNeuron):
         dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
-        # Init Device & Model
+        # Init Device
         self.device = self.config.neuron.device
-        if self.global_progress.epoch is None:
-            bt.logging.error(
-                f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
-            )
-        self.model = (
-            AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name,
-                revision=str(self.global_progress.epoch),
-                trust_remote_code=True,
-            )
-            if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, trust_remote_code=True
-            )
-        )
-
-        # Move the model to the appropriate device
-        self.model.to(self.device)
-
-        # For simplicity only pick layers with a dim of 1
-        self.test_layer_indices = [
-            i
-            for i, layer in enumerate(self.model.parameters())
-            if len(layer.size()) == 1
-        ]
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
@@ -172,8 +148,8 @@ class Validator(BaseValidatorNeuron):
 
         # Init All Reduce Variables
         self.train_timeout = 120
-        self.all_reduce_timeout = 420
-        self.load_state_timeout = 120
+        self.all_reduce_timeout = 540
+        self.load_state_timeout = 180
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
         self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
@@ -183,72 +159,17 @@ class Validator(BaseValidatorNeuron):
         self.average_loss = None
         self.weight_decay = 0.1
 
-        # Init Optimizer
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": self.weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
+        # Init Model, Optimizer & Gradient Averager
+        load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+
+        # For simplicity only pick layers with a dim of 1
+        self.test_layer_indices = [
+            i
+            for i, layer in enumerate(self.model.parameters())
+            if len(layer.size()) == 1
         ]
-        # Try to load optimizer state if it exists
-        try:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=self.config.neuron.model_name,
-                    filename="optimizer.pt",
-                    revision=str(self.global_progress.epoch),
-                ),
-                weights_only=True,
-                map_location="cpu",
-            )
 
-            self.opt = LAMB8bit(
-                optim_groups,
-                lr=optimizer_state["learning_rate"],
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                block_wise=True,
-            )
-
-            self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
-
-            del param_dict, decay_params, nodecay_params, optim_groups, optimizer_state
-
-            bt.logging.info(
-                f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
-            )
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-            # Initialize fresh optimizer
-            self.opt = LAMB8bit(
-                optim_groups,
-                lr=self.learning_rate_maximum,
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                block_wise=True,
-            )
-        # Init Gradient Averager
-        self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device("cuda"),
-            start=True,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-        )
+        # Init Background Loop
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())

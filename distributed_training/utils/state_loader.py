@@ -52,6 +52,9 @@ class ModelLoadingManager:
 
 
 def load_model_optimizer_gradient_averager(self, epoch):
+    bt.logging.info(
+        f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
+    )
     # Delete existing model
     if hasattr(self, "model"):
         del self.model.model.transformer.wte.weight
@@ -133,7 +136,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         nodecay_params,
         optim_groups,
     )
-    bt.logging.success(psutil.virtual_memory().available / 10**9)
+
     # Delete existing gradient averager
     if hasattr(self, "grad_averager"):
         for i in self.grad_averager.parameters:
@@ -163,7 +166,9 @@ def load_model_optimizer_gradient_averager(self, epoch):
             allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
         )
 
-    bt.logging.success(psutil.virtual_memory().available / 10**9)
+    bt.logging.info(
+        f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
+    )
 
 
 def load_state_from_peer(self, epoch=None, keep_recent=3):

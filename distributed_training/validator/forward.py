@@ -18,6 +18,7 @@
 
 import asyncio
 import copy
+import gc
 import random
 import time
 
@@ -265,6 +266,10 @@ async def forward(self):
                             for param in self.model.parameters()
                         )
                         bt.logging.info(gradients[-1][-10:].tolist())
+                        for i in gradients:
+                            del i
+                        del gradients
+                        gc.collect()
 
                         bt.logging.info(
                             f"Updating Optimizer Learning Rate To: {self.learning_rate}"
