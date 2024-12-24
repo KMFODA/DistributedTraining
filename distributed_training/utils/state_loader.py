@@ -79,7 +79,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
-    bt.logging.success(psutil.virtual_memory().available / 10**9)
 
     # Delete existing optimizer
     if hasattr(self, "opt"):
