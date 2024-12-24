@@ -80,6 +80,12 @@ def load_model_optimizer_gradient_averager(self, epoch):
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
 
+    # Delete any historic model references in GlobalOptimManager
+    if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
+        self.opt.mng.module_weight_config_triple = (
+            self.opt.mng.module_weight_config_triple[-2:]
+        )
+
     # Load a new optimizer
     param_dict = {pn: p for pn, p in self.model.named_parameters()}
     param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
