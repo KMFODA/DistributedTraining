@@ -85,6 +85,13 @@ async def forward(self):
         all_reduce = True
         self.event.update({"synapse_type": "all_reduce"})
 
+    elif (self.uid == self.master_uid) and (
+        self.local_progress.samples_accumulated == 0
+    ):
+        sample_size = int(self.metagraph.n)
+        all_reduce = False
+        self.event.update({"synapse_type": "train"})
+
     else:
         # If running a Train synapse call, only call the sample_size
         sample_size = self.config.neuron.sample_size
@@ -238,38 +245,8 @@ async def forward(self):
                         )
                         bt.logging.info(current_model_weights_sample)
 
-                        bt.logging.info("Model Gradients Before Clipping")
-                        # Copy gradients
-                        gradients = tuple(
-                            (
-                                param.grad.detach().cpu().clone()
-                                if param.grad is not None
-                                else torch.zeros_like(param)
-                            )
-                            for param in self.model.parameters()
-                        )
-                        bt.logging.info(gradients[-1][-10:].tolist())
-
                         bt.logging.info("Clipping Grads")
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-                        bt.logging.info(
-                            "Model Gradients After Clipping Before Optimizer Step"
-                        )
-                        # Copy gradients
-                        gradients = tuple(
-                            (
-                                param.grad.detach().cpu().clone()
-                                if param.grad is not None
-                                else torch.zeros_like(param)
-                            )
-                            for param in self.model.parameters()
-                        )
-                        bt.logging.info(gradients[-1][-10:].tolist())
-                        for i in gradients:
-                            del i
-                        del gradients
-                        gc.collect()
 
                         bt.logging.info(
                             f"Updating Optimizer Learning Rate To: {self.learning_rate}"

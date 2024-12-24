@@ -201,7 +201,9 @@ class Miner(BaseMinerNeuron):
     def load_latest_model(self):
         while not self.stop_event.is_set():
             # Skip checking if we're currently loading
-            if self.model_loading_manager.is_loading:
+            if (self.model_loading_manager.is_loading) or (
+                hasattr(self, "model") == False
+            ):
                 time.sleep(5)  # Short sleep before checking again
                 continue
 
@@ -345,39 +347,8 @@ class Miner(BaseMinerNeuron):
                     )
                     bt.logging.info(current_model_weights_sample)
 
-                    bt.logging.info("Model Gradients Before Clipping")
-                    # Copy gradients
-                    gradients = tuple(
-                        (
-                            param.grad.detach().cpu().clone()
-                            if param.grad is not None
-                            else torch.zeros_like(param)
-                        )
-                        for param in self.model.parameters()
-                    )
-                    bt.logging.info(gradients[-1][-10:].tolist())
-
                     bt.logging.info("Clipping Grads")
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-                    bt.logging.info(
-                        "Model Gradients After Clipping Before Optimizer Step"
-                    )
-                    # Copy gradients
-                    gradients = tuple(
-                        (
-                            param.grad.detach().cpu().clone()
-                            if param.grad is not None
-                            else torch.zeros_like(param)
-                        )
-                        for param in self.model.parameters()
-                    )
-                    bt.logging.info(gradients[-1][-10:].tolist())
-
-                    for i in gradients:
-                        del i
-                    del gradients
-                    gc.colelct()
 
                     if synapse.learning_rate is not None:
                         bt.logging.info(
