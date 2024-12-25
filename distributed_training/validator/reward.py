@@ -337,6 +337,14 @@ async def get_rewards(
         # Check if peer is connected to DHT & run_id and blacklist them if they are not
         bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
 
+        if (self.uid == self.master_uid) and (
+            self.local_progress.samples_accumulated == 0
+        ):
+            indices = random.sample(range(len(uids)), self.config.neuron.sample_size)
+            uids = np.array([uids[i] for i in indices])
+            responses = [[responses[0][i] for i in indices]]
+            self.miner_uids = uids
+
         # Update UID to PeerID mapping
         map_uid_to_peerid(self, uids)
 

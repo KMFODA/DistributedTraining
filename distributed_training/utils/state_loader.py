@@ -1,6 +1,8 @@
 import os
 import copy
 import time
+import gc
+import hivemind
 import logging
 import tempfile
 import threading
@@ -11,12 +13,16 @@ import torch
 from hivemind.utils import get_logger
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 
-
+from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
 
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
+from distributed_training.utils.gradient_averager import (
+    DTGradientAverager,
+)
+import psutil
 
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
@@ -43,6 +49,139 @@ class ModelLoadingManager:
             self._is_loading = is_loading
             if not is_loading and epoch is not None:
                 self._last_loaded_epoch = epoch
+
+
+def load_model_optimizer_gradient_averager(self, epoch):
+    bt.logging.info(
+        f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
+    )
+    # Delete existing model
+    if hasattr(self, "model"):
+        del self.model.model.transformer.wte.weight
+        del self.model.model.transformer.wte.norm
+        del self.model.model.transformer.wpe.weight
+        del self.model.model.transformer.wpe.norm
+        del self.model.model.transformer.wte
+        del self.model.model.transformer.wpe
+        del self.model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # Load a new model
+    self.model = (
+        AutoModelForCausalLM.from_pretrained(
+            self.config.neuron.model_name, revision=str(epoch), trust_remote_code=True
+        )
+        if epoch
+        else AutoModelForCausalLM.from_pretrained(
+            self.config.neuron.model_name, trust_remote_code=True
+        )
+    )
+    # Move the model to the appropriate device
+    self.model = self.model.to(self.device)
+
+    # Delete any historic model references in GlobalOptimManager
+    if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
+        self.opt.mng.module_weight_config_triple = (
+            self.opt.mng.module_weight_config_triple[-2:]
+        )
+
+    # Load a new optimizer
+    param_dict = {pn: p for pn, p in self.model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {"params": decay_params, "weight_decay": self.weight_decay},
+        {"params": nodecay_params, "weight_decay": 0.0},
+    ]
+    # Try to load optimizer state if it exists
+    try:
+        optimizer_state = torch.load(
+            hf_hub_download(
+                repo_id=self.config.neuron.model_name,
+                filename="optimizer.pt",
+                revision=str(epoch),
+            ),
+            weights_only=True,
+            map_location="cpu",
+        )
+
+        # Delete existing optimizer
+        if hasattr(self, "opt"):
+            self.opt.param_groups = optim_groups
+        else:
+            self.opt = LAMB8bit(
+                optim_groups,
+                lr=optimizer_state["learning_rate"],
+                betas=(0.9, 0.95),
+                eps=1e-8,
+                block_wise=True,
+            )
+
+        self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+
+        del optimizer_state
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
+
+    except Exception as e:
+        bt.logging.warning(
+            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+        )
+        # Initialize fresh optimizer
+        self.opt = LAMB8bit(
+            optim_groups,
+            lr=self.learning_rate_maximum,
+            betas=(0.9, 0.95),
+            eps=1e-8,
+            block_wise=True,
+        )
+    del (
+        param_dict,
+        decay_params,
+        nodecay_params,
+        optim_groups,
+    )
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # Delete existing gradient averager
+    if hasattr(self, "grad_averager"):
+        for i in self.grad_averager.parameters:
+            del i
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Reset gradient buffers and parameters
+        self.grad_averager.parameters = tuple(self.model.parameters())
+
+        self.grad_averager.reset_accumulated_grads_()
+
+    else:
+        # Load a new gradient averager
+        self.grad_averager = DTGradientAverager(
+            self.model.parameters(),
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_grad_averager",
+            compression=hivemind.Uniform8BitQuantization(),
+            state_compression=hivemind.Uniform8BitQuantization(),
+            accumulate_grads_on=torch.device(self.device),
+            start=True,
+            min_group_size=self.config.neuron.min_group_size,
+            min_matchmaking_time=30.0,
+            request_timeout=10.0,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+        )
+
+    bt.logging.info(
+        f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
+    )
 
 
 def load_state_from_peer(self, epoch=None, keep_recent=3):
@@ -81,61 +220,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=3):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    self.model = AutoModelForCausalLM.from_pretrained(
-                        f"{self.config.neuron.model_name}",
-                        revision=str(self.global_progress.epoch),
-                        trust_remote_code=True,
-                    )
-                    self.model.to(self.device)
-
-                    # Initialize optimizer with model parameters
-                    param_dict = {pn: p for pn, p in self.model.named_parameters()}
-                    param_dict = {
-                        pn: p for pn, p in param_dict.items() if p.requires_grad
-                    }
-                    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-                    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-                    optim_groups = [
-                        {"params": decay_params, "weight_decay": self.weight_decay},
-                        {"params": nodecay_params, "weight_decay": 0.0},
-                    ]
-
-                    # Try to load optimizer state if it exists
-                    try:
-                        optimizer_state = torch.load(
-                            hf_hub_download(
-                                repo_id=self.config.neuron.model_name,
-                                filename="optimizer.pt",
-                                revision=str(self.global_progress.epoch),
-                            ),
-                            weights_only=True,
-                            map_location="cpu",
-                        )
-
-                        self.opt.param_groups = optim_groups
-
-                        self.opt.load_state_dict(
-                            optimizer_state["optimizer_state_dict"]
-                        )
-
-                        del (
-                            param_dict,
-                            decay_params,
-                            nodecay_params,
-                            optim_groups,
-                            optimizer_state,
-                        )
-
-                        bt.logging.info(
-                            f"Successfully loaded optimizer state for epoch {self.global_progress.epoch}"
-                        )
-
-                    except Exception as e:
-                        bt.logging.warning(
-                            f"No optimizer state found or failed to load optimizer with error: {str(e)}. Proceeding with current optimizer state.."
-                        )
-
-                    # Successfully loaded model and created optimizer
+                    load_model_optimizer_gradient_averager(self, epoch)
                     break
 
                 except Exception as e:
@@ -145,12 +230,9 @@ def load_state_from_peer(self, epoch=None, keep_recent=3):
                             f"Failed to load model after {MAX_ATTEMPTS} attempts: {str(e)}"
                         )
                     bt.logging.warning(
-                        f"Failed to load model, retrying. Attempt {attempt}/{MAX_ATTEMPTS}"
+                        f"Failed to load model, retrying. Attempt {attempt}/{MAX_ATTEMPTS}. Error {str(e)}"
                     )
 
-            self.grad_averager.parameters = tuple(self.model.parameters())
-            # Reset gradient buffers
-            self.grad_averager.reset_accumulated_grads_()
             state_loaded = True
 
             bt.logging.info("Model Weights After Loading State")
@@ -217,8 +299,6 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 bt.logging.info(
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
-                # # Save model in fp16 for efficiency
-                # self.model.to(dtype=torch.float16)
                 self.model.save_pretrained(tmp_folder)
                 # Save optimizer state
                 optimizer_state = {
