@@ -32,7 +32,7 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
 class DataLoader(IterableDataset):
-    max_pages: int = 519_000_000
+    max_rows: int = 10_800_000
 
     def __init__(
         self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
@@ -42,8 +42,8 @@ class DataLoader(IterableDataset):
         self.tokenizer = tokenizer
         self.base_url = "https://datasets-server.huggingface.co/rows"
         self.params = {
-            "dataset": "HuggingFaceFW/fineweb",
-            "config": "sample-350BT",
+            "dataset": "airtrain-ai/fineweb-edu-fortified",
+            "config": "CC-MAIN-2013-20",
             "split": "train",
         }
         self.rows = rows

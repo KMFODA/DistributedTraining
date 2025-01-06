@@ -18,6 +18,7 @@
 
 import asyncio
 import os
+import gc
 import random
 import time
 import typing
@@ -25,15 +26,17 @@ import typing
 os.environ["NEST_ASYNCIO"] = "0"
 import copy
 
+import bitsandbytes
 import bittensor as bt
 import numpy as np
 import torch
 from bitarray import bitarray
+from bitsandbytes.optim import LAMB8bit
+from bitsandbytes.cextension import lib
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import copy
 import numpy as np
 import threading
-from functools import partial
 
 # Bittensor Miner Template:
 import distributed_training
@@ -47,7 +50,7 @@ from distributed_training.utils.gradient_averager import (
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
-    save_and_upload_state,
+    load_model_optimizer_gradient_averager,
 )
 
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -63,7 +66,6 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     get_global_epoch,
 )
-from bitsandbytes.optim import LAMB
 from distributed_training import __version__, __spec_version__
 
 from huggingface_hub import hf_hub_download
@@ -79,6 +81,14 @@ torch.cuda.manual_seed(42)
 
 import tempfile
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
+
+# Add lamb to bnb str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise
+bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
+    lib.cadam_8bit_blockwise_grad_fp32,
+    lib.cadam_8bit_blockwise_grad_fp16,
+    lib.cadam_8bit_blockwise_grad_bf16,
+)
 
 
 class Miner(BaseMinerNeuron):
@@ -118,96 +128,33 @@ class Miner(BaseMinerNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = self.global_progress.epoch
-
-        # Init Device & Model
-        self.device = self.config.neuron.device
         if self.global_progress.epoch is None:
             bt.logging.error(
                 f"Model Tag Is None. Make Sure You Are Using The Correct Model Name"
             )
-        self.model = (
-            AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name,
-                revision=str(self.global_progress.epoch),
-                trust_remote_code=True,
-            )
-            if self.global_progress.epoch
-            else AutoModelForCausalLM.from_pretrained(
-                self.config.neuron.model_name, trust_remote_code=True
-            )
-        )
 
         # Init tokenizer
         model_name = "distilgpt2"
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Move the model to the appropriate device
-        self.model = self.model.to(self.device)
+        # Init Device
+        self.device = self.config.neuron.device
 
         # Init UID
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
-        # Init Optimizer
+        # Init Optimizer & Gradient Averager Variables
         self.learning_rate_maximum = 6e-4
         self.weight_decay = 0.1
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        optim_groups = [
-            {"params": decay_params, "weight_decay": self.weight_decay},
-            {"params": nodecay_params, "weight_decay": 0.0},
-        ]
-        self.inner_optimizer = torch.optim.AdamW(
-            params=optim_groups, lr=self.learning_rate_maximum
-        )
-        self.outer_optimizer = partial(
-            torch.optim.SGD, lr=self.learning_rate_maximum, momentum=0.9, nesterov=True
-        )
-
-        # Init State Averager
         self.all_reduce_timeout = 360
         self.num_inner_steps = 500
         self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
-        self.state_averager = DTStateAverager(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            optimizer=self.outer_optimizer,
-            params=self.model.parameters(),
-            initialize_optimizer=True,
-            offload_optimizer=self.offload_optimizer,
-            custom_gradients=self.offload_optimizer,
-            start=True,
-            num_inner_steps=self.num_inner_steps,
-            inner_optimizer=self.inner_optimizer,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-        )
 
-        # Init Gradient Averager
-        self.all_reduce_timeout = 360
-        self.grad_averager = DTGradientAverager(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            main_parameters=self.state_averager.main_parameters,
-            offloaded_optimizer=self.state_averager.optimizer,
-            compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
-            start=True,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-        )
+        # Init Model, Optimizer & Gradient Averager
+        load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
 
+        # Init Background Loop
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
@@ -217,7 +164,7 @@ class Miner(BaseMinerNeuron):
 
         # Load dataset
         self.dataset_loader = ()
-        dataset_length = DataLoader.max_pages
+        dataset_length = DataLoader.max_rows
         self.dataset_indices = bitarray(dataset_length)
 
         # Init Wandb
@@ -256,8 +203,14 @@ class Miner(BaseMinerNeuron):
                 [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
             bt.logging.info(current_model_weights_sample)
-            self.loop.run_until_complete(self.forward(distributed_training.protocol.Train(gradient_test_index=2, timeout=120)))
-            
+            self.loop.run_until_complete(
+                self.forward(
+                    distributed_training.protocol.Train(
+                        gradient_test_index=2, timeout=120
+                    )
+                )
+            )
+
     def upload_model(self, epoch, batch_size):
         """Unified function to save and upload both model and optimizer state"""
         attempt = 0
@@ -328,7 +281,9 @@ class Miner(BaseMinerNeuron):
     def load_latest_model(self):
         while not self.stop_event.is_set():
             # Skip checking if we're currently loading
-            if self.model_loading_manager.is_loading:
+            if (self.model_loading_manager.is_loading) or (
+                hasattr(self, "model") == False
+            ):
                 time.sleep(5)  # Short sleep before checking again
                 continue
 
@@ -472,34 +427,8 @@ class Miner(BaseMinerNeuron):
                     )
                     bt.logging.info(current_model_weights_sample)
 
-                    bt.logging.info("Model Gradients Before Clipping")
-                    # Copy gradients
-                    gradients = tuple(
-                        (
-                            param.grad.detach().cpu().clone()
-                            if param.grad is not None
-                            else torch.zeros_like(param)
-                        )
-                        for param in self.model.parameters()
-                    )
-                    bt.logging.info(gradients[-1][-10:].tolist())
-
                     bt.logging.info("Clipping Grads")
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-                    bt.logging.info(
-                        "Model Gradients After Clipping Before Optimizer Step"
-                    )
-                    # Copy gradients
-                    gradients = tuple(
-                        (
-                            param.grad.detach().cpu().clone()
-                            if param.grad is not None
-                            else torch.zeros_like(param)
-                        )
-                        for param in self.model.parameters()
-                    )
-                    bt.logging.info(gradients[-1][-10:].tolist())
 
                     if synapse.learning_rate is not None:
                         bt.logging.info(
@@ -661,7 +590,10 @@ class Miner(BaseMinerNeuron):
             # Log accumulation status
             bt.logging.info(f"Index: {index} | Loss: {loss.detach().item():.2f}")
 
-        # TODO divide gradients by gradient_accumulation_steps
+        # Divide gradients by gradient_accumulation_steps
+        for param in self.model.parameters():
+            param.grad = param.grad / index
+
         # Optimizer step
         self.inner_optimizer.step()
 
