@@ -158,6 +158,8 @@ class Validator(BaseValidatorNeuron):
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
         self.weight_decay = 0.1
+        self.num_inner_steps = 500
+        self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
 
         # Init Model, Optimizer & Gradient Averager
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
