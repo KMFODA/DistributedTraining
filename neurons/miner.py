@@ -197,19 +197,6 @@ class Miner(BaseMinerNeuron):
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
         self.config.neuron.hf_repo_id = "kmfoda/gpt2-1b-miner-1"
-        while True:
-            bt.logging.info("Model Weights Before Loading State")
-            current_model_weights_sample = copy.copy(
-                [layer for layer in self.model.parameters()][-2][-10:].tolist()
-            )
-            bt.logging.info(current_model_weights_sample)
-            self.loop.run_until_complete(
-                self.forward(
-                    distributed_training.protocol.Train(
-                        gradient_test_index=2, timeout=120
-                    )
-                )
-            )
 
     def upload_model(self, epoch, batch_size):
         """Unified function to save and upload both model and optimizer state"""
@@ -407,6 +394,17 @@ class Miner(BaseMinerNeuron):
 
         # # Update mapping of uids to peerids
         try:
+            bt.logging.info("Model Gradients")
+            bt.logging.info(
+                tuple(
+                    (
+                        param.grad.detach().cpu().clone()
+                        if param.grad is not None
+                        else torch.zeros_like(param)
+                    )
+                    for param in self.model.parameters()
+                )[-1][-10:].tolist()
+            )
             gradient_averaging_step = self.grad_averager.step(
                 timeout=(synapse.timeout - 20),
                 wait=False,
@@ -421,6 +419,17 @@ class Miner(BaseMinerNeuron):
 
             if gradient_averaging_step.done():
                 with self.grad_averager.use_averaged_gradients():  # this will fill param.grads with aggregated gradients
+                    bt.logging.info("Model Gradients")
+                    bt.logging.info(
+                        tuple(
+                            (
+                                param.grad.detach().cpu().clone()
+                                if param.grad is not None
+                                else torch.zeros_like(param)
+                            )
+                            for param in self.model.parameters()
+                        )[-1][-10:].tolist()
+                    )
                     bt.logging.info("Model Weights Before Optimizer Step")
                     current_model_weights_sample = copy.copy(
                         [layer for layer in self.model.parameters()][-2][-10:].tolist()
@@ -438,6 +447,7 @@ class Miner(BaseMinerNeuron):
                             param_group["lr"] = synapse.learning_rate
 
                     bt.logging.info("Performing Optimizer Step")
+
                     self.outer_optimizer.step()
 
                     # Reset gradient buffers
@@ -633,8 +643,8 @@ class Miner(BaseMinerNeuron):
                 f"Succesfully responded to request from {synapse.dendrite.hotkey} in {time.perf_counter() - start_time} seconds."
             )
 
-        if self.step % 4 == 0:
-            self.upload_state_in_background(epoch=block, batch_size=index)
+        # if self.step % 4 == 0:
+        #     self.upload_state_in_background(epoch=block, batch_size=index)
 
         return synapse
 

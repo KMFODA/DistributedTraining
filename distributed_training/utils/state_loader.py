@@ -57,12 +57,18 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
     # Delete existing model
     if hasattr(self, "model"):
-        del self.model.model.transformer.wte.weight
-        del self.model.model.transformer.wte.norm
-        del self.model.model.transformer.wpe.weight
-        del self.model.model.transformer.wpe.norm
-        del self.model.model.transformer.wte
-        del self.model.model.transformer.wpe
+        if hasattr(self.model.model.transformer.wte, "weight"):
+            del self.model.model.transformer.wte.weight
+        if hasattr(self.model.model.transformer.wte, "norm"):
+            del self.model.model.transformer.wte.norm
+        if hasattr(self.model.model.transformer.wpe, "weight"):
+            del self.model.model.transformer.wpe.weight
+        if hasattr(self.model.model.transformer.wpe, "norm"):
+            del self.model.model.transformer.wpe.norm
+        if hasattr(self.model.model.transformer, "wte"):
+            del self.model.model.transformer.wte
+        if hasattr(self.model.model.transformer, "wpe"):
+            del self.model.model.transformer.wpe
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
@@ -113,15 +119,15 @@ def load_model_optimizer_gradient_averager(self, epoch):
         if hasattr(self, "opt"):
             self.inner_optimizer.param_groups = optim_groups
         else:
-            self.inner_optimizer = LAMB8bit(
+            self.inner_optimizer = torch.optim.AdamW(
                 optim_groups,
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
                 eps=1e-8,
-                block_wise=True,
+                weight_decay=0.1,
             )
 
-        self.inner_optimizer.load_state_dict(optimizer_state["optimizer_state_dict"])
+        # self.inner_optimizer.load_state_dict(optimizer_state["optimizer_state_dict"])
 
         del optimizer_state
         gc.collect()
@@ -134,13 +140,14 @@ def load_model_optimizer_gradient_averager(self, epoch):
             f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
         )
         # Initialize fresh optimizer
-        self.inner_optimizer = LAMB8bit(
+        self.inner_optimizer = torch.optim.AdamW(
             optim_groups,
-            lr=self.learning_rate_maximum,
+            lr=optimizer_state["learning_rate"],
             betas=(0.9, 0.95),
             eps=1e-8,
-            block_wise=True,
+            weight_decay=0.1,
         )
+
     del (
         param_dict,
         decay_params,
@@ -150,31 +157,40 @@ def load_model_optimizer_gradient_averager(self, epoch):
     gc.collect()
     torch.cuda.empty_cache()
 
-    self.outer_optimizer = partial(
-        torch.optim.SGD, lr=self.learning_rate_maximum, momentum=0.9, nesterov=True
-    )
-
-    self.state_averager = DTStateAverager(
-        dht=self.dht,
-        prefix=f"{self.config.neuron.run_id}_state_averager",
-        optimizer=self.outer_optimizer,
-        params=self.model.parameters(),
-        initialize_optimizer=True,
-        offload_optimizer=self.offload_optimizer,
-        custom_gradients=self.offload_optimizer,
-        start=True,
-        num_inner_steps=self.num_inner_steps,
-        inner_optimizer=self.inner_optimizer,
-        min_group_size=self.config.neuron.min_group_size,
-        min_matchmaking_time=30.0,
-        request_timeout=10.0,
-        next_chunk_timeout=45.0,
-        allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-    )
+    self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
+    breakpoint()
 
     # Delete existing gradient averager
     if hasattr(self, "grad_averager"):
-        for i in self.grad_averager.parameters:
+        for i in self.grad_averager.main_parameters:
+            del i
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    else:
+        self.state_averager = DTStateAverager(
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            optimizer=self.outer_optimizer,
+            params=self.model.parameters(),
+            initialize_optimizer=True,
+            offload_optimizer=self.offload_optimizer,
+            custom_gradients=self.offload_optimizer,
+            start=True,
+            num_inner_steps=self.num_inner_steps,
+            inner_optimizer=self.inner_optimizer,
+            min_group_size=self.config.neuron.min_group_size,
+            min_matchmaking_time=30.0,
+            request_timeout=10.0,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+        )
+    # self.outer_optimizer = self.state_averager.optimizer
+    # self.outer_optimizer = torch.optim.SGD(self.model.parameters(), lr=0.7, momentum=0.9, nesterov=True)
+
+    # Delete existing gradient averager
+    if hasattr(self, "grad_averager"):
+        for i in self.grad_averager.main_parameters:
             del i
         gc.collect()
         torch.cuda.empty_cache()

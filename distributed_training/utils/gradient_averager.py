@@ -583,7 +583,7 @@ class DTGradientAverager(DTAverager):
         self.offloaded_optimizer = offloaded_optimizer
 
         # # self.parameters = tuple(parameters)
-        # self.reuse_grad_buffers = reuse_grad_buffers
+        self.reuse_grad_buffers = reuse_grad_buffers
 
         self.warn = warn
         self.local_samples_accumulated = 0
@@ -774,15 +774,15 @@ class DTGradientAverager(DTAverager):
         """Substitute model's main gradients with averaged gradients"""
         self._new_averaged_grads = False
         with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
+            assert len(averaged_grads) == len(self.main_parameters)
             try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
+                old_grads = [param.grad for param in self.main_parameters]
+                for param, new_grad in zip(self.main_parameters, averaged_grads):
                     # move new_grad to the same device as param before assigning
                     param.grad = new_grad.to(param.device)
                 yield averaged_grads
             finally:
-                for param, old_grad in zip(self.parameters, old_grads):
+                for param, old_grad in zip(self.main_parameters, old_grads):
                     param.grad = old_grad
 
     def notify_used_averaged_gradients(self):
