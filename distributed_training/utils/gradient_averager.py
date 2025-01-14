@@ -5,19 +5,16 @@ from typing import (
     Any,
     AsyncIterator,
     Dict,
-    Iterable,
     Iterator,
-    Optional,
-    Sequence,
-    Union,
     List,
+    Optional,
+    Union,
 )
 
 import bittensor as bt
-import torch
-
 import hivemind
 import hivemind.averaging.averager
+import torch
 from hivemind.averaging.allreduce import (
     AllreduceException,
     AllReduceRunner,
@@ -29,6 +26,9 @@ from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import CompressionInfo, deserialize_torch_tensor
 from hivemind.dht import DHT
+from hivemind.optim.state_averager import (
+    TorchOptimizer,
+)
 from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
@@ -38,10 +38,8 @@ from hivemind.utils.asyncio import (
     as_aiter,
     attach_event_on_finished,
     azip,
+    anext,
     enter_asynchronously,
-)
-from hivemind.optim.state_averager import (
-    TorchOptimizer,
 )
 from hivemind.utils.streaming import split_for_streaming
 from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
@@ -131,7 +129,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
                     bt.logging.info(
-                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
+                        "part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
                     )
                     raise AllreduceException(
                         f"peer {peer_id_abreviated} sent {part_index} parts, but we expected "
@@ -191,18 +189,18 @@ class DTAllReduceRunner(AllReduceRunner):
                             asyncio.create_task(self._communicate_with_peer(peer_id))
                         )
 
-                bt.logging.info(f"Succesfully Communicated With All Peers")
+                bt.logging.info("Succesfully Communicated With All Peers")
 
                 async for (
                     averaged_tensor_delta
                 ) in self.tensor_part_container.iterate_output_tensors():
                     yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
 
-                bt.logging.info(f"Iterate Output Tensors Finished")
+                bt.logging.info("Iterate Output Tensors Finished")
 
                 self.finalize()
 
-                bt.logging.info(f"Finalize Finished")
+                bt.logging.info("Finalize Finished")
 
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()

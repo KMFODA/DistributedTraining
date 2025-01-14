@@ -17,7 +17,6 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -25,22 +24,20 @@ import shutil
 import time
 from functools import lru_cache, update_wrapper
 from ipaddress import ip_address
-from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from logging.handlers import RotatingFileHandler
 from math import floor
-from multiprocessing import Queue
 from typing import Any, Callable, List
 
 import bittensor as bt
-import logging_loki
+import hivemind
 import speedtest
 import wandb
 from dotenv import load_dotenv
-from loguru import logger as bt_logger
-
-import hivemind
-from distributed_training.protocol import Train
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
+from loguru import logger as bt_logger
+
+from distributed_training.protocol import Train
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -194,100 +191,6 @@ class BittensorLogHandler(logging.Handler):
             bt_logger.trace(log_entry)
 
 
-class IpFilter(logging.Filter):
-    """
-    This is a filter which injects contextual information into the log.
-    """
-
-    def __init__(self, ip, port):
-        self.ip = ip
-        self.port = port
-
-    def filter(self, record):
-        record.host = f"{self.ip}:{self.port}"
-        return True
-
-
-class JSONFormatter(logging.Formatter):
-    def __init__(
-        self,
-        network,
-        netuid,
-        hotkey,
-        version,
-        spec_version,
-        run_id,
-        ip,
-        port,
-        uid,
-        neuron_type,
-    ):
-        self.network = network
-        self.netuid = netuid
-        self.hotkey = hotkey
-        self.version = version
-        self.spec_version = spec_version
-        self.run_id = run_id
-        self.ip = ip
-        self.port = port
-        self.uid = uid
-        self.neuron_type = neuron_type
-
-    def format(self, record):
-        try:
-            # TODO Cleanup
-            # Extract real message from the noisy msg line emitted by bittensor
-            msg = "".join(record.getMessage().split(" - ")[1:])
-        except Exception:
-            msg = record.getMessage()
-
-        log_record = {
-            "level": record.levelname.lower(),
-            "module": record.module,
-            "func_name": record.funcName,
-            "thread": record.threadName,
-            "netuid": self.netuid,
-            "network": self.network,
-            "neuron_type": self.neuron_type,
-            "hotkey": self.hotkey,
-            "uid": self.uid,
-            "ip": self.ip,
-            "port": self.port,
-            "message": msg,
-            "filename": record.filename,
-            "lineno": record.lineno,
-            "version": self.version,
-            "spec_version": self.spec_version,
-        }
-        return json.dumps(log_record)
-
-
-class LogHandler(logging_loki.LokiHandler):
-    def handleError(self, record):
-        self.emitter.close()
-        # When Loki endpoint gives error for some reason,
-        # parent .handleError starts spamming error trace for each failure
-        # so we are disabling this default behaviour
-        # super().handleError(record)
-
-
-class CustomLokiLoggingHandler(QueueHandler):
-    def __init__(self, queue: Queue, **kwargs):
-        super().__init__(queue)
-        self.handler = LogHandler(**kwargs)  # noqa: WPS110
-        self.listener = QueueListener(self.queue, self.handler)
-        self.listener.start()
-
-
-class LogHandler(logging_loki.LokiHandler):
-    def handleError(self, record):
-        self.emitter.close()
-        # When Loki endpoints gives error for unexplained reasons,
-        # parent .handleError starts spamming error trace for each failure
-        # so we are disabling this default behaviour for now
-        # super().handleError(record)
-
-
 def logging_filter(record):
     if (record.name != "hivemind.dht.protocol") and (
         record.name != "hivemind.optim.progress_tracker"
@@ -297,68 +200,7 @@ def logging_filter(record):
         return False
 
 
-def add_loki_logger_handler(
-    logger,
-    network,
-    netuid,
-    hotkey,
-    version,
-    spec_version,
-    run_id,
-    ip,
-    port,
-    uid,
-    neuron_type,
-):
-    """Configure sending logs to loki server"""
-
-    def loki_filter(record):
-        return record.levelno > logging.DEBUG
-
-    # Use LokiQueueHandler to upload logs in background
-    loki_handler = CustomLokiLoggingHandler(
-        Queue(-1),
-        url="https://logs-prod-006.grafana.net/loki/api/v1/push",
-        tags={"application": "distributed_training"},
-        auth=(
-            "944477",
-            os.environ["LOKI_KEY"],
-        ),
-        version="1",
-    )
-
-    loki_handler.addFilter(loki_filter)
-
-    # Send logs to loki as JSON
-    loki_handler.setFormatter(
-        JSONFormatter(
-            network,
-            netuid,
-            hotkey,
-            version,
-            spec_version,
-            run_id,
-            ip,
-            port,
-            uid,
-            neuron_type,
-        )
-    )
-    logger.addHandler(loki_handler)
-
-
 def setup_logging(
-    network,
-    netuid,
-    hotkey,
-    version,
-    spec_version,
-    run_id,
-    uid,
-    neuron_type,
-    level=logging.INFO,
-    ip=None,
-    port=None,
     local_logfile="logs_mylogfile.txt",
     config=None,  # Add config parameter
 ):
@@ -366,39 +208,19 @@ def setup_logging(
     # Initialize bittensor logging
     _ = bt.logging()
 
-    # Setup formatters
-    formatter = logging.Formatter("%(message)s")
+    # # Setup bittensor logger
+    # bt_logger = logging.getLogger("bittensor")
+    # bt_logger.setLevel(level)
+    # bt_logger.propagate = False
 
-    # Setup bittensor logger
-    bt_logger = logging.getLogger("bittensor")
-    bt_logger.setLevel(level)
-    bt_logger.propagate = False
+    # # Setup root logger
+    # root_logger = logging.getLogger()
+    # root_logger.setLevel(level)
 
-    use_hivemind_log_handler("nowhere")
-
-    # Setup root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-
-    # Setup BittensorLogHandler
-    bt_handler = BittensorLogHandler()
-    bt_handler.setFormatter(formatter)
-    root_logger.addHandler(bt_handler)
-
-    # Add Loki handler
-    add_loki_logger_handler(
-        root_logger,
-        network,
-        netuid,
-        hotkey,
-        version,
-        spec_version,
-        run_id,
-        ip,
-        port,
-        uid,
-        neuron_type,
-    )
+    # # Setup BittensorLogHandler
+    # bt_handler = BittensorLogHandler()
+    # bt_handler.setFormatter(formatter)
+    # root_logger.addHandler(bt_handler)
 
     # Handle local file logging
     if os.path.exists(local_logfile):
@@ -406,6 +228,7 @@ def setup_logging(
         os.remove(local_logfile)
 
     # Setup hivemind logger
+    use_hivemind_log_handler("nowhere")
     hivemind_logger = logging.getLogger("hivemind")
     hivemind_logger.handlers.clear()
     hivemind_logger.setLevel(logging.DEBUG)
@@ -423,6 +246,8 @@ def setup_logging(
 
     # Setup events logger if config is provided
     if config and not config.neuron.dont_save_events:
+        formatter = logging.Formatter("%(message)s")
+
         # Setup EVENT level
         logging.addLevelName(EVENTS_LEVEL_NUM, "EVENT")
         events_logger = logging.getLogger("event")
@@ -464,7 +289,7 @@ def get_bandwidth():
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
     for key in keys:
-        bandwidth_dict[key] = float(f"{results[key]/ 1e6:.2f}")
+        bandwidth_dict[key] = float(f"{results[key] / 1e6:.2f}")
 
     return bandwidth_dict
 
@@ -541,4 +366,4 @@ def init_dht(self):
                     )
                     retries += 1
                     time.sleep(5)
-                    bt.logging.error(f"Retrying...")
+                    bt.logging.error("Retrying...")

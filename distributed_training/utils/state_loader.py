@@ -6,7 +6,6 @@ import hivemind
 import logging
 import tempfile
 import threading
-from typing import Dict
 
 import bittensor as bt
 import torch
@@ -14,7 +13,6 @@ from hivemind.utils import get_logger
 from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
 from functools import partial
 
-from bitsandbytes.optim import LAMB8bit
 from transformers import AutoModelForCausalLM
 
 from distributed_training.utils.progress_tracker import (
@@ -142,7 +140,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # Initialize fresh optimizer
         self.inner_optimizer = torch.optim.AdamW(
             optim_groups,
-            lr=optimizer_state["learning_rate"],
+            lr=optimizer_state["learning_rate"], # TODO: Change this !!!!!!!!!
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,
