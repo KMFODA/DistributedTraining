@@ -506,7 +506,7 @@ class Miner(BaseMinerNeuron):
                     # Log progress
                     if batch_count % 5 == 0:
                         bt.logging.info(
-                            f"Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                            f":gear: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                         )
 
                     # Upload to HuggingFace every 20 inner steps
@@ -542,7 +542,7 @@ class Miner(BaseMinerNeuron):
         try:
             # Ensure training is paused
             self.training_active.clear()
-            bt.logging.info("Pausing continuous training for all_reduce")
+            bt.logging.info(":warning: Pausing continuous training for all_reduce :warning:")
 
             await asyncio.sleep(1)
 
@@ -555,7 +555,7 @@ class Miner(BaseMinerNeuron):
         finally:
             # Resume training when done
             self.training_active.set()
-            bt.logging.info("Resuming continuous training after all_reduce")
+            bt.logging.succes("Resuming continuous training after all_reduce")
 
     def __del__(self):
         """Cleanup when the miner is destroyed"""

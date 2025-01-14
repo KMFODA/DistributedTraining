@@ -1,29 +1,23 @@
-import os
 import copy
-import time
 import gc
-import hivemind
-import logging
+import os
 import tempfile
 import threading
-
-import bittensor as bt
-import torch
-from hivemind.utils import get_logger
-from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
+import time
 from functools import partial
 
+import bittensor as bt
+import hivemind
+import psutil
+import torch
+from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
 
+from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
-from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.state_averager import DTStateAverager
-import psutil
-
-logger = get_logger(__name__)
-logger.setLevel(logging.INFO)
 
 
 class ModelLoadingManager:
@@ -140,7 +134,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # Initialize fresh optimizer
         self.inner_optimizer = torch.optim.AdamW(
             optim_groups,
-            lr=optimizer_state["learning_rate"], # TODO: Change this !!!!!!!!!
+            lr=optimizer_state["learning_rate"],  # TODO: Change this !!!!!!!!!
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,
@@ -234,7 +228,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=3):
 
     try:
         state_loaded = False
-        if epoch == None:
+        if epoch is None:
             self.global_progress.epoch = get_global_epoch(self)
             epoch = self.global_progress.epoch
 
@@ -350,7 +344,7 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 )
 
                 # Upload everything in one go
-                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.model_name,

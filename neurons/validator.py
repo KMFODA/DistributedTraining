@@ -24,22 +24,22 @@ from typing import Optional
 
 os.environ["NEST_ASYNCIO"] = "0"
 import math
+import threading
 
 import bitsandbytes
 import bittensor as bt
-import torch
-import threading
 from bitarray import bitarray
-from bitsandbytes.optim import LAMB8bit
 from bitsandbytes.cextension import lib
-from transformers import AutoModelForCausalLM
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
 
-import hivemind
 from distributed_training import __spec_version__, __version__
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
-from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.misc import (
     AsyncDendritePool,
     init_dht,
@@ -52,9 +52,9 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
-    load_state_from_peer,
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
+    load_state_from_peer,
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
@@ -62,13 +62,6 @@ from distributed_training.utils.uids import (
     update_run_peerid_list,
 )
 from distributed_training.validator import forward
-from hivemind.compression import deserialize_torch_tensor
-from hivemind.proto import averaging_pb2
-from hivemind.utils import get_logger
-from hivemind.utils.asyncio import aiter_with_timeout
-from hivemind.utils.streaming import combine_from_streaming
-
-from huggingface_hub import hf_hub_download
 
 # Add lamb to bnb str2optimizer8bit_blockwise
 bitsandbytes.functional.str2optimizer8bit_blockwise
@@ -78,7 +71,7 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
     lib.cadam_8bit_blockwise_grad_bf16,
 )
 
-logger = get_logger(__name__)
+hivemind_logger = get_logger(__name__)
 
 
 class Validator(BaseValidatorNeuron):
@@ -252,7 +245,7 @@ class Validator(BaseValidatorNeuron):
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         metadata = None
-        logger.info(f"Downloading parameters from peer {peer}")
+        hivemind_logger.info(f"Downloading parameters from peer {peer}")
         try:
             stub = self.grad_averager.get_stub(
                 self._p2p,
@@ -285,13 +278,13 @@ class Validator(BaseValidatorNeuron):
                 )
 
             if not metadata:
-                logger.exception(f"Peer {peer} did not send its state")
+                hivemind_logger.exception(f"Peer {peer} did not send its state")
                 return
 
-            logger.info(f"Finished downloading state from {peer}")
+            hivemind_logger.info(f"Finished downloading state from {peer}")
             return metadata, tensors
         except Exception as e:
-            logger.exception(f"Failed to download state from {peer} - {repr(e)}")
+            hivemind_logger.exception(f"Failed to download state from {peer} - {repr(e)}")
             return None, None
 
     async def forward(self):
