@@ -18,24 +18,22 @@
 
 import asyncio
 import copy
-import gc
 import random
 import time
 
 import bittensor as bt
 import numpy as np
 import torch
-from huggingface_hub import list_repo_refs, list_repo_files
+from huggingface_hub import list_repo_refs
 from huggingface_hub.utils import HfHubHTTPError
 
 import distributed_training
 from distributed_training.utils.misc import get_bandwidth
-
+from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
     save_and_upload_state,
 )
-from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
 
@@ -103,7 +101,7 @@ async def forward(self):
             # Get active miners
             while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size-len(self.miner_uids)} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids)} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -337,7 +335,7 @@ async def forward(self):
                                 )
                                 if state_loaded:
                                     break
-                            except Exception as e:
+                            except Exception:
                                 attempt += 1
                                 bt.logging.warning(
                                     f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."

@@ -36,7 +36,6 @@ from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 
-from distributed_training import __spec_version__, __version__
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
@@ -58,7 +57,6 @@ from distributed_training.utils.state_loader import (
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
-    map_uid_to_peerid_background_task,
     update_run_peerid_list,
 )
 from distributed_training.validator import forward
@@ -78,36 +76,46 @@ class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
 
-        # Init Logging
-        setup_logging(
-            network=self.config.subtensor.network,
-            netuid=self.config.netuid,
-            hotkey=self.wallet.hotkey.ss58_address,
-            version=__version__,
-            spec_version=__spec_version__,
-            run_id=None,
-            ip=(
-                self.config.axon.ip
-                if self.config.axon.ip != "[::]"
-                else bt.utils.networking.get_external_ip()
-            ),
-            port=self.config.axon.port,
-            uid=self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address),
-            neuron_type="validator",
-        )
+        # Initialize class variables
+        self.train_timeout = 120
+        self.all_reduce_timeout = 540
+        self.load_state_timeout = 180
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+        self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
+        self.warmup_steps = 62  # 306 / 5
+        self.learning_rate_maximum = 0.0025
+        self.weight_decay = 0.1
+        self.num_inner_steps = 500
+        self.offload_optimizer = True
+        self.failed_is_alive_counter_threshold = 10
+        
+        # Initialize components
+        self._init_basic_components()
+        self._init_model_components()
+        self._init_network_components()
+        self._init_uid_components()
 
-        bt.logging.info("load_state()")
+
+    def _init_basic_components(self):
+        """Initialize basic validator components"""
+        
+        # Logging setup
+        setup_logging(config=self.config)
+        
+        bt.logging.debug("load_state()")
         self.load_state()
-
+        
         # Init Dendrite Pool
         self.dendrite_pool = AsyncDendritePool(
-            wallet=self.wallet, metagraph=self.metagraph
+            wallet=self.wallet, 
+            metagraph=self.metagraph
         )
 
         # Init DHT
         init_dht(self)
 
-        # Init Local & Global Progress
+        # Init progress tracking
         self.local_progress = LocalTrainingProgress(
             peer_id=self.dht.peer_id.to_bytes(),
             epoch=0,
@@ -123,7 +131,11 @@ class Validator(BaseValidatorNeuron):
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
             self.wandb = load_wandb(
-                self, self.config, self.wallet, "validator", str(self.dht.peer_id)
+                self, 
+                self.config, 
+                self.wallet, 
+                "validator", 
+                str(self.dht.peer_id)
             )
 
         # Init Dataset
@@ -133,75 +145,64 @@ class Validator(BaseValidatorNeuron):
         # Init Device
         self.device = self.config.neuron.device
 
-        # Init UID
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.metagraph.hotkeys.index(
-            self.config.neuron.master_ss58_address,
-        )
-
-        # Init All Reduce Variables
-        self.train_timeout = 120
-        self.all_reduce_timeout = 540
-        self.load_state_timeout = 180
-        self.model_upload_retry_limit = 3
-        self.model_upload_retry_delay = 10
-        self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
-        self.warmup_steps = 62  # 306 / 5
-        self.learning_rate_maximum = 0.0025
+    def _init_model_components(self):
+        """Initialize model and training components"""
+        # Init learning rate and loss tracking
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
-        self.weight_decay = 0.1
-        self.num_inner_steps = 500
-        self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
 
         # Init Model, Optimizer & Gradient Averager
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
 
-        # For simplicity only pick layers with a dim of 1
+        # Select test layers
         self.test_layer_indices = [
-            i
-            for i, layer in enumerate(self.model.parameters())
+            i for i, layer in enumerate(self.model.parameters())
             if len(layer.size()) == 1
         ]
 
+        # Init model loading manager
+        self.model_loading_manager = ModelLoadingManager()
+
+        # Load state if needed
+        if self.local_progress.epoch < self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+    def _init_network_components(self):
+        """Initialize network and P2P components"""
         # Init Background Loop
         self.loop = asyncio.new_event_loop()
         self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
         self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
-        # Init model_loading_manager
-        self.model_loading_manager = ModelLoadingManager()
-
-        # Load state from peers if validator is not on latest global epoch
-        if self.local_progress.epoch < self.global_progress.epoch:
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
-
-        # Start Main Validation Loop
-        bt.logging.info("Starting validator loop.")
-
         # Log PeerID to chain
+        bt.logging.info("Logging PeerID to chain")
         log_peerid_to_chain(self)
 
-        # Start UID iterator and map_uids_to_peerid
+    def _init_uid_components(self):
+        """Initialize UID related components"""
+        # Set UIDs
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        self.master_uid = self.metagraph.hotkeys.index(
+            self.config.neuron.master_ss58_address,
+        )
+
+        # Init UID mappings
         self.uids_to_peerids = {
             uid: (None, None) for uid in self.metagraph.uids.tolist()
         }
         self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
 
-        # Start UID to PeerID mapping
+        # Init UID to PeerID mapping
         self.stop_event = threading.Event()
-        self.map_uid_to_peerid_thread = threading.Thread(
-            target=map_uid_to_peerid_background_task, args=(self,), daemon=True
-        )
-        # self.map_uid_to_peerid_thread.start()
         map_uid_to_peerid(self, self.metagraph.uids.tolist())
 
         # Update PeerID list
         update_run_peerid_list(self)
 
         # Init UID is_alive counter
-        self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
-        self.failed_is_alive_counter_threshold = 10
+        self.failed_is_alive_counter = {
+            uid: 0 for uid in self.metagraph.uids.tolist()
+        }
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

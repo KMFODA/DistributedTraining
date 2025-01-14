@@ -33,34 +33,6 @@ class IsAlive(bt.Synapse):
     epoch: Optional[int] = None
 
 
-class Train(bt.Synapse):
-    """
-    A simple Train protocol representation which uses bt.Synapse as its base.
-    This protocol helps in handling request and response communication between
-    the miner and the validator.
-
-    Attributes:
-    """
-
-    # List of indices trained on
-    dataset_indices: Optional[list] = None
-
-    # Gradient sums of a randomly chosen index
-    gradient_sums: Optional[list] = None
-
-    # Gradient Index to be evaluated
-    gradient_test_index: int
-
-    # Model Name
-    model_name: Optional[str] = "distributed/gpt2-250m"
-
-    # Model Loss
-    loss: Optional[float] = 0.0
-
-    # Batch Size
-    batch_size: Optional[int] = 8
-
-
 class AllReduce(bt.Synapse):
     answer: Optional[str] = None
     completion: str = pydantic.Field(

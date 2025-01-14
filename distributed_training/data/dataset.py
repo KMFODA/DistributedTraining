@@ -74,7 +74,7 @@ class DataLoader(IterableDataset):
                         ]
                         self.buffer += [self.tokenizer.eos_token_id]
                     break  # If the request was successful, break out of the retry loop
-                except requests.exceptions.RequestException as e:
+                except requests.exceptions.RequestException:
                     attempt += 1
                     bt.logging.warning(
                         f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
@@ -191,10 +191,11 @@ class DataLoader(IterableDataset):
 
 # Global imports
 import asyncio
-import aiohttp
-import numpy as np
 import random
 import typing
+
+import aiohttp
+import numpy as np
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
 
