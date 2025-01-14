@@ -551,6 +551,8 @@ class Miner(BaseMinerNeuron):
                     "steps": index,
                 }
             )
+            self.wandb.log(self.event)
+            self.event = {}
 
         if time.perf_counter() - start_time > timeout:
             bt.logging.error(
