@@ -146,7 +146,7 @@ class Miner(BaseMinerNeuron):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
-        self.grad_processor = AveragingHandler(
+        self.avg_handler = AveragingHandler(
             self.model, self.optimizer, 
             self.grad_averager, self.state_averager
         )
@@ -424,7 +424,7 @@ class Miner(BaseMinerNeuron):
             await asyncio.sleep(2)
 
             # Run allreduce with proper timeout
-            result = await self.grad_processor.run_miner_allreduce(
+            result = await self.avg_handler.run_miner_allreduce(
                 synapse, timeout=synapse.timeout
             )
             return result

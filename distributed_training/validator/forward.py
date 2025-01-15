@@ -78,7 +78,7 @@ async def forward(self):
                     )
 
                 # Run AllReduce as master
-                success, results = await self.grad_processor.run_validator_allreduce(
+                success, results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
                     learning_rate=self.learning_rate,
                     peerids_to_uids=self.peerids_to_uids,
@@ -87,7 +87,7 @@ async def forward(self):
                 if success:
                     # Update scoring based on allreduce participation
                     self.allreduce_scores = (
-                        self.grad_processor.calculate_allreduce_scores(
+                        self.avg_handler.calculate_allreduce_scores(
                             results["participating_peers"],
                             results["failed_peers"],
                             self.peerids_to_uids,

@@ -164,7 +164,7 @@ class Validator(BaseValidatorNeuron):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
-        self.grad_processor = AveragingHandler(
+        self.avg_handler = AveragingHandler(
             self.model, self.optimizer, 
             self.grad_averager, self.state_averager
         )
