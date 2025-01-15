@@ -43,7 +43,7 @@ torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
-
+# TODO HF validation logic
 def score_gradients(self, response, uid, threshold=0.75):
     try:
         if "gradient_sums" not in response.__dict__:
@@ -388,7 +388,7 @@ async def get_rewards(
                     if (
                         (response.dendrite.status_code == 200)
                         and (response.dataset_indices is not None)
-                        and (type(response.dataset_indices) == list)
+                        and (type(response.dataset_indices) is list)
                     )
                     else 0
                 )
@@ -405,11 +405,11 @@ async def get_rewards(
         steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
-        if hasattr(self.model.config, "all_reduce_scores"):
+        if hasattr(self, "all_reduce_scores"):
             all_reduce_scores = torch.FloatTensor(
                 [
                     1
-                    if str(uid) in self.model.config.all_reduce_scores
+                    if str(uid) in self.all_reduce_scores
                     and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
                     else 0
                     for uid in uids.tolist()

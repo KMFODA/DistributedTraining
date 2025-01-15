@@ -39,12 +39,10 @@ import distributed_training
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.exceptions import (
-    GradientAveragingError,
-    ModelStateError,
-    TrainingError,
     handle_training_error,
     log_and_handle_error,
 )
+from distributed_training.utils.averaging import AveragingHandler
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     init_dht,
@@ -79,7 +77,7 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
     lib.cadam_8bit_blockwise_grad_bf16,
 )
 
-
+# TODO Consider model loading inside diloco
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
@@ -146,6 +144,12 @@ class Miner(BaseMinerNeuron):
         # Load initial state if needed
         if self.local_progress.epoch != self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+
+        # Initialize AveragingHandler for allreduce
+        self.grad_processor = AveragingHandler(
+            self.model, self.optimizer, 
+            self.grad_averager, self.state_averager
+        )
 
     def _init_network_components(self):
         """Initialize network and DHT-related components."""
@@ -290,138 +294,6 @@ class Miner(BaseMinerNeuron):
         synapse.epoch = self.local_progress.epoch
         return synapse
 
-    @handle_training_error(
-        error_types=(ModelStateError, GradientAveragingError, TrainingError)
-    )
-    async def run_allreduce(
-        self, synapse: distributed_training.protocol.AllReduce
-    ) -> distributed_training.protocol.AllReduce:
-        """Handle gradient averaging across the network."""
-        bt.logging.info(
-            ":white_heavy_check_mark: Received All Reduce Call :white_heavy_check_mark:"
-        )
-
-        # Wait for model loading to complete
-        while self.model_loading_manager.is_loading:
-            await asyncio.sleep(1)
-
-        try:
-            self.model_loading_manager.set_loading_state(True)
-            await self._update_gradient_settings(synapse)
-            await self._perform_gradient_averaging(synapse)
-            return synapse
-
-        except Exception as e:
-            log_and_handle_error(e, "Gradient averaging failed")
-            synapse.completion = "False"
-            raise GradientAveragingError("Gradient averaging failed") from e
-
-        finally:
-            self.model_loading_manager.set_loading_state(False)
-
-    async def _update_gradient_settings(self, synapse):
-        """Update gradient averager settings from synapse."""
-        if synapse.next_chunk_timeout is not None:
-            self.grad_averager.next_chunk_timeout = synapse.next_chunk_timeout
-            self.grad_averager.allreduce_kwargs["sender_timeout"] = (
-                synapse.next_chunk_timeout
-            )
-            self.grad_averager.allreduce_kwargs["reducer_timeout"] = (
-                synapse.next_chunk_timeout * 2
-            )
-
-        for setting in [
-            "all_reduce_timeout",
-            "min_group_size",
-            "request_timeout",
-            "min_matchmaking_time",
-        ]:
-            value = getattr(synapse, setting, None)
-            if value is not None:
-                if setting == "all_reduce_timeout":
-                    self.grad_averager._allreduce_timeout = value
-                else:
-                    self.grad_averager.matchmaking_kwargs[setting] = value
-
-    async def _perform_gradient_averaging(self, synapse) -> bool:
-        """Perform the gradient averaging step."""
-        self._log_current_gradients()
-
-        gradient_averaging_step = self.grad_averager.step(
-            timeout=(synapse.timeout - 20),
-            wait=False,
-            gather=self.local_progress.samples_accumulated,
-        )
-
-        if await self._wait_for_averaging(gradient_averaging_step, synapse.timeout):
-            await self._apply_averaged_gradients(synapse)
-            return True
-        return False
-
-    async def _wait_for_averaging(self, gradient_averaging_step, timeout) -> bool:
-        """Wait for gradient averaging to complete."""
-        start_time = time.perf_counter()
-        while (
-            not gradient_averaging_step.done()
-            and (time.perf_counter() - start_time) <= timeout
-        ):
-            await asyncio.sleep(1)
-        return gradient_averaging_step.done()
-
-    async def _apply_averaged_gradients(self, synapse):
-        """Apply averaged gradients and update model state."""
-        with self.grad_averager.use_averaged_gradients():
-            current_weights = self._get_model_weights_sample()
-
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-            if synapse.learning_rate is not None:
-                for param_group in self.outer_optimizer.param_groups:
-                    param_group["lr"] = synapse.learning_rate
-
-            self.outer_optimizer.step()
-            self.grad_averager.reset_accumulated_grads_()
-
-            if not self._validate_weight_update(current_weights):
-                raise ModelStateError("Weight update validation failed")
-
-            self.local_progress.epoch += 1
-            self.local_progress.samples_accumulated = 0
-            synapse.completion = "True"
-
-    async def _cleanup_failed_averaging(self):
-        """Cleanup after failed gradient averaging."""
-        with self.grad_averager.use_averaged_gradients():
-            self.outer_optimizer.zero_grad()
-
-    def _log_current_gradients(self):
-        """Log current model gradients for debugging."""
-        gradients = tuple(
-            param.grad.detach().cpu().clone()
-            if param.grad is not None
-            else torch.zeros_like(param)
-            for param in self.model.parameters()
-        )[-1][-10:].tolist()
-        bt.logging.debug(f"Current gradients: {gradients}")
-
-    def _validate_weight_update(self, old_weights) -> bool:
-        """Validate that weights were properly updated."""
-        new_weights = self._get_model_weights_sample()
-
-        if new_weights == old_weights:
-            bt.logging.error("Weights haven't changed after update")
-            return False
-
-        if sum(np.isnan(new_weights)) > 1:
-            bt.logging.error("Weights contain NaNs after update")
-            return False
-
-        return True
-
-    def _get_model_weights_sample(self) -> typing.List[float]:
-        """Get a sample of current model weights for validation."""
-        return [layer for layer in self.model.parameters()][-2][-10:].tolist()
-
     def start_continuous_training(self):
         """Starts continuous training in a background thread"""
         if self.training_thread is None or not self.training_thread.is_alive():
@@ -483,6 +355,8 @@ class Miner(BaseMinerNeuron):
 
                 for batch in dataset:
                     if not self.training_active.is_set():
+                        # Clean up gradients if interrupted
+                        self.inner_optimizer.zero_grad()
                         break
 
                     # Convert batch to tensor and move to device
@@ -533,7 +407,7 @@ class Miner(BaseMinerNeuron):
 
             except Exception as e:
                 bt.logging.error(f"Error in continuous training loop: {str(e)}")
-                time.sleep(1)  # Prevent rapid retries on persistent errors
+                time.sleep(1)
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -541,12 +415,19 @@ class Miner(BaseMinerNeuron):
         """Handle incoming all_reduce requests by pausing continuous training"""
         try:
             # Ensure training is paused
-            self.training_active.clear()
-            bt.logging.info(":warning: Pausing continuous training for all_reduce :warning:")
+            self.pause_training()
+            bt.logging.info(
+                ":warning: Pausing continuous training for all_reduce query :warning:"
+            )
 
-            await asyncio.sleep(1)
+            # Wait for running training process to finish
+            await asyncio.sleep(2)
 
-            return await self.run_allreduce(synapse)
+            # Run allreduce with proper timeout
+            result = await self.grad_processor.run_miner_allreduce(
+                synapse, timeout=synapse.timeout
+            )
+            return result
 
         except Exception as e:
             log_and_handle_error(e, "all_reduce operation failed")
@@ -554,7 +435,7 @@ class Miner(BaseMinerNeuron):
 
         finally:
             # Resume training when done
-            self.training_active.set()
+            self.resume_training()
             bt.logging.succes("Resuming continuous training after all_reduce")
 
     def __del__(self):
