@@ -77,7 +77,7 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
     lib.cadam_8bit_blockwise_grad_bf16,
 )
 
-# TODO Consider model loading inside diloco
+# TODO Consider when/how we would do model loading when using diloco
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
