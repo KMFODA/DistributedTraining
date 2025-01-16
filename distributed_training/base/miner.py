@@ -58,7 +58,7 @@ class BaseMinerNeuron(BaseNeuron):
         )
 
         # Attach determiners which functions are called when servicing a request.
-        bt.logging.info(f"Attaching forward function to miner axon.")
+        bt.logging.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.is_alive,
             blacklist_fn=self.blacklist_is_alive,
@@ -84,7 +84,7 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Log PeerID to chain flag
         self.peer_id_logged_to_chain = False
-
+    
     def run(self):
         """
         Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
@@ -129,7 +129,7 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
-                    if self.peer_id_logged_to_chain == False:
+                    if self.peer_id_logged_to_chain is False:
                         log_peerid_to_chain(self)
 
                     if not self.config.neuron.dont_wandb_log:
@@ -137,9 +137,10 @@ class BaseMinerNeuron(BaseNeuron):
                             self.event.update(self.get_miner_info())
                             try:
                                 self.event.update(get_bandwidth())
-                            except:
+                            except Exception:
                                 bt.logging.info("Error getting bandwidth metrics")
-                            
+                            self.wandb.log(self.event)
+                            self.event = {}
 
                     # Wait before checking again.
                     time.sleep(1)

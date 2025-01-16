@@ -193,6 +193,13 @@ def add_args(cls, parser, prefix=None):
         help="Toggles wandb logging for the project",
         default=False,
     )
+    
+    parser.add_argument(
+        "--neuron.wandb_log_blocks",
+        action="store_true",
+        help="Number of blocks between validator logs",
+        default=50,
+    )
 
     parser.add_argument(
         "--neuron.wandb_project",

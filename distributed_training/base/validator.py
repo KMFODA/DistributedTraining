@@ -76,6 +76,28 @@ class BaseValidatorNeuron(BaseNeuron):
 
         # Log PeerID to chain flag
         self.peer_id_logged_to_chain = False
+        
+        # Add block tracking for logging
+        self.log_interval_blocks = self.config.neuron.wandb_log_blocks
+        self.accumulated_events = {}
+    
+    def aggregate_events(self, new_events):
+        """Aggregates events between logging intervals"""
+        for key, value in new_events.items():
+            if key in self.accumulated_events:
+                if isinstance(value, (int, float)):
+                    # For numeric values, keep running average
+                    self.accumulated_events[key] = (self.accumulated_events[key] + value) / 2
+                else:
+                    # For non-numeric values, keep the latest
+                    self.accumulated_events[key] = value
+            else:
+                self.accumulated_events[key] = value
+    
+    def should_log(self):
+        """Determines if enough blocks have passed to log"""
+        blocks_passed = self.block - self.last_log_block
+        return blocks_passed >= self.log_interval_blocks
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -132,6 +154,8 @@ class BaseValidatorNeuron(BaseNeuron):
         # Check that validator is registered on the network.
         self.event = {}
         self.sync()
+        
+        self.last_log_block = self.block
 
         bt.logging.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
@@ -144,9 +168,14 @@ class BaseValidatorNeuron(BaseNeuron):
             while True:
                 bt.logging.info(f"step({self.step}) block({self.block})")
 
-                # Init Wandb Event For Step
-                if self.event != {}:
+                # Clear event only if we're going to log this step
+                if self.should_log():
                     self.event = {}
+                else:
+                    # Aggregate current event data into accumulated_events
+                    if self.event:
+                        self.aggregate_events(self.event)
+                        self.event = {}
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
@@ -158,12 +187,25 @@ class BaseValidatorNeuron(BaseNeuron):
                 # Sync metagraph and potentially set weights.
                 self.sync()
 
-                # Log to wandb
-                if not self.config.neuron.dont_wandb_log:
+                # Log to wandb only every log_interval_blocks
+                if not self.config.neuron.dont_wandb_log and self.should_log():
+                    # Combine accumulated events with current events
+                    if self.accumulated_events:
+                        self.event.update(self.accumulated_events)
+                        self.accumulated_events = {}
+                    
+                    # Add block information
+                    self.event.update({
+                        "current_block": self.block,
+                        "blocks_since_last_log": self.block - self.last_log_block
+                    })
+                    
                     self.wandb.log(self.event)
+                    self.last_log_block = self.block
+                    self.event = {}
 
                 self.step += 1
-                if self.peer_id_logged_to_chain == False:
+                if self.peer_id_logged_to_chain is False:
                     log_peerid_to_chain(self)
 
         # If someone intentionally stops the validator, it'll safely terminate operations.

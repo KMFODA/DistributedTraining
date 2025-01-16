@@ -98,7 +98,7 @@ async def forward(self):
         all_reduce = False
         self.event.update({"synapse_type": "train"})
 
-    if (self.uid == self.master_uid) or (all_reduce == False):
+    if (self.uid == self.master_uid) or (all_reduce is False):
         if all_reduce:
             # Get active miners
             while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
@@ -337,7 +337,7 @@ async def forward(self):
                                 )
                                 if state_loaded:
                                     break
-                            except Exception as e:
+                            except Exception:
                                 attempt += 1
                                 bt.logging.warning(
                                     f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
@@ -382,7 +382,7 @@ async def forward(self):
                             if (
                                 (response.dendrite.status_code == 200)
                                 and (response.dataset_indices is not None)
-                                and (type(response.dataset_indices) == list)
+                                and (type(response.dataset_indices) is list)
                             )
                         ]
                     )
@@ -440,7 +440,7 @@ async def forward(self):
 
     try:
         self.event.update(get_bandwidth())
-    except:
+    except Exception:
         bt.logging.info("Error getting bandwidth metrics")
 
     return responses
