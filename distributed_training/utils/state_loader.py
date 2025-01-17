@@ -13,11 +13,10 @@ import torch
 from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
 
-from distributed_training.utils.gradient_averager import DTGradientAverager
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
-from distributed_training.utils.state_averager import DTStateAverager
+from distributed_training.utils.dt_averagers import DTStateAverager, DTGradAverager
 
 
 class ModelLoadingManager:
@@ -194,7 +193,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
 
     else:
         # Load a new gradient averager
-        self.grad_averager = DTGradientAverager(
+        self.grad_averager = DTGradAverager(
             main_parameters=self.state_averager.main_parameters,
             offloaded_optimizer=self.state_averager.optimizer,
             dht=self.dht,

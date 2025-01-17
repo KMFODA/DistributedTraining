@@ -39,10 +39,11 @@ import distributed_training
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.exceptions import (
-    handle_training_error,
+    handle_error,
     log_and_handle_error,
+    TrainingError
 )
-from distributed_training.utils.averaging import AveragingHandler
+from distributed_training.utils.average_handler import AveragingHandler
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     init_dht,
@@ -78,6 +79,7 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 )
 
 # TODO Consider when/how we would do model loading when using diloco
+# TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
@@ -330,7 +332,9 @@ class Miner(BaseMinerNeuron):
         )
         return dataset
 
-    @handle_training_error
+    @handle_error(
+        error_types=(TrainingError, Exception)
+    )
     def continuous_training_loop(self):
         """Main continuous training loop"""
         inner_step_counter = 0
@@ -405,7 +409,7 @@ class Miner(BaseMinerNeuron):
                         }
                     )
 
-            except Exception as e:
+            except TrainingError as e:
                 bt.logging.error(f"Error in continuous training loop: {str(e)}")
                 time.sleep(1)
 

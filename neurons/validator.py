@@ -38,7 +38,7 @@ from hivemind.utils.streaming import combine_from_streaming
 
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.averaging import AveragingHandler
+from distributed_training.utils.average_handler import AveragingHandler
 from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
 from distributed_training.utils.misc import (
     AsyncDendritePool,
@@ -72,7 +72,6 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 
 hivemind_logger = get_logger(__name__)
 
-# TODO Set self.blocks_since_last_allreduce properly
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)

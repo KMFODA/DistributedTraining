@@ -32,12 +32,13 @@ import bittensor as bt
 import hivemind
 import speedtest
 import wandb
+
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from loguru import logger as bt_logger
 
-from distributed_training.protocol import Train
+from distributed_training.protocol import AllReduce
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -139,7 +140,7 @@ class AsyncDendritePool:
         self.dendrite = bt.dendrite(wallet=wallet)
 
     async def async_forward(
-        self, uids: List[int], queries: List[Train], timeout: float = 150.0
+        self, uids: List[int], queries: List[AllReduce], timeout: float = 150.0
     ):
         def call_single_uid(uid, query):
             return self.dendrite(

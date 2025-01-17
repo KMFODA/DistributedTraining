@@ -8,15 +8,13 @@ import torch
 
 import distributed_training
 from distributed_training.exceptions import (
-    GradientAveragingError,
+    StateAveragingError,
     ModelStateError,
-    TrainingError,
-    handle_training_error,
+    handle_error,
     log_and_handle_error,
 )
 
 # TODO Remove redundant code after moving to diloco
-# TODO Check exception handling and logging.debug instead of logging.info
 class AveragingHandler:
     """Handles averaging round and outer step for both validators and miners."""
 
@@ -44,7 +42,7 @@ class AveragingHandler:
             gradient_averaging_step.cancel()
             with self.grad_averager.use_averaged_gradients():
                 self.optimizer.zero_grad()
-            bt.logging.info("Gradient averaging cleanup completed")
+            bt.logging.debug("Gradient averaging cleanup completed")
         except Exception as e:
             log_and_handle_error(e, "_cleanup_failed_averaging")
 
@@ -60,11 +58,11 @@ class AveragingHandler:
 
         return True
 
-    @handle_training_error(
-        error_types=(ModelStateError, GradientAveragingError, Exception),
+    @handle_error(
+        error_types=(ModelStateError, StateAveragingError, Exception),
         default_return=False,
     )
-    async def _step_outer(self) -> bool:
+    async def _step_outer(self, timeout) -> bool:
         """Sync pseudo grads, step outer optimizer and validate the update."""
         with self.grad_averager.use_averaged_gradients():
             initial_weights = self._get_weights_sample()
@@ -75,7 +73,20 @@ class AveragingHandler:
 
             # Perform optimization steps
             bt.logging.info("Performing Outer Optimizer Step..")
-            self.state_averager.step(increment_epoch=True, should_step_optimizer=True)
+            start_time = time.perf_counter()
+
+
+            state_averaging_step = self.state_averager.step(increment_epoch=True, should_step_optimizer=True)
+            # Wait for completion
+            while (
+                not state_averaging_step.done()
+                and (time.perf_counter() - start_time) <= timeout
+            ):
+                await asyncio.sleep(1)
+
+            if not state_averaging_step.done():
+                raise StateAveragingError("State averaging timed out")
+            
             self.state_averager.update_main_param_after_outer_step()
             bt.logging.succes("Finished Outer Optimizer Step!")
 
@@ -84,43 +95,24 @@ class AveragingHandler:
 
             # Validate weight updates
             await self._validate_weight_update(initial_weights)
-            return True
+            return True, self.state_averager.result() # Return results, i.e. peers that failed, participated etc.
 
-    @handle_training_error(
-        error_types=(ModelStateError, GradientAveragingError, TrainingError),
+    @handle_error(
+        error_types=(ModelStateError, StateAveragingError, Exception),
         default_return=(False, {}),
     )
     async def run_validator_allreduce(
-        self, timeout: int, peerids_to_uids: Dict[str, str]
+        self, timeout: int,
     ) -> Tuple[bool, Dict[str, Any]]:
         """Process allreduce specifically for validator."""
         # Start gradient averaging
-        gradient_averaging_step = self.grad_averager.step(
-            timeout=timeout, wait=False, peerids_to_uids=peerids_to_uids
-        )
 
         try:
-            start_time = time.perf_counter()
-
-            # Wait for completion
-            while (
-                not gradient_averaging_step.done()
-                and (time.perf_counter() - start_time) <= timeout
-            ):
-                await asyncio.sleep(1)
-
-            if not gradient_averaging_step.done():
-                raise GradientAveragingError("Gradient averaging timed out")
-
-            # TODO Move to state_averager.step() ?
-            # Get averaging results
-            gathered, failed_peers, participating_peers = (
-                gradient_averaging_step.result()
-            )
-
+            gradient_averaging_step = self.grad_averager.step(wait=False)
+            
             # Step state_averager/outer optimizer
-            success = await self._step_outer()
-
+            success, (gathered, failed_peers, participating_peers) = await self._step_outer(timeout)
+            
             return success, {
                 "gathered": gathered,
                 "failed_peers": failed_peers,
@@ -207,8 +199,8 @@ class AveragingHandler:
             while model_loading_manager.is_loading:
                 await asyncio.sleep(1)
 
-    @handle_training_error(
-        error_types=(ModelStateError, GradientAveragingError, TrainingError)
+    @handle_error(
+        error_types=(ModelStateError, StateAveragingError, Exception)
     )
     async def run_miner_allreduce(
         self, synapse, timeout: int
@@ -222,34 +214,20 @@ class AveragingHandler:
         gradient_averaging_step = None
         try:
             # Start gradient averaging
-            gradient_averaging_step = self.grad_averager.step(
-                timeout=timeout, wait=False
-            )
-
-            start_time = time.perf_counter()
-
-            # Wait for completion
-            while (
-                not gradient_averaging_step.done()
-                and (time.perf_counter() - start_time) <= timeout
-            ):
-                await asyncio.sleep(1)
-
-            if not gradient_averaging_step.done():
-                raise GradientAveragingError("Gradient averaging timed out")
+            gradient_averaging_step = self.grad_averager.step(wait=False)
 
             # Step state_averager/outer optimizer
-            await self._step_outer()
+            await self._step_outer(timeout)
 
+            # TODO Could return the result of the outer step to the validator for more detailed stats?
             synapse.completion = "True"
             return synapse
 
         except Exception as e:
-            synapse.completion = "False"
-            if gradient_averaging_step:
-                await self._cleanup_failed_averaging(gradient_averaging_step)
-            log_and_handle_error(e, "run_miner_allreduce")
+            await self._cleanup_failed_averaging(gradient_averaging_step)
+            log_and_handle_error(e, "run_validator_allreduce")
             raise
+        
         finally:
             if self.model_loading_manager:
                 self.model_loading_manager.set_loading_state(False)

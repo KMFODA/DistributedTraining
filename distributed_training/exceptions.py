@@ -4,6 +4,10 @@ from typing import Optional
 
 import bittensor as bt
 
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+)
+
 
 class TrainingError(Exception):
     """Base exception class for training-related errors."""
@@ -20,7 +24,7 @@ class ModelStateError(TrainingError):
     pass
 
 
-class GradientAveragingError(TrainingError):
+class StateAveragingError(TrainingError):
     """Raised when gradient averaging fails."""
 
     pass
@@ -32,38 +36,36 @@ class NetworkError(TrainingError):
     pass
 
 
-def handle_training_error(error_types: tuple = (Exception,), default_return=None):
+def handle_error(error_types: tuple = (Exception,), default_return=None):
     """
     Decorator for standardized error handling in training functions.
+    Automatically triggers state loading for StateAveragingError and ModelStateError.
 
     Args:
         error_types: Tuple of exception types to catch
         default_return: Value to return on error
     """
-
     def decorator(func):
         @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(self, *args, **kwargs):
             try:
-                return await func(*args, **kwargs)
+                return await func(self, *args, **kwargs)
             except error_types as e:
                 error_name = e.__class__.__name__
                 error_msg = str(e)
                 tb = traceback.format_exc()
-
+                
                 bt.logging.error(f"{error_name} in {func.__name__}: {error_msg}\n{tb}")
 
-                if isinstance(e, ModelStateError):
-                    # Trigger model reload
-                    if len(args) > 0 and hasattr(args[0], "load_state_from_peer"):
-                        await args[0].load_state_from_peer()
+                # Automatically load state for averaging/model state errors
+                if isinstance(e, (StateAveragingError, ModelStateError)):
+                    bt.logging.info("Loading latest model state after failure")
+                    await load_state_from_peer(self)
 
                 return default_return
 
         return wrapper
-
     return decorator
-
 
 def log_and_handle_error(error: Exception, context: str = "") -> None:
     """
