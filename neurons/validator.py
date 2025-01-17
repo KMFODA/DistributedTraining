@@ -55,6 +55,7 @@ from distributed_training.utils.state_loader import (
     load_state_from_peer,
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
+    cleanup_old_cache,
 )
 from distributed_training.utils.uids import (
     map_uid_to_peerid,
@@ -169,8 +170,9 @@ class Validator(BaseValidatorNeuron):
         self.average_loss = None
         self.weight_decay = 0.1
 
-        # Init Model, Optimizer & Gradient Averager
+        # Init Model, Optimizer & Gradient Averager & Clear Cache
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+        cleanup_old_cache(self)
 
         # For simplicity only pick layers with a dim of 1
         self.test_layer_indices = [
