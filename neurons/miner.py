@@ -91,6 +91,16 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
+        # Update wandb project
+        if self.neuron_type == "MinerNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_miners"
+            )
+        elif self.neuron_type == "ValidatorNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_validators"
+            )
+
         # Init Logging
         setup_logging(
             network=self.config.subtensor.network,

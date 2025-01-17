@@ -157,9 +157,12 @@ class BaseValidatorNeuron(BaseNeuron):
 
                 # Sync metagraph and potentially set weights.
                 self.sync()
-
                 # Log to wandb
-                if not self.config.neuron.dont_wandb_log:
+                if (
+                    not self.config.neuron.dont_wandb_log
+                    and "uids" in self.event
+                    and len(self.event["uids"]) > 0
+                ):
                     self.wandb.log(self.event)
 
                 self.step += 1
