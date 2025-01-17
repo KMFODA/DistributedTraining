@@ -276,17 +276,15 @@ def cleanup_old_cache(self, keep_recent):
             revisions = sorted(
                 repo.revisions, key=lambda r: r.last_modified, reverse=True
             )
-            current_index = next(
-                (
-                    i
-                    for i, r in enumerate(revisions)
-                    if r.commit_hash == current_revision
-                ),
-                None,
-            )
-            if current_index is not None:
-                for revision in revisions[max(current_index + 1, keep_recent) :]:
-                    cache_info.delete_revisions(revision.commit_hash).execute()
+            if current_revision is not None:
+                for revision in revisions:
+                    if revision.commit_hash == current_revision:
+                        continue
+                    else:
+                        bt.logging.info(
+                            f"Deleting cache for revision {revision.commit_hash}"
+                        )
+                        cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
 
