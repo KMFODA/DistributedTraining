@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
-from distributed_training.utils.dt_averagers import DTStateAverager, DTGradAverager
+from distributed_training.averaging.averagers import DTStateAverager, DTGradAverager
 
 
 class ModelLoadingManager:
@@ -149,7 +149,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
     torch.cuda.empty_cache()
 
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
-    breakpoint()
 
     # Delete existing gradient averager
     if hasattr(self, "grad_averager"):
@@ -168,8 +167,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
             offload_optimizer=self.offload_optimizer,
             custom_gradients=self.offload_optimizer,
             start=True,
-            num_inner_steps=self.num_inner_steps,
-            inner_optimizer=self.inner_optimizer,
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,

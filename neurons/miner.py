@@ -25,6 +25,7 @@ import typing
 
 os.environ["NEST_ASYNCIO"] = "0"
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import bitsandbytes
 import bittensor as bt
@@ -39,11 +40,11 @@ import distributed_training
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.exceptions import (
+    TrainingError,
     handle_error,
     log_and_handle_error,
-    TrainingError
 )
-from distributed_training.utils.average_handler import AveragingHandler
+from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     init_dht,
@@ -77,6 +78,7 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
     lib.cadam_8bit_blockwise_grad_fp16,
     lib.cadam_8bit_blockwise_grad_bf16,
 )
+
 
 # TODO Consider when/how we would do model loading when using diloco
 # TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
@@ -149,9 +151,14 @@ class Miner(BaseMinerNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.optimizer, 
-            self.grad_averager, self.state_averager
+            self.model, self.optimizer, self.grad_averager, self.state_averager
         )
+
+        # Initialize thread pool for background uploads
+        self.upload_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="model_upload"
+        )
+        self.current_upload_future = None
 
     def _init_network_components(self):
         """Initialize network and DHT-related components."""
@@ -230,11 +237,27 @@ class Miner(BaseMinerNeuron):
                     raise
         return False
 
-    def upload_state_in_background(self, epoch, batch_size):
-        self.state_upload_thread = threading.Thread(
-            target=self.upload_model, args=(epoch, batch_size), daemon=True
+    def start_background_upload(self, epoch, batch_size):
+        """Starts a background upload of the model state, managing ongoing uploads."""
+        # If there's an ongoing upload, check if it's done
+        if self.current_upload_future and not self.current_upload_future.done():
+            bt.logging.info("Previous upload still in progress, skipping new upload")
+            return
+
+        # Start new upload
+        self.current_upload_future = self.upload_executor.submit(
+            self.upload_model, epoch, batch_size
         )
-        self.state_upload_thread.start()
+
+        # Optional: Add callback to handle completion
+        def upload_completed(future):
+            try:
+                future.result()  # This will raise any exceptions that occurred
+                bt.logging.info("Model upload completed successfully")
+            except Exception as e:
+                bt.logging.error(f"Model upload failed: {str(e)}")
+
+        self.current_upload_future.add_done_callback(upload_completed)
 
     def load_latest_model(self):
         while not self.stop_event.is_set():
@@ -332,9 +355,7 @@ class Miner(BaseMinerNeuron):
         )
         return dataset
 
-    @handle_error(
-        error_types=(TrainingError, Exception)
-    )
+    @handle_error(error_types=(TrainingError, Exception))
     def continuous_training_loop(self):
         """Main continuous training loop"""
         inner_step_counter = 0
@@ -389,7 +410,7 @@ class Miner(BaseMinerNeuron):
 
                     # Upload to HuggingFace every 20 inner steps
                     if inner_step_counter % 20 == 0:
-                        self.upload_state_in_background(
+                        self.start_background_upload(
                             epoch=self.local_progress.epoch,
                             batch_size=self.config.neuron.local_batch_size_train,
                         )

@@ -1,3 +1,5 @@
+# With many thanks to Prime-Intellect for inspiration for this code
+
 import asyncio
 import logging
 from typing import (
@@ -47,8 +49,8 @@ hivemind_logger.setLevel(logging.INFO)
 
 class DTGradAverager(DecentralizedAverager):
     """ "
-    DiLoCoGradAverager is meant to be used in pair with DiLoCoStateAverager. Specifically it takes as input the offloaded optimizer of DiLoCoStateAverager, and
-    use the grad buffer of the offloaded param as averaged_tensors for the DecentralizedAverager. In other words the DiLoCoGradAverager makes sure that the grad of the offloaded optimizer
+    DTGradAverager is meant to be used in pair with DTStateAverager. Specifically it takes as input the offloaded optimizer of DTStateAverager, and
+    use the grad buffer of the offloaded param as averaged_tensors for the DecentralizedAverager. In other words the DTGradAverager makes sure that the grad of the offloaded optimizer
     are kept in sync between peers.
     """
 
@@ -64,13 +66,13 @@ class DTGradAverager(DecentralizedAverager):
     ):
         if "client_mode" in kwargs:
             if kwargs["client_mode"] is not None and kwargs["client_mode"]:
-                raise KeyError("client_mode is not supported in DiLoCoGradAverager")
+                raise KeyError("client_mode is not supported in DTGradAverager")
             else:
                 kwargs.pop("client_mode")
 
         if "averaged_grads" in kwargs:
             raise KeyError(
-                "DiLoCoGradAverager does not support averaged_grads since it use the offloaded optimizer gradients directly"
+                "DTGradAverager does not support averaged_grads since it use the offloaded optimizer gradients directly"
             )
 
         if not isinstance(main_parameters, (list, tuple)):
@@ -162,29 +164,12 @@ class DTGradAverager(DecentralizedAverager):
 class DTStateAverager(TrainingStateAverager):
     def __init__(
         self,
-        *,
-        num_inner_steps: int,
-        inner_optimizer: TorchOptimizer,
-        scheduler: Optional[SchedulerFactory] = None,
         **kwargs,
     ):
-        self.inner_optimizer = inner_optimizer
-        self.num_inner_steps = num_inner_steps
 
         super().__init__(
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
-
-        self.scheduler_inner_optimizer = (
-            scheduler(self.inner_optimizer) if scheduler is not None else None
-        )
-        assert isinstance(self.scheduler_inner_optimizer, (LRSchedulerBase, type(None)))
-
-    def _update_scheduler(self):
-        """Increase the scheduler state until it becomes synchronized with local epoch"""
-        # TODO(sami) handle update scheduler
-        # for now assuming that all scheduler are on time
-        pass
 
     def update_main_param_after_outer_step(self):
         """Update the main parameters with the inner optimizer step"""
