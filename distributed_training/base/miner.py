@@ -58,7 +58,7 @@ class BaseMinerNeuron(BaseNeuron):
         )
 
         # Attach determiners which functions are called when servicing a request.
-        bt.logging.info(f"Attaching forward function to miner axon.")
+        bt.logging.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.is_alive,
             blacklist_fn=self.blacklist_is_alive,
@@ -116,6 +116,9 @@ class BaseMinerNeuron(BaseNeuron):
         # Start  starts the miner's axon, making it active on the network.
         self.axon.start()
         bt.logging.info(f"Miner starting at block: {self.block}")
+        
+        bt.logging.info("[magenta] Starting training..")
+        self.start_continuous_training()
 
         # This loop maintains the miner's operations until intentionally stopped.
         try:

@@ -94,7 +94,6 @@ class Miner(BaseMinerNeuron):
         self._init_model_components()
 
         # self._init_background_tasks()
-        self.start_continuous_training()
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
@@ -350,12 +349,14 @@ class Miner(BaseMinerNeuron):
     async def get_training_batch(self):
         """Gets a batch of training data"""
         block = self.block
+        print("HERE..")
         pages = await DatasetLoader.next_pages(
             offset=block,
             n_pages=5,
             seed=self.uid if not self.config.random else random.randint(0, 1000),
         )
         random.shuffle(pages)
+        print("HERE2..")
         dataset = await DatasetLoader.create(
             batch_size=self.config.neuron.local_batch_size_train,
             sequence_length=1024,
