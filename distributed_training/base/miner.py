@@ -154,7 +154,7 @@ class BaseMinerNeuron(BaseNeuron):
         except KeyboardInterrupt:
             self.should_exit = True
             self.axon.stop()
-            bt.logging.success("Miner killed by keyboard interrupt.")
+            bt.logging.success(":sun_with_face: Miner killed by keyboard interrupt.")
             exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.

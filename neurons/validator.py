@@ -164,7 +164,7 @@ class Validator(BaseValidatorNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.optimizer, 
+            self.model, self.outer_optimizer, 
             self.grad_averager, self.state_averager
         )
 

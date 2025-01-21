@@ -92,6 +92,7 @@ class Miner(BaseMinerNeuron):
         self._init_network_components()
         self._init_basic_components()
         self._init_model_components()
+
         # self._init_background_tasks()
 
     def _init_basic_components(self):
@@ -152,7 +153,7 @@ class Miner(BaseMinerNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.optimizer, self.grad_averager, self.state_averager
+            self.model, self.outer_optimizer, self.grad_averager, self.state_averager
         )
 
         # Initialize thread pool for background uploads
@@ -555,6 +556,8 @@ class Miner(BaseMinerNeuron):
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
     with Miner() as miner:
+        miner.start_continuous_training()
+        
         while True:
             bt.logging.info("Miner running...", time.time())
             time.sleep(5)
