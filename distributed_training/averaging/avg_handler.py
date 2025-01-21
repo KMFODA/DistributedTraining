@@ -1,5 +1,4 @@
 import asyncio
-import time
 from typing import Any, Dict, List, Tuple
 
 import bittensor as bt
@@ -8,26 +7,27 @@ import torch
 
 import distributed_training
 from distributed_training.exceptions import (
-    StateAveragingError,
     ModelStateError,
+    StateAveragingError,
     handle_error,
     log_and_handle_error,
 )
 
-# TODO Remove redundant code after moving to diloco
+
+# TODO Remove/cleanup redundant code after moving to diloco
 class AveragingHandler:
     """Handles averaging round and outer step for both validators and miners."""
 
     def __init__(
         self,
         model,
-        optimizer,
+        outer_optimizer,
         grad_averager,
         state_averager,
         model_loading_manager=None,
     ):
         self.model = model
-        self.optimizer = optimizer
+        self.outer_optimizer = outer_optimizer
         self.grad_averager = grad_averager
         self.state_averager = state_averager
         self.model_loading_manager = model_loading_manager
@@ -37,11 +37,12 @@ class AveragingHandler:
         return [layer for layer in self.model.parameters()][-2][-10:].tolist()
 
     async def _cleanup_failed_averaging(self, gradient_averaging_step):
+        # TODO Not sure if we should zero_grads on the outer optimizer?
         """Clean up after failed gradient averaging."""
         try:
             gradient_averaging_step.cancel()
             with self.grad_averager.use_averaged_gradients():
-                self.optimizer.zero_grad()
+                self.outer_optimizer.zero_grad()
             bt.logging.debug("Gradient averaging cleanup completed")
         except Exception as e:
             log_and_handle_error(e, "_cleanup_failed_averaging")
@@ -60,60 +61,50 @@ class AveragingHandler:
 
     @handle_error(
         error_types=(ModelStateError, StateAveragingError, Exception),
-        default_return=False,
+        default_return=(False, {}),
     )
-    async def _step_outer(self, timeout) -> bool:
-        """Sync pseudo grads, step outer optimizer and validate the update."""
-        with self.grad_averager.use_averaged_gradients():
-            initial_weights = self._get_weights_sample()
-            bt.logging.debug(f"Initial weights sample: {initial_weights}")
-
+    async def run_validator_allreduce(
+        self,
+        timeout: int,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Process allreduce specifically for validator."""
+        # TODO Weight/gradient validation 
+        gradient_averaging_step = None
+        try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            # Perform optimization steps
+            gradient_averaging_step = self.grad_averager.step(
+                wait=True, timeout=timeout
+            )
+            self.grad_averager.notify_used_averaged_gradients()
+            bt.logging.success("Finished Averaging Pseudo Gradients!")
+
+            (
+                gathered,
+                failed_peers,
+                participating_peers,
+            ) = gradient_averaging_step.result()
+
+            initial_weights = self._get_weights_sample()
+            bt.logging.debug(f"Initial weights sample: {initial_weights}")
+
+            # Perform offloaded outer optimization steps
             bt.logging.info("Performing Outer Optimizer Step..")
-            start_time = time.perf_counter()
-
-
-            state_averaging_step = self.state_averager.step(increment_epoch=True, should_step_optimizer=True)
-            # Wait for completion
-            while (
-                not state_averaging_step.done()
-                and (time.perf_counter() - start_time) <= timeout
-            ):
-                await asyncio.sleep(1)
-
-            if not state_averaging_step.done():
-                raise StateAveragingError("State averaging timed out")
-            
+            self.state_averager.step(
+                increment_epoch=True, optimizer_step=True, zero_grad=False
+            )
             self.state_averager.update_main_param_after_outer_step()
-            bt.logging.succes("Finished Outer Optimizer Step!")
-
-            # Reset gradient buffers
+            self.outer_optimizer.zero_grad()
+            bt.logging.success("Finished Outer Optimizer Step!")
+            
+            # Reset gradient buffers #TODO Do we need this?
             self.grad_averager.reset_accumulated_grads_()
 
             # Validate weight updates
             await self._validate_weight_update(initial_weights)
-            return True, self.state_averager.result() # Return results, i.e. peers that failed, participated etc.
 
-    @handle_error(
-        error_types=(ModelStateError, StateAveragingError, Exception),
-        default_return=(False, {}),
-    )
-    async def run_validator_allreduce(
-        self, timeout: int,
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """Process allreduce specifically for validator."""
-        # Start gradient averaging
-
-        try:
-            gradient_averaging_step = self.grad_averager.step(wait=False)
-            
-            # Step state_averager/outer optimizer
-            success, (gathered, failed_peers, participating_peers) = await self._step_outer(timeout)
-            
-            return success, {
+            return {
                 "gathered": gathered,
                 "failed_peers": failed_peers,
                 "participating_peers": participating_peers,
@@ -199,27 +190,45 @@ class AveragingHandler:
             while model_loading_manager.is_loading:
                 await asyncio.sleep(1)
 
-    @handle_error(
-        error_types=(ModelStateError, StateAveragingError, Exception)
-    )
+    @handle_error(error_types=(ModelStateError, StateAveragingError, Exception))
     async def run_miner_allreduce(
-        self, synapse, timeout: int
+        self, synapse,
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
         await self._wait_for_model_loading(self.model_loading_manager)
 
         if self.model_loading_manager:
             self.model_loading_manager.set_loading_state(True)
-
+        # TODO Weight/gradient validation 
         gradient_averaging_step = None
         try:
-            # Start gradient averaging
-            gradient_averaging_step = self.grad_averager.step(wait=False)
+            # Clip gradients
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            # Step state_averager/outer optimizer
-            await self._step_outer(timeout)
+            gradient_averaging_step = self.grad_averager.step(
+                wait=True, timeout=synapse.timeout
+            )
+            self.grad_averager.notify_used_averaged_gradients()
+            bt.logging.success("Finished Averaging Pseudo Gradients!")
 
-            # TODO Could return the result of the outer step to the validator for more detailed stats?
+            initial_weights = self._get_weights_sample()
+            bt.logging.debug(f"Initial weights sample: {initial_weights}")
+
+            # Perform offloaded outer optimization steps
+            bt.logging.info("Performing Outer Optimizer Step..")
+            self.state_averager.step(
+                increment_epoch=True, optimizer_step=True, zero_grad=False
+            )
+            self.state_averager.update_main_param_after_outer_step()
+            self.outer_optimizer.zero_grad()
+            bt.logging.success("Finished Outer Optimizer Step!")
+
+            # Reset gradient buffers
+            self.grad_averager.reset_accumulated_grads_()
+
+            # Validate weight updates
+            await self._validate_weight_update(initial_weights)
+
             synapse.completion = "True"
             return synapse
 
@@ -227,7 +236,7 @@ class AveragingHandler:
             await self._cleanup_failed_averaging(gradient_averaging_step)
             log_and_handle_error(e, "run_validator_allreduce")
             raise
-        
+
         finally:
             if self.model_loading_manager:
                 self.model_loading_manager.set_loading_state(False)

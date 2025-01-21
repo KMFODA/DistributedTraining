@@ -78,13 +78,13 @@ async def forward(self):
                     )
 
                 # Run AllReduce as master
-                success, results = await self.avg_handler.run_validator_allreduce(
+                results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
                     learning_rate=self.learning_rate,
                     peerids_to_uids=self.peerids_to_uids,
                 )
 
-                if success:
+                if results:
                     # Update scoring based on allreduce participation
                     self.allreduce_scores = (
                         self.avg_handler.calculate_allreduce_scores(
@@ -113,7 +113,6 @@ async def forward(self):
             # Non-master validators participate in AllReduce to help spread the load and update local model
             try:
                 (
-                    success,
                     results,
                 ) = await self.gradient_processor.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
@@ -121,7 +120,7 @@ async def forward(self):
                     peerids_to_uids=self.peerids_to_uids,
                 )
 
-                if success:
+                if results:
                     # Calculate scores even as non-master
                     self.allreduce_scores = self.scoring.calculate_allreduce_scores(
                         results["participating_peers"],

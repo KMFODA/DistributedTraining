@@ -86,16 +86,17 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
+        # Logging setup
+        setup_logging(config=self.config)
+        
+        self._init_network_components()
         self._init_basic_components()
         self._init_model_components()
-        self._init_network_components()
         # self._init_background_tasks()
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
-        # Logging setup
-        setup_logging(config=self.config)
-
+        
         # Device and ID setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
@@ -110,7 +111,7 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch = get_global_epoch(self)
+        self.global_progress.epoch = 10
         self.local_progress.epoch = self.global_progress.epoch
 
         if self.global_progress.epoch is None:
@@ -145,9 +146,9 @@ class Miner(BaseMinerNeuron):
         self.model_loading_manager = ModelLoadingManager()
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
 
-        # Load initial state if needed
-        if self.local_progress.epoch != self.global_progress.epoch:
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+        # Load initial state if needed # TODO This check should see if after loading states we are still on the same epoch
+        # if self.local_progress.epoch != self.global_progress.epoch:
+        #     load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -463,15 +464,6 @@ class Miner(BaseMinerNeuron):
             self.resume_training()
             bt.logging.succes("Resuming continuous training after all_reduce")
 
-    def __del__(self):
-        """Cleanup when the miner is destroyed"""
-        self.stop_event.set()
-        self.training_active.set()  # Ensure thread isn't blocked
-        if self.training_thread and self.training_thread.is_alive():
-            self.training_thread.join(timeout=1)
-        if hasattr(self, "training_executor"):
-            self.training_executor.shutdown(wait=False)
-
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
         Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
@@ -482,7 +474,7 @@ class Miner(BaseMinerNeuron):
         requests before they are deserialized to avoid wasting resources on requests that will be ignored.
 
         Args:
-            synapse (template.protocol.Train): A synapse object constructed from the headers of the incoming request.
+            synapse (template.protocol.AllReduce): A synapse object constructed from the headers of the incoming request.
 
         Returns:
             Tuple[bool, str]: A tuple containing a boolean indicating whether the synapse's hotkey is blacklisted,
@@ -558,46 +550,6 @@ class Miner(BaseMinerNeuron):
         blacklist = await self.blacklist_base(synapse)
         bt.logging.debug(blacklist[1])
         return blacklist
-
-    async def blacklist_train(
-        self, synapse: distributed_training.protocol.Train
-    ) -> typing.Tuple[bool, str]:
-        blacklist = await self.blacklist_base(synapse)
-        bt.logging.info(blacklist[1])
-        return blacklist
-
-    async def priority_base(
-        self, synapse: distributed_training.protocol.Train
-    ) -> float:
-        """
-        The priority function determines the order in which requests are handled. More valuable or higher-priority
-        requests are processed before others. You should design your own priority mechanism with care.
-
-        This implementation assigns priority to incoming requests based on the calling entity's stake in the metagraph.
-
-        Args:
-            synapse (template.protocol.Train): The synapse object that contains metadata about the incoming request.
-
-        Returns:
-            float: A priority score derived from the stake of the calling entity.
-
-        Miners may recieve messages from multiple entities at once. This function determines which request should be
-        processed first. Higher values indicate that the request should be processed first. Lower values indicate
-        that the request should be processed later.
-
-        Example priority logic:
-        - A higher stake results in a higher priority value.
-        """
-        caller_uid = self.metagraph.hotkeys.index(
-            synapse.dendrite.hotkey
-        )  # Get the caller index.
-        prirority = float(
-            self.metagraph.S[caller_uid]
-        )  # Return the stake as the priority.
-        bt.logging.trace(
-            f"Prioritizing {synapse.dendrite.hotkey} with value: ", prirority
-        )
-        return prirority
 
 
 # This is the main function, which runs the miner.

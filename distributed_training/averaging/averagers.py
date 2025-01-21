@@ -12,10 +12,7 @@ from typing import (
 )
 
 import torch
-from hivemind.averaging.allreduce import (
-    AveragingMode,
-    AllReduceRunner
-)
+from hivemind.averaging.allreduce import AllReduceRunner, AveragingMode
 from hivemind.averaging.averager import DecentralizedAverager
 from hivemind.averaging.control import StepControl
 from hivemind.averaging.group_info import GroupInfo
@@ -25,8 +22,6 @@ from hivemind.compression import CompressionInfo
 from hivemind.dht import DHT
 from hivemind.dht.dht import DHT
 from hivemind.optim.state_averager import (
-    LRSchedulerBase,
-    SchedulerFactory,
     TorchOptimizer,
     TrainingStateAverager,
 )
@@ -107,7 +102,9 @@ class DTGradAverager(DecentralizedAverager):
                     param.grad = torch.zeros_like(param)
                 yield param.grad
 
-    def schedule_step(self, scheduled_time: Optional[DHTExpiration] = None, **kwargs) -> StepControl:
+    def schedule_step(
+        self, scheduled_time: Optional[DHTExpiration] = None, **kwargs
+    ) -> StepControl:
         """
         Begin matchmaking: look for a group of peers and prepare for averaging gradients at a specified time.
 
@@ -117,8 +114,12 @@ class DTGradAverager(DecentralizedAverager):
         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
         :note: in the current implementation, each step_control can only be used in one step.
         """
-        assert kwargs.get("weight") is None, "setting weight in schedule_step is not supported"
-        return super().step(scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs)
+        assert kwargs.get("weight") is None, (
+            "setting weight in schedule_step is not supported"
+        )
+        return super().step(
+            scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs
+        )
 
     def step(
         self,
@@ -147,9 +148,15 @@ class DTGradAverager(DecentralizedAverager):
     @torch.no_grad()
     def compute_and_load_pseudo_grad_into_averager(self):
         """compute pseudo gradient by subtracting the offloaded optimizer parameters with the main parameters and load them in the averager"""
-        opt_parameters = [param for group in self.offloaded_optimizer.param_groups for param in group["params"]]
+        opt_parameters = [
+            param
+            for group in self.offloaded_optimizer.param_groups
+            for param in group["params"]
+        ]
         with self.get_tensors() as averaged_grads:
-            for opt_param, averaged_grad, main_param in zip(opt_parameters, averaged_grads, self.main_parameters):
+            for opt_param, averaged_grad, main_param in zip(
+                opt_parameters, averaged_grads, self.main_parameters
+            ):
                 # opt_param is the param that will be all_reduce, it is suppose to be on cpu
                 # main_param is the param that has been updated by the inner optimizer, it is suppose to be on gpu
                 grad = opt_param.data - main_param.detach().to(opt_param.device)
@@ -159,26 +166,6 @@ class DTGradAverager(DecentralizedAverager):
         """Notify averager that the results of a previous averaging round are accounted for"""
         self._new_averaged_grads = False
 
-
-
-class DTStateAverager(TrainingStateAverager):
-    def __init__(
-        self,
-        **kwargs,
-    ):
-
-        super().__init__(
-            **kwargs
-        )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
-
-    def update_main_param_after_outer_step(self):
-        """Update the main parameters with the inner optimizer step"""
-        opt_parameters = [
-            param for group in self.optimizer.param_groups for param in group["params"]
-        ]
-        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
-            main_param.data.copy_(opt_param.data, non_blocking=True)
-    
     async def _aggregate_with_group(
         self,
         group_info: GroupInfo,
@@ -204,8 +191,7 @@ class DTStateAverager(TrainingStateAverager):
                 thr if mode != AveragingMode.CLIENT else 0.0
                 for thr, mode in zip(bandwidths, modes)
             ]
-            # hivemind_logger("Donwloaded bandwidths")
-            # hivemind_logger(download_bandwidths)
+
             peer_fractions = await asyncio.get_event_loop().run_in_executor(
                 None,
                 load_balance_peers,
@@ -250,7 +236,7 @@ class DTStateAverager(TrainingStateAverager):
             if isinstance(e, Exception):
                 hivemind_logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
-            
+
     async def rpc_download_state_partial(
         self, _request: averaging_pb2.DownloadRequest, _context: P2PContext
     ) -> AsyncIterator[averaging_pb2.DownloadData]:
@@ -286,3 +272,21 @@ class DTStateAverager(TrainingStateAverager):
                 else:
                     yield averaging_pb2.DownloadData(tensor_part=part)
             break
+
+
+class DTStateAverager(TrainingStateAverager):
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs
+        )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
+
+    def update_main_param_after_outer_step(self):
+        """Update the main parameters with the inner optimizer step"""
+        opt_parameters = [
+            param for group in self.optimizer.param_groups for param in group["params"]
+        ]
+        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
+            main_param.data.copy_(opt_param.data, non_blocking=True)

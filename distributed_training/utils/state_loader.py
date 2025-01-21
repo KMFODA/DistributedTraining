@@ -197,7 +197,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
             state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
             start=True,
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
