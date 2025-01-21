@@ -96,7 +96,7 @@ class AveragingHandler:
             )
             self.state_averager.update_main_param_after_outer_step()
             self.outer_optimizer.zero_grad()
-            bt.logging.success(":sun_with_face: Finished Outer Optimizer Step!")
+            bt.logging.success(":white_heavy_check_mark: Finished Outer Optimizer Step!")
             
             # Reset gradient buffers #TODO Do we need this?
             self.grad_averager.reset_accumulated_grads_()

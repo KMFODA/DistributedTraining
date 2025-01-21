@@ -94,6 +94,7 @@ class Miner(BaseMinerNeuron):
         self._init_model_components()
 
         # self._init_background_tasks()
+        self.start_continuous_training()
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
@@ -123,6 +124,11 @@ class Miner(BaseMinerNeuron):
         # Event tracking
         self.event = {}
         self.stop_event = threading.Event()
+        
+        # Training control
+        self.training_thread = None
+        self.training_active = threading.Event()
+        self.training_active.set()
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
@@ -325,10 +331,11 @@ class Miner(BaseMinerNeuron):
         """Starts continuous training in a background thread"""
         if self.training_thread is None or not self.training_thread.is_alive():
             self.training_thread = threading.Thread(
-                target=self.continuous_training_loop, daemon=True
+                target=self.continuous_training_loop,
+                daemon=True
             )
+            bt.logging.info(":white_heavy_check_mark:Starting continuous training thread")
             self.training_thread.start()
-            bt.logging.info("Started continuous training thread")
 
     def pause_training(self):
         """Pauses the continuous training loop"""
@@ -373,13 +380,14 @@ class Miner(BaseMinerNeuron):
                     continue
 
                 # Get training batch using asyncio
+                bt.logging.info("[magenta]Getting training batch..")
                 dataset = asyncio.run_coroutine_threadsafe(
                     self.get_training_batch(), self.loop
                 ).result()
 
                 total_loss = 0
                 batch_count = 0
-
+                bt.logging.info("[magenta]Started for loop..")
                 for batch in dataset:
                     if not self.training_active.is_set():
                         # Clean up gradients if interrupted
@@ -391,6 +399,7 @@ class Miner(BaseMinerNeuron):
                     labels = torch.tensor(batch).to(self.device)
 
                     # Forward pass
+                    bt.logging.info("[magenta]Processing batch..")
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
                         loss = outputs[1]
@@ -407,7 +416,7 @@ class Miner(BaseMinerNeuron):
                     # Log progress
                     if batch_count % 5 == 0:
                         bt.logging.info(
-                            f":gear: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                            f":arrow_right:Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                         )
 
                     # Upload to HuggingFace every 20 inner steps
@@ -556,8 +565,6 @@ class Miner(BaseMinerNeuron):
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
     with Miner() as miner:
-        miner.start_continuous_training()
-        
         while True:
             bt.logging.info("Miner running...", time.time())
             time.sleep(5)

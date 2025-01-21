@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import traceback
 from typing import Optional
@@ -45,27 +46,33 @@ def handle_error(error_types: tuple = (Exception,), default_return=None):
         error_types: Tuple of exception types to catch
         default_return: Value to return on error
     """
+
     def decorator(func):
         @functools.wraps(func)
-        async def wrapper(self, *args, **kwargs):
+        def wrapper(self, *args, **kwargs):
             try:
-                return await func(self, *args, **kwargs)
+                return func(self, *args, **kwargs)
             except error_types as e:
                 error_name = e.__class__.__name__
                 error_msg = str(e)
                 tb = traceback.format_exc()
-                
+
                 bt.logging.error(f"{error_name} in {func.__name__}: {error_msg}\n{tb}")
 
                 # Automatically load state for averaging/model state errors
                 if isinstance(e, (StateAveragingError, ModelStateError)):
                     bt.logging.info("Loading latest model state after failure")
-                    await load_state_from_peer(self)
+                    # Use run_coroutine_threadsafe since we're in a thread
+                    asyncio.run_coroutine_threadsafe(
+                        load_state_from_peer(self), self.loop
+                    )
 
                 return default_return
 
         return wrapper
+
     return decorator
+
 
 def log_and_handle_error(error: Exception, context: str = "") -> None:
     """
