@@ -185,7 +185,7 @@ class DTGradAverager(DecentralizedAverager):
                 )
             )
             modes = tuple(map(AveragingMode, mode_ids))
-
+            # TODO Add bandwidths and return them for scoring
             # compute optimal part sizes from peer bandwidths; TODO: replace with proper load balancing
             download_bandwidths = [
                 thr if mode != AveragingMode.CLIENT else 0.0

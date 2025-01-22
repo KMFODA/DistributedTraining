@@ -112,7 +112,7 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch = 10
+        self.global_progress.epoch = 10 # TODO Fix this
         self.local_progress.epoch = self.global_progress.epoch
 
         if self.global_progress.epoch is None:
@@ -128,6 +128,8 @@ class Miner(BaseMinerNeuron):
         self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
+        
+        self.training_lock = asyncio.Lock()
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
@@ -149,7 +151,7 @@ class Miner(BaseMinerNeuron):
         self.config.neuron.hf_repo_id = "kmfoda/gpt2-1b-miner-1"
 
         # Initialize model and its components
-        self.model_loading_manager = ModelLoadingManager()
+        # self.model_loading_manager = ModelLoadingManager() # TODO We dont need this anymore, right?
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
 
         # Load initial state if needed # TODO This check should see if after loading states we are still on the same epoch
@@ -171,11 +173,6 @@ class Miner(BaseMinerNeuron):
         """Initialize network and DHT-related components."""
         # DHT initialization
         init_dht(self)
-
-        # Background loop setup
-        self.loop = asyncio.new_event_loop()
-        self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
         # UID to PeerID mapping
         self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
@@ -371,19 +368,20 @@ class Miner(BaseMinerNeuron):
         inner_step_counter = 0
 
         while not self.stop_event.is_set():
-            # Wait if training is paused
-            self.training_active.wait()
-
             try:
+                # Wait if training is paused
+                self.training_active.wait()
+                
                 # Check if model is currently loading
-                if self.model_loading_manager.is_loading:
+                if self.model_loading_manager.is_loading: #TODO Do we need this ??
                     time.sleep(1)
                     continue
 
                 # Get training batch using asyncio
                 bt.logging.info("[magenta]Getting training batch..")
                 dataset = asyncio.run_coroutine_threadsafe(
-                    self.get_training_batch(), self.loop
+                    self.get_training_batch(), 
+                    self.loop
                 ).result()
 
                 total_loss = 0
@@ -451,20 +449,21 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         """Handle incoming all_reduce requests by pausing continuous training"""
         try:
-            # Ensure training is paused
-            self.pause_training()
-            bt.logging.info(
-                ":warning: Pausing continuous training for all_reduce query :warning:"
-            )
+            async with self.training_lock:
+                # Ensure training is paused
+                self.pause_training()
+                bt.logging.info(
+                    ":warning: Pausing continuous training for all_reduce query :warning:"
+                )
 
-            # Wait for running training process to finish
-            await asyncio.sleep(2)
+                # Wait for running training process to finish
+                await asyncio.sleep(2)
 
-            # Run allreduce with proper timeout
-            result = await self.avg_handler.run_miner_allreduce(
-                synapse, timeout=synapse.timeout
-            )
-            return result
+                # Run allreduce with proper timeout
+                result = await self.avg_handler.run_miner_allreduce(
+                    synapse, timeout=synapse.timeout
+                )
+                return result
 
         except Exception as e:
             log_and_handle_error(e, "all_reduce operation failed")

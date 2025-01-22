@@ -170,10 +170,6 @@ class Validator(BaseValidatorNeuron):
 
     def _init_network_components(self):
         """Initialize network and P2P components"""
-        # Init Background Loop
-        self.loop = asyncio.new_event_loop()
-        self._p2p = self.loop.run_until_complete(self.dht.replicate_p2p())
-        self.peer_list = self.loop.run_until_complete(self._p2p.list_peers())
 
         # Log PeerID to chain
         bt.logging.info("Logging PeerID to chain")
