@@ -29,7 +29,7 @@ from distributed_training.utils.state_loader import (
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
 
-
+# TODO Add get_bandwidth to GradAverager on each allreduce
 async def forward(self):
     """
     The forward function is called by the validator every time step.

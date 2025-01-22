@@ -199,8 +199,7 @@ class DTGradAverager(DecentralizedAverager):
                 download_bandwidths,
                 min_vector_size,
             )
-            hivemind_logger(group_info.peer_ids)
-            hivemind_logger(peer_fractions)
+            
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = AllReduceRunner(
                     peerids_to_uids=peerids_to_uids,
@@ -231,7 +230,8 @@ class DTGradAverager(DecentralizedAverager):
                             "aux peers should not receive averaged tensors"
                         )
 
-                return user_gathered, runner.banned_senders, group_info.peer_ids
+                return user_gathered, runner.banned_senders, group_info.peer_ids, modes, bandwidths
+            
         except BaseException as e:
             if isinstance(e, Exception):
                 hivemind_logger.exception(e)

@@ -73,17 +73,22 @@ class AveragingHandler:
         try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
+            
+            # Used for load balancing and scoring
+            self.grad_averager.bandwidth = self.bandwidth # TODO Either use average bandwidth or set each time here:
+            
             gradient_averaging_step = self.grad_averager.step(
                 wait=True, timeout=timeout
             )
             self.grad_averager.notify_used_averaged_gradients()
             bt.logging.success("Finished Averaging Pseudo Gradients!")
-
+            # TODO Also return bandwidths and averaging.modes of peers
             (
                 gathered,
                 failed_peers,
                 participating_peers,
+                modes,
+                bandwidths
             ) = gradient_averaging_step.result()
 
             initial_weights = self._get_weights_sample()
@@ -114,11 +119,14 @@ class AveragingHandler:
             await self._cleanup_failed_averaging(gradient_averaging_step)
             log_and_handle_error(e, "run_validator_allreduce")
             raise
-
+    
+    # TODO calculate score given peers' bandwidths and if they succeeded and if they are in correct mode
     def calculate_allreduce_scores(
         self,
         participating_peers: list,
         failed_peers: list,
+        modes: list,
+        bandwidths: list,
         peerids_to_uids: dict,
     ) -> dict:
         """

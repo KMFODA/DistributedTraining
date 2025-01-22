@@ -22,6 +22,7 @@ import random
 import tempfile
 import time
 import typing
+from enum import Enum
 
 os.environ["NEST_ASYNCIO"] = "0"
 import threading
@@ -35,8 +36,8 @@ from bitsandbytes.cextension import lib
 from huggingface_hub import create_tag, upload_folder
 from transformers import AutoTokenizer
 
-# Bittensor Miner Template:
 import distributed_training
+from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.exceptions import (
@@ -44,7 +45,6 @@ from distributed_training.exceptions import (
     handle_error,
     log_and_handle_error,
 )
-from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     init_dht,
@@ -57,7 +57,6 @@ from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
 from distributed_training.utils.state_loader import (
-    ModelLoadingManager,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
@@ -80,6 +79,12 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 )
 
 
+class TrainingStatus(Enum):
+    RUNNING = "running"
+    ERROR = "error"
+    STOPPED = "stopped"
+
+
 # TODO Consider when/how we would do model loading when using diloco
 # TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
 class Miner(BaseMinerNeuron):
@@ -88,7 +93,7 @@ class Miner(BaseMinerNeuron):
 
         # Logging setup
         setup_logging(config=self.config)
-        
+
         self._init_network_components()
         self._init_basic_components()
         self._init_model_components()
@@ -97,7 +102,7 @@ class Miner(BaseMinerNeuron):
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
-        
+
         # Device and ID setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
@@ -112,7 +117,7 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch = 10 # TODO Fix this
+        self.global_progress.epoch = 10  # TODO Fix this
         self.local_progress.epoch = self.global_progress.epoch
 
         if self.global_progress.epoch is None:
@@ -124,12 +129,21 @@ class Miner(BaseMinerNeuron):
         self.event = {}
         self.stop_event = threading.Event()
         
+        # Initialize asyncio event loop
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
         # Training control
         self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
-        
+
         self.training_lock = asyncio.Lock()
+
+        # Training status tracking
+        self.training_status = TrainingStatus.STOPPED
+        self.training_error = None
+        self.training_thread = None
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
@@ -326,11 +340,16 @@ class Miner(BaseMinerNeuron):
     def start_continuous_training(self):
         """Starts continuous training in a background thread"""
         if self.training_thread is None or not self.training_thread.is_alive():
+            self.training_status = TrainingStatus.RUNNING
+            self.training_error = None
             self.training_thread = threading.Thread(
                 target=self.continuous_training_loop,
-                daemon=True
+                daemon=True,
+                name="training_thread",
             )
-            bt.logging.info(":white_heavy_check_mark:Starting continuous training thread")
+            bt.logging.info(
+                ":white_heavy_check_mark:Starting continuous training thread"
+            )
             self.training_thread.start()
 
     def pause_training(self):
@@ -371,17 +390,11 @@ class Miner(BaseMinerNeuron):
             try:
                 # Wait if training is paused
                 self.training_active.wait()
-                
-                # Check if model is currently loading
-                if self.model_loading_manager.is_loading: #TODO Do we need this ??
-                    time.sleep(1)
-                    continue
 
                 # Get training batch using asyncio
                 bt.logging.info("[magenta]Getting training batch..")
                 dataset = asyncio.run_coroutine_threadsafe(
-                    self.get_training_batch(), 
-                    self.loop
+                    self.get_training_batch(), self.loop
                 ).result()
 
                 total_loss = 0
@@ -441,8 +454,18 @@ class Miner(BaseMinerNeuron):
                     )
 
             except TrainingError as e:
+                self.training_status = TrainingStatus.ERROR
                 bt.logging.error(f"Error in continuous training loop: {str(e)}")
                 time.sleep(1)
+                break
+
+        if self.training_status != TrainingStatus.ERROR:
+            self.training_status = TrainingStatus.STOPPED
+        bt.logging.warning(
+            f"Training thread exited. Status: {self.training_status.value}"
+        )
+        if self.training_error:
+            bt.logging.error(f"Final error: {self.training_error}")
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -567,4 +590,5 @@ if __name__ == "__main__":
     with Miner() as miner:
         while True:
             bt.logging.info("Miner running...", time.time())
+            bt.logging.info(f"{miner.training_active}")
             time.sleep(5)

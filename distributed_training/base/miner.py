@@ -134,7 +134,8 @@ class BaseMinerNeuron(BaseNeuron):
                         if self.event != {}:
                             self.event.update(self.get_miner_info())
                             try:
-                                self.event.update(get_bandwidth())
+                                self.bandwidth = get_bandwidth()
+                                self.event.update(self.bandwidth)
                             except Exception:
                                 bt.logging.debug("Error getting bandwidth metrics")
                             self.wandb.log(self.event)
