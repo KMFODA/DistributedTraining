@@ -364,39 +364,42 @@ async def forward(self):
 
             # Process the Train query responses
             else:
-                bt.logging.info(
-                    "Received Responses: "
-                    + str(
-                        [
-                            {
-                                "Loss": response.loss,
-                                "Dataset Indices": (
-                                    min(response.dataset_indices),
-                                    max(response.dataset_indices),
-                                ),
-                                "IP": self.metagraph.axons[uid].ip,
-                                "Port": self.metagraph.axons[uid].port,
-                                "Hotkey": self.metagraph.axons[uid].hotkey,
-                            }
-                            for response, uid in zip(responses[0], self.miner_uids)
-                            if (
-                                (response.dendrite.status_code == 200)
-                                and (response.dataset_indices is not None)
-                                and (type(response.dataset_indices) == list)
-                            )
-                        ]
+                try:
+                    bt.logging.info(
+                        "Received Responses: "
+                        + str(
+                            [
+                                {
+                                    "Loss": response.loss,
+                                    "Dataset Indices": (
+                                        min(response.dataset_indices),
+                                        max(response.dataset_indices),
+                                    ),
+                                    "IP": self.metagraph.axons[uid].ip,
+                                    "Port": self.metagraph.axons[uid].port,
+                                    "Hotkey": self.metagraph.axons[uid].hotkey,
+                                }
+                                for response, uid in zip(responses[0], self.miner_uids)
+                                if (
+                                    (response.dendrite.status_code == 200)
+                                    and (response.dataset_indices is not None)
+                                    and (type(response.dataset_indices) == list)
+                                    and (response.dataset_indices != [])
+                                )
+                            ]
+                        )
                     )
-                )
-                self.average_loss = np.array(
-                    [
-                        response.loss
-                        for response, uid in zip(responses[0], self.miner_uids)
-                        if response.dendrite.status_code == 200
-                        and (response.dataset_indices is not None)
-                    ]
-                ).mean()
-                bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
-
+                    self.average_loss = np.array(
+                        [
+                            response.loss
+                            for response, uid in zip(responses[0], self.miner_uids)
+                            if response.dendrite.status_code == 200
+                            and (response.dataset_indices is not None)
+                        ]
+                    ).mean()
+                    bt.logging.info(f"Current Average Miner Loss: {self.average_loss}")
+                except Exception as e:
+                    bt.logging.error(e)
     else:
         bt.logging.info(
             f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
