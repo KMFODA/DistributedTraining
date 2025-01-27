@@ -50,12 +50,13 @@ async def forward(self):
 
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
-    should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    should_allreduce = True
+    # should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
 
     responses = [[]]
-    rewards = torch.zeros(len(self.miner_uids)) if self.miner_uids else torch.zeros(0)
     hf_miner_states = {}
-
+    self.miner_uids = []
+    
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
         all_reduce = True
@@ -67,17 +68,21 @@ async def forward(self):
                 sample_size = int(self.metagraph.n)
 
                 # Get active miners
-                while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
+                while len(self.miner_uids) < 1:
                     bt.logging.info(
                         f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids)} more UIDs."
                     )
                     self.miner_uids = await get_random_uids(
                         self,
                         dendrite=self.dendrite,
-                        k=sample_size,
+                        k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
-
+                
+                self.peerids_to_uids = {
+                    str(value[0]): key for key, value in self.uids_to_peerids.items()
+                }
+                
                 # Start AllReduce as master
                 results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
@@ -152,17 +157,17 @@ async def forward(self):
         # TODO: Implement HF state check
         # * Below is placeholder for now
 
-        try:
-            repo_refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-            for uid in range(int(self.metagraph.n)):
-                hf_miner_states[str(uid)] = await self._check_miner_hf_state(
-                    uid, repo_refs
-                )
-        except HfHubHTTPError as e:
-            bt.logging.error(f"Error checking HF states: {e}")
-            hf_miner_states = {
-                str(uid): {"updated": False} for uid in range(int(self.metagraph.n))
-            }
+        # try:
+        #     repo_refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        #     for uid in range(int(self.metagraph.n)):
+        #         hf_miner_states[str(uid)] = await self._check_miner_hf_state(
+        #             uid, repo_refs
+        #         )
+        # except HfHubHTTPError as e:
+        #     bt.logging.error(f"Error checking HF states: {e}")
+        #     hf_miner_states = {
+        #         str(uid): {"updated": False} for uid in range(int(self.metagraph.n))
+        #     }
 
         # * Placeholder finish
 

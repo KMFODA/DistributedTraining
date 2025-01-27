@@ -200,6 +200,9 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
+        
+        # Init last_allreduce_block to current block # TODO needs to be set properly for newcomers
+        self.last_allreduce_block = self.block
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
