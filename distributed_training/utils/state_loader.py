@@ -186,7 +186,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # Reset gradient buffers and parameters
         self.grad_averager.parameters = tuple(self.model.parameters())
 
-        self.grad_averager.reset_accumulated_grads_()
+        # self.grad_averager.reset_accumulated_grads_()
 
     else:
         # Load a new gradient averager

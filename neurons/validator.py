@@ -123,8 +123,9 @@ class Validator(BaseValidatorNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        update_global_tracker_state(self)
-        self.local_progress.epoch = self.global_progress.epoch
+        # update_global_tracker_state(self)
+        self.global_progress.epoch = 10
+        self.local_progress.epoch = self.global_progress # TODO Fix this
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -159,8 +160,8 @@ class Validator(BaseValidatorNeuron):
         self.model_loading_manager = ModelLoadingManager()
 
         # Load state if needed
-        if self.local_progress.epoch < self.global_progress.epoch:
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+        # if self.local_progress.epoch < self.global_progress.epoch:
+        #     load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -179,9 +180,10 @@ class Validator(BaseValidatorNeuron):
         """Initialize UID related components"""
         # Set UIDs
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.metagraph.hotkeys.index(
-            self.config.neuron.master_ss58_address,
-        )
+        self.master_uid = self.uid
+        # self.master_uid = self.metagraph.hotkeys.index(
+        #     self.config.neuron.master_ss58_address,
+        # )
 
         # Init UID mappings
         self.uids_to_peerids = {

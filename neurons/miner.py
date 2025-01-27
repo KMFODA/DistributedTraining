@@ -503,7 +503,7 @@ class Miner(BaseMinerNeuron):
                     ":warning: Pausing continuous training for all_reduce query :warning:"
                 )
 
-                # Wait for running training process to finish
+                # Wait for running training process to finish # TODO Wait for training_thread == WAIT instead
                 await asyncio.sleep(2)
 
                 # Run allreduce with proper timeout
