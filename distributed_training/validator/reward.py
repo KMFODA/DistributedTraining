@@ -292,21 +292,22 @@ async def get_rewards(
         )
         scores *= blacklist_scores
 
-        # Score miners bandwidth
-        bandwidth_scores = await score_bandwidth(
-            self,
-            self.miner_uids,
-        )
-        bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-        self.event.update(
-            {
-                f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                for uid, bandwidth_score in zip(
-                    self.miner_uids.tolist(), bandwidth_scores
-                )
-            }
-        )
-        scores *= bandwidth_scores
+        # This is done via the all_reduce instead
+        # # Score miners bandwidth 
+        # bandwidth_scores = await score_bandwidth(
+        #     self,
+        #     self.miner_uids,
+        # )
+        # bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
+        # self.event.update(
+        #     {
+        #         f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
+        #         for uid, bandwidth_score in zip(
+        #             self.miner_uids.tolist(), bandwidth_scores
+        #         )
+        #     }
+        # )
+        # scores *= bandwidth_scores
 
     # Score an empty responses
     elif (responses == [[]]) or (

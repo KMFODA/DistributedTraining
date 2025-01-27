@@ -29,7 +29,7 @@ from distributed_training.utils.state_loader import (
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
 
-# TODO Add get_bandwidth to GradAverager on each allreduce
+
 async def forward(self):
     """
     The forward function is called by the validator every time step.
@@ -63,6 +63,7 @@ async def forward(self):
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
             try:
+
                 sample_size = int(self.metagraph.n)
 
                 # Get active miners
@@ -77,7 +78,7 @@ async def forward(self):
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
 
-                # Run AllReduce as master
+                # Start AllReduce as master
                 results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
                     learning_rate=self.learning_rate,
@@ -86,12 +87,10 @@ async def forward(self):
 
                 if results:
                     # Update scoring based on allreduce participation
-                    self.allreduce_scores = (
-                        self.avg_handler.calculate_allreduce_scores(
-                            results["participating_peers"],
-                            results["failed_peers"],
-                            self.peerids_to_uids,
-                        )
+                    self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
+                        results["participating_peers"],
+                        results["failed_peers"],
+                        self.peerids_to_uids,
                     )
 
                     # Update state after successful allreduce
@@ -112,9 +111,7 @@ async def forward(self):
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
             try:
-                (
-                    results,
-                ) = await self.gradient_processor.run_validator_allreduce(
+                (results,) = await self.gradient_processor.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
                     learning_rate=self.learning_rate,
                     peerids_to_uids=self.peerids_to_uids,
@@ -153,8 +150,8 @@ async def forward(self):
 
         # Check if miners uploaded new state since last N blocks
         # TODO: Implement HF state check
-        # * Below is placeholder for now 
-        
+        # * Below is placeholder for now
+
         try:
             repo_refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
             for uid in range(int(self.metagraph.n)):
@@ -166,6 +163,8 @@ async def forward(self):
             hf_miner_states = {
                 str(uid): {"updated": False} for uid in range(int(self.metagraph.n))
             }
+
+        # * Placeholder finish
 
     # Adjust the scores based on responses from miners.
     rewards = await get_rewards(
