@@ -144,6 +144,12 @@ def add_args(cls, parser, prefix=None):
             "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWFBR9RY52qMki1V59QpMoHKcW8qz2LhAsD8No4pLtwMC2",
         ],
     )
+    parser.add_argument(
+        "--neuron.blocks_per_allreduce",
+        type=int,
+        help="Amount of blocks between each all reduce",
+        default=30,
+    )
 
     parser.add_argument(
         "--neuron.model_name",

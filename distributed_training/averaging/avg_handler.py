@@ -277,7 +277,7 @@ class AveragingHandler:
             bt.logging.success("Finished Outer Optimizer Step!")
 
             # Reset gradient buffers
-            self.grad_averager.reset_accumulated_grads_()
+            # self.grad_averager.reset_accumulated_grads_()
 
             # Validate weight updates
             await self._validate_weight_update(initial_weights)
