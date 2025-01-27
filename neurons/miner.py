@@ -15,10 +15,9 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-import queue
-
 import asyncio
 import os
+import queue
 import random
 import tempfile
 import time
@@ -34,7 +33,7 @@ import bittensor as bt
 import numpy as np
 import torch
 from bitsandbytes.cextension import lib
-from huggingface_hub import create_tag, upload_folder
+from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
 from transformers import AutoTokenizer
 
 import distributed_training
@@ -48,10 +47,10 @@ from distributed_training.exceptions import (
 )
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
+    get_current_block_safe,
     init_dht,
     load_wandb,
     setup_logging,
-    get_current_block_safe
 )
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
@@ -62,7 +61,6 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -131,13 +129,13 @@ class Miner(BaseMinerNeuron):
         # Event tracking
         self.event = {}
         self.stop_event = threading.Event()
-        
+
         # Thread safe subtensor block variables
         self._block_lock = threading.Lock()
         self._last_block = None
         self._last_block_time = 0
         self._block_cache_duration = 5  # Cache block number for 5 seconds
-        
+
         # Initialize asyncio event loop
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -146,14 +144,16 @@ class Miner(BaseMinerNeuron):
         self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
-        
+
         # Add these new components
         self.training_queue = queue.Queue()
-        self.training_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="training_worker")
-        
+        self.training_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="training_worker"
+        )
+
         # Create event loop in main thread
         self.loop = asyncio.get_event_loop()
-        
+
         # Create a separate loop for training operations
         self.training_loop = asyncio.new_event_loop()
 
@@ -229,6 +229,21 @@ class Miner(BaseMinerNeuron):
 
     def upload_model(self, epoch, batch_size):
         """Unified function to save and upload both model and optimizer state"""
+
+        if not repo_exists(self.config.neuron.hf_repo_id, repo_type="model"):
+            try:
+                create_repo(
+                    self.config.neuron.hf_repo_id,
+                    repo_type="model",
+                    private=False,  # TODO ??
+                )
+                bt.logging.info(
+                    f"Created new repository: {self.config.neuron.hf_repo_id}"
+                )
+            except Exception as e:
+                bt.logging.error(f"Failed to create repository: {str(e)}")
+                raise
+            
         attempt = 0
         while attempt < self.model_upload_retry_limit:
             try:
@@ -362,7 +377,9 @@ class Miner(BaseMinerNeuron):
             self.training_status = TrainingStatus.RUNNING
             self.training_error = None
             self.training_executor.submit(self._training_worker)
-            bt.logging.info(":white_heavy_check_mark: Starting continuous training worker")
+            bt.logging.info(
+                ":white_heavy_check_mark: Starting continuous training worker"
+            )
 
     def pause_training(self):
         """Pauses the continuous training loop"""
@@ -384,7 +401,7 @@ class Miner(BaseMinerNeuron):
                 seed=self.uid if not self.config.random else random.randint(0, 1000),
             )
             random.shuffle(pages)
-            
+
             dataset = await DatasetLoader.create(
                 batch_size=self.config.neuron.local_batch_size_train,
                 sequence_length=1024,
@@ -395,31 +412,32 @@ class Miner(BaseMinerNeuron):
         except Exception as e:
             bt.logging.error(f"Error fetching training data: {str(e)}")
             raise
-        
-        
+
     def _training_worker(self):
         """Worker function that runs in the ThreadPoolExecutor"""
         # Set the event loop for this thread
         asyncio.set_event_loop(self.training_loop)
-        
+
         while not self.stop_event.is_set():
             try:
                 # Wait if training is paused
                 self.training_active.wait()
-                
+
                 # Fetch data using the training thread's event loop
                 bt.logging.info(":pages: Fetching fineweb-edu pages")
-                dataset = self.training_loop.run_until_complete(self.fetch_training_data())
-                
+                dataset = self.training_loop.run_until_complete(
+                    self.fetch_training_data()
+                )
+
                 # Process the dataset
                 self._process_training_batch(dataset)
-                
+
             except Exception as e:
                 log_and_handle_error(e, "training loop failed")
                 self.training_status = TrainingStatus.ERROR
                 self.training_error = str(e)
                 break
-                
+
         self.training_status = TrainingStatus.STOPPED
 
     @handle_error(error_types=(TrainingError, Exception))
@@ -428,51 +446,50 @@ class Miner(BaseMinerNeuron):
         total_loss = 0
         batch_count = 0
         inner_step_counter = 0
-        
+
         for batch in dataset:
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
-            
+
             if isinstance(batch, tuple):
                 inputs, labels = batch
             else:
                 inputs = torch.tensor(batch[:, :-1]).to(self.device)
                 labels = torch.tensor(batch[:, 1:]).to(self.device)
-            
+
             if not isinstance(inputs, torch.Tensor):
                 inputs = torch.tensor(inputs)
             if not isinstance(labels, torch.Tensor):
                 labels = torch.tensor(labels)
-                
+
             inputs = inputs.to(self.device)
             labels = labels.to(self.device)
-            
+
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
                 loss = outputs[1]
-                
+
             loss.backward()
-            
+
             self.local_progress.samples_accumulated += inputs.size(0)
             total_loss += loss.detach().item()
             batch_count += 1
             inner_step_counter += 1
-            
+
             if batch_count % 5 == 0:
                 bt.logging.info(
                     f":gear: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                 )
-                
+
             if inner_step_counter % 20 == 0:
                 self.start_background_upload(
                     epoch=self.local_progress.epoch,
                     batch_size=self.config.neuron.local_batch_size_train,
                 )
-                
+
             self.inner_optimizer.step()
             self.inner_optimizer.zero_grad()
-
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -595,7 +612,6 @@ class Miner(BaseMinerNeuron):
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
     with Miner() as miner:
-
         while True:
             bt.logging.info(f"Training status: {miner.training_status.value}")
             time.sleep(30)
