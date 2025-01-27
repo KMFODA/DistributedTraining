@@ -32,7 +32,7 @@ import bittensor as bt
 import hivemind
 import speedtest
 import wandb
-
+from bittensor.utils.btlogging import format
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
@@ -206,7 +206,30 @@ def setup_logging(
     config=None,  # Add config parameter
 ):
     """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
-    # Initialize bittensor logging
+
+    # Initialize bittensor logging with extra emoji use
+    format.emoji_map.update(
+        {
+            ":rocket:": "🚀",
+            ":lock:": "🔒",
+            ":unlock:": "🔓",
+            ":lightning:": "⚡",
+            ":error:": "❗",
+            ":info:": "ℹ️",
+            ":network:": "🌐",
+            ":memory:": "💾",
+            ":gear:": "⚙️",
+            ":progress:": "📈",
+            ":time:": "⏰",
+            ":clock:": "⏱️",
+            ":signal:": "📶",
+            ":broadcast:": "📡",
+            ":sync:": "🔄",
+            ":send:": "📤",
+            ":receive:": "📥",
+            ":pages:": "📑",
+        }
+    )
     _ = bt.logging()
 
     # # Setup bittensor logger
@@ -368,3 +391,25 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error("Retrying...")
+                
+def get_current_block_safe(self):
+    """Thread-safe method to get the current block number with caching"""
+    with self._block_lock:
+        current_time = time.time()
+        
+        # If we have a cached block number and it's fresh enough, return it
+        if (self._last_block is not None and 
+            current_time - self._last_block_time < self._block_cache_duration):
+            return self._last_block
+        
+        # Otherwise, fetch new block number
+        try:
+            self._last_block = self.subtensor.get_current_block()
+            self._last_block_time = current_time
+            return self._last_block
+        except Exception as e:
+            bt.logging.error(f"Error getting block number: {str(e)}")
+            # Return last known block if available, otherwise raise
+            if self._last_block is not None:
+                return self._last_block
+            raise
