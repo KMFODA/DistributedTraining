@@ -41,12 +41,12 @@ async def forward(self):
 
     """
 
-    update_global_tracker_state(self)
-    if self.local_progress.epoch != self.global_progress.epoch:
-        bt.logging.info(
-            f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-        )
-        load_state_from_peer(self, epoch=self.global_progress.epoch)
+    # update_global_tracker_state(self)
+    # if self.local_progress.epoch != self.global_progress.epoch:
+    #     bt.logging.info(
+    #         f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+    #     )
+    #     load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
@@ -78,7 +78,7 @@ async def forward(self):
                         k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
-                
+                    
                 self.peerids_to_uids = {
                     str(value[0]): key for key, value in self.uids_to_peerids.items()
                 }
@@ -86,8 +86,9 @@ async def forward(self):
                 # Start AllReduce as master
                 results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
-                    learning_rate=self.learning_rate,
                     peerids_to_uids=self.peerids_to_uids,
+                    dendrite_pool=self.dendrite_pool,
+                    miner_uids=self.miner_uids
                 )
 
                 if results:
@@ -111,28 +112,26 @@ async def forward(self):
 
             except Exception as e:
                 bt.logging.error(f"AllReduce failed: {e}")
-                await load_state_from_peer(self)
+                # await load_state_from_peer(self)
 
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
-            try:
-                (results,) = await self.gradient_processor.run_validator_allreduce(
+        
+            results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.config.neuron.allreduce_timeout,
-                    learning_rate=self.learning_rate,
                     peerids_to_uids=self.peerids_to_uids,
+                    dendrite_pool=self.dendrite_pool,
+                    miner_uids=self.miner_uids
                 )
 
-                if results:
-                    # Calculate scores even as non-master
-                    self.allreduce_scores = self.scoring.calculate_allreduce_scores(
-                        results["participating_peers"],
-                        results["failed_peers"],
-                        self.peerids_to_uids,
-                    )
+            if results:
+                # Calculate scores even as non-master
+                self.allreduce_scores = self.scoring.calculate_allreduce_scores(
+                    results["participating_peers"],
+                    results["failed_peers"],
+                    self.peerids_to_uids,
+                )
 
-            except Exception as e:
-                bt.logging.error(f"AllReduce failed: {e}")
-                await load_state_from_peer(self)
 
     else:
         # If running HF validation round, only call the sample_size
@@ -154,7 +153,7 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         # Check if miners uploaded new state since last N blocks
-        # TODO: Implement HF state check
+        # TODO: Implement HF state validation
         # * Below is placeholder for now
 
         # try:

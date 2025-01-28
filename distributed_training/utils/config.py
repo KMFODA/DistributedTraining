@@ -171,6 +171,12 @@ def add_args(cls, parser, prefix=None):
         help="The minimum group size for an all reduce",
         default=30,
     )
+    parser.add_argument(
+        "--neuron.client_mode",
+        help="Set to True for validators only",
+        default=False,
+        action="store_true",
+    )
 
     parser.add_argument(
         "--neuron.local_batch_size_train",

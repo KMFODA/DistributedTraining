@@ -445,7 +445,7 @@ class Miner(BaseMinerNeuron):
         """Process a single training batch"""
         total_loss = 0
         batch_count = 0
-        inner_step_counter = 0
+        inner_step_counter = 0 # TODO Set only when outer step happens
 
         for batch in dataset:
             if not self.training_active.is_set():

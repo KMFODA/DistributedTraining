@@ -42,8 +42,8 @@ class AveragingHandler:
         """Clean up after failed gradient averaging."""
         try:
             gradient_averaging_step.cancel()
-            with self.grad_averager.use_averaged_gradients():
-                self.outer_optimizer.zero_grad()
+            # with self.grad_averager.use_averaged_gradients(): # TODO
+            self.outer_optimizer.zero_grad()
             bt.logging.debug("Gradient averaging cleanup completed")
         except Exception as e:
             log_and_handle_error(e, "_cleanup_failed_averaging")
@@ -67,6 +67,9 @@ class AveragingHandler:
     async def run_validator_allreduce(
         self,
         timeout: int,
+        peerids_to_uids,
+        dendrite_pool,
+        miner_uids
     ) -> Tuple[bool, Dict[str, Any]]:
         """Process allreduce specifically for validator."""
         # TODO Weight/gradient validation
@@ -77,23 +80,18 @@ class AveragingHandler:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            self.peerids_to_uids = {
-                str(value[0]): key for key, value in self.uids_to_peerids.items()
-            }
-
             gradient_averaging_step = self.grad_averager.step(
                 wait=False,
                 timeout=timeout,
-                client_mode=True,  # Use client_mode to help averaging, but don't provide own updates as validator
-                peerids_to_uids=self.peerids_to_uids,
+                # peerids_to_uids=peerids_to_uids, # TODO Add logic in
             )
 
             # Send AllReduce query to pause miner training and perform global sync
             query_tasks.append(
-                self.dendrite_pool.async_forward(
-                    self.miner_uids,
-                    [AllReduce() for _ in self.miner_uids],
-                    timeout=(self.all_reduce_timeout),
+                dendrite_pool.async_forward(
+                    miner_uids,
+                    [AllReduce(learning_rate=0.1) for _ in miner_uids],
+                    timeout=timeout,
                 )
             )
             bt.logging.info("Query Sent Out")

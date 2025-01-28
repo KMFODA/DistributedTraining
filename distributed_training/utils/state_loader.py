@@ -189,6 +189,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # self.grad_averager.reset_accumulated_grads_()
 
     else:
+
         # Load a new gradient averager
         self.grad_averager = DTGradAverager(
             main_parameters=self.state_averager.main_parameters,
@@ -203,6 +204,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
             request_timeout=10.0,
             next_chunk_timeout=45.0,
             allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+            client_mode=self.config.neuron.client_mode,  # Use client_mode to help averaging, but don't provide own updates as validator
         )
 
     bt.logging.info(

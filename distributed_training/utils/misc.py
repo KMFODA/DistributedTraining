@@ -204,6 +204,7 @@ def logging_filter(record):
 def setup_logging(
     local_logfile="logs_mylogfile.txt",
     config=None,  # Add config parameter
+    level=logging.INFO # Default logging level of bt logs
 ):
     """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
 
@@ -231,20 +232,11 @@ def setup_logging(
         }
     )
     _ = bt.logging()
-
-    # # Setup bittensor logger
-    # bt_logger = logging.getLogger("bittensor")
-    # bt_logger.setLevel(level)
-    # bt_logger.propagate = False
-
-    # # Setup root logger
-    # root_logger = logging.getLogger()
-    # root_logger.setLevel(level)
-
-    # # Setup BittensorLogHandler
-    # bt_handler = BittensorLogHandler()
-    # bt_handler.setFormatter(formatter)
-    # root_logger.addHandler(bt_handler)
+    
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    logging.getLogger("bittensor").setLevel(level)
+    
+  
 
     # Handle local file logging
     if os.path.exists(local_logfile):

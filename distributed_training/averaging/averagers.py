@@ -59,11 +59,6 @@ class DTGradAverager(DecentralizedAverager):
         warn: bool = True,
         **kwargs,
     ):
-        if "client_mode" in kwargs:
-            if kwargs["client_mode"] is not None and kwargs["client_mode"]:
-                raise KeyError("client_mode is not supported in DTGradAverager")
-            else:
-                kwargs.pop("client_mode")
 
         if "averaged_grads" in kwargs:
             raise KeyError(
@@ -89,7 +84,7 @@ class DTGradAverager(DecentralizedAverager):
             averaged_tensors=averaged_grads,
             dht=dht,
             prefix=prefix,
-            client_mode=False,
+            # client_mode=False,
             **kwargs,
         )
 
@@ -170,7 +165,7 @@ class DTGradAverager(DecentralizedAverager):
         self,
         group_info: GroupInfo,
         min_vector_size: int,
-        peerids_to_uids: Dict,
+        peerids_to_uids: Dict, # TODO Make conditional to handle miner logic(dont need)
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata
