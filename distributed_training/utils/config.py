@@ -31,7 +31,7 @@ def check_config(cls, config: "bt.Config"):
 
     full_path = os.path.expanduser(
         "{}/{}/{}/netuid{}/{}".format(
-            config.logging.logging_dir,  # TODO: change from ~/.bittensor/miners to ~/.bittensor/neurons
+            config.logging.logging_dir,
             config.wallet.name,
             config.wallet.hotkey,
             config.netuid,
@@ -169,13 +169,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.min_group_size",
         type=int,
         help="The minimum group size for an all reduce",
-        default=30,
-    )
-    parser.add_argument(
-        "--neuron.client_mode",
-        help="Set to True for validators only",
-        default=False,
-        action="store_true",
+        default=2,
     )
 
     parser.add_argument(

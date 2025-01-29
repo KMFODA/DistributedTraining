@@ -42,10 +42,9 @@ class AllReduce(bt.Synapse):
         "This attribute is mutable and can be updated.",
     )
     # Learning Rate
-    learning_rate: Optional[float] = None
 
-    next_chunk_timeout: Optional[float] = None
     min_group_size: Optional[int] = None
     request_timeout: Optional[float] = None
+    allreduce_timeout: Optional[float] = None
+    next_chunk_timeout: Optional[float] = None
     min_matchmaking_time: Optional[float] = None
-    all_reduce_timeout: Optional[float] = None

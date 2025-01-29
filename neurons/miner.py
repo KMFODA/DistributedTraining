@@ -47,11 +47,11 @@ from distributed_training.exceptions import (
 )
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
+    get_bandwidth,
     get_current_block_safe,
     init_dht,
     load_wandb,
     setup_logging,
-    get_bandwidth
 )
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
@@ -82,9 +82,10 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 
 
 class TrainingStatus(Enum):
-    RUNNING = "running"
-    ERROR = "error"
-    STOPPED = "stopped"
+    RUNNING = ":training: Training"
+    ERROR = ":error: Error"
+    STOPPED = ":idle: Stopped"
+    PAUSED_FOR_ALLREDUCE = ":sync: Averaging"
 
 
 # TODO Consider when/how we would do model loading when using diloco
@@ -137,10 +138,6 @@ class Miner(BaseMinerNeuron):
         self._last_block_time = 0
         self._block_cache_duration = 5  # Cache block number for 5 seconds
 
-        # Initialize asyncio event loop
-        # self.loop = asyncio.new_event_loop() #TODO Unused
-        # asyncio.set_event_loop(self.loop)
-
         # Training control
         self.training_thread = None
         self.training_active = threading.Event()
@@ -171,9 +168,10 @@ class Miner(BaseMinerNeuron):
         # Optimizer configurations
         self.learning_rate_maximum = 6e-4
         self.weight_decay = 0.1
-        self.all_reduce_timeout = 360
+        self.allreduce_timeout = 360
         self.num_inner_steps = 500
         self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
+        self.inner_step_counter = 0
 
         # Model loading settings
         self.model_upload_retry_limit = 3
@@ -190,7 +188,7 @@ class Miner(BaseMinerNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.outer_optimizer, self.grad_averager, self.state_averager
+            self.model, self.grad_averager, self.state_averager
         )
 
         # Initialize thread pool for background uploads
@@ -240,12 +238,12 @@ class Miner(BaseMinerNeuron):
             except Exception as e:
                 bt.logging.error(f"Failed to create repository: {str(e)}")
                 raise
-            
+
         attempt = 0
         while attempt < self.model_upload_retry_limit:
             try:
                 with tempfile.TemporaryDirectory() as tmp_folder:
-                    bt.logging.info(f"Saving model state locally for epoch {epoch}")
+                    bt.logging.info(f":memory: Saving model state locally for epoch {epoch}")
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
@@ -381,6 +379,8 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
+        self.training_status = TrainingStatus.PAUSED_FOR_ALLREDUCE
+
         bt.logging.info(
             ":warning: Pausing continuous training for all_reduce query :warning:"
         )
@@ -388,6 +388,7 @@ class Miner(BaseMinerNeuron):
     def resume_training(self):
         """Resumes the continuous training loop"""
         self.training_active.set()
+        self.training_status = TrainingStatus.RUNNING
         bt.logging.info("Resuming continuous training")
 
     async def fetch_training_data(self):
@@ -444,7 +445,6 @@ class Miner(BaseMinerNeuron):
         """Process a single training batch"""
         total_loss = 0
         batch_count = 0
-        inner_step_counter = 0 # TODO Set only when outer step happens
 
         for batch in dataset:
             if not self.training_active.is_set():
@@ -474,14 +474,14 @@ class Miner(BaseMinerNeuron):
             self.local_progress.samples_accumulated += inputs.size(0)
             total_loss += loss.detach().item()
             batch_count += 1
-            inner_step_counter += 1
+            self.inner_step_counter += 1
 
             if batch_count % 5 == 0:
                 bt.logging.info(
-                    f":gear: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                    f":training: Inner Step: {self.inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                 )
 
-            if inner_step_counter % 20 == 0:
+            if self.inner_step_counter % 20 == 0:
                 self.start_background_upload(
                     epoch=self.local_progress.epoch,
                     batch_size=self.config.neuron.local_batch_size_train,
@@ -501,7 +501,7 @@ class Miner(BaseMinerNeuron):
 
                 # Wait for running training process to finish # TODO Wait for training_thread == WAIT instead
                 await asyncio.sleep(2)
-                
+
                 if not hasattr(self, "bandwidth"):
                     self.bandwidth = get_bandwidth()
 
@@ -509,6 +509,9 @@ class Miner(BaseMinerNeuron):
                 result = await self.avg_handler.run_miner_allreduce(
                     synapse, self.bandwidth
                 )
+                self.inner_step_counter = 0
+                bt.logging.debug("Reset inner step counter after AllReduce")
+
                 return result
 
         except Exception as e:
@@ -518,7 +521,7 @@ class Miner(BaseMinerNeuron):
         finally:
             # Resume training when done
             self.resume_training()
-            bt.logging.succes("Resuming continuous training after all_reduce")
+            bt.logging.info("Resuming continuous training after all_reduce")
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
@@ -612,5 +615,5 @@ class Miner(BaseMinerNeuron):
 if __name__ == "__main__":
     with Miner() as miner:
         while True:
-            bt.logging.info(f"Training status: {miner.training_status.value}")
+            bt.logging.info(f"Miner Training Status: {miner.training_status.value}")
             time.sleep(30)

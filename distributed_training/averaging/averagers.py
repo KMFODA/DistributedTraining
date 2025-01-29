@@ -5,7 +5,6 @@ import logging
 from typing import (
     Any,
     AsyncIterator,
-    Dict,
     Iterator,
     List,
     Optional,
@@ -59,7 +58,6 @@ class DTGradAverager(DecentralizedAverager):
         warn: bool = True,
         **kwargs,
     ):
-
         if "averaged_grads" in kwargs:
             raise KeyError(
                 "DTGradAverager does not support averaged_grads since it use the offloaded optimizer gradients directly"
@@ -165,7 +163,6 @@ class DTGradAverager(DecentralizedAverager):
         self,
         group_info: GroupInfo,
         min_vector_size: int,
-        peerids_to_uids: Dict, # TODO Make conditional to handle miner logic(dont need)
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata
@@ -181,7 +178,7 @@ class DTGradAverager(DecentralizedAverager):
             )
             modes = tuple(map(AveragingMode, mode_ids))
 
-            # compute optimal part sizes from peer bandwidths; TODO: replace with proper load balancing
+            # compute optimal part sizes from peer bandwidths;
             download_bandwidths = [
                 thr if mode != AveragingMode.CLIENT else 0.0
                 for thr, mode in zip(bandwidths, modes)
@@ -194,10 +191,9 @@ class DTGradAverager(DecentralizedAverager):
                 download_bandwidths,
                 min_vector_size,
             )
-            
+
             async with enter_asynchronously(self.get_tensors()) as local_tensors:
                 runner = AllReduceRunner(
-                    peerids_to_uids=peerids_to_uids,
                     p2p=self._p2p,
                     servicer_type=type(self),
                     prefix=self.prefix,
@@ -225,8 +221,8 @@ class DTGradAverager(DecentralizedAverager):
                             "aux peers should not receive averaged tensors"
                         )
 
-                return user_gathered, runner.banned_senders, group_info.peer_ids, modes, bandwidths
-            
+                return runner.banned_senders, group_info.peer_ids, modes, bandwidths
+
         except BaseException as e:
             if isinstance(e, Exception):
                 hivemind_logger.exception(e)

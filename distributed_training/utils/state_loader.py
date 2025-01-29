@@ -13,10 +13,10 @@ import torch
 from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
 
+from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
-from distributed_training.averaging.averagers import DTStateAverager, DTGradAverager
 
 
 class ModelLoadingManager:
@@ -171,7 +171,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         )
     # self.outer_optimizer = self.state_averager.optimizer
     # self.outer_optimizer = torch.optim.SGD(self.model.parameters(), lr=0.7, momentum=0.9, nesterov=True)
@@ -189,7 +189,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # self.grad_averager.reset_accumulated_grads_()
 
     else:
-
         # Load a new gradient averager
         self.grad_averager = DTGradAverager(
             main_parameters=self.state_averager.main_parameters,
@@ -203,8 +202,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-            client_mode=self.config.neuron.client_mode,  # Use client_mode to help averaging, but don't provide own updates as validator
+            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         )
 
     bt.logging.info(

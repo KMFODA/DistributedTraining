@@ -204,7 +204,6 @@ class SubsetLoader(IterableDataset):
     """
     Base class for data-specific subset loader classes.
 
-    # TODO: Make this class abstract
     """
 
     def __init__(

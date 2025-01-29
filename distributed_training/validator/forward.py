@@ -17,15 +17,8 @@
 # DEALINGS IN THE SOFTWARE.
 
 import bittensor as bt
-import torch
-from huggingface_hub import list_repo_refs
-from huggingface_hub.utils import HfHubHTTPError
 
 from distributed_training.utils.misc import get_bandwidth
-from distributed_training.utils.progress_tracker import update_global_tracker_state
-from distributed_training.utils.state_loader import (
-    load_state_from_peer,
-)
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
 
@@ -56,7 +49,7 @@ async def forward(self):
     responses = [[]]
     hf_miner_states = {}
     self.miner_uids = []
-    
+
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
         all_reduce = True
@@ -64,7 +57,6 @@ async def forward(self):
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
             try:
-
                 sample_size = int(self.metagraph.n)
 
                 # Get active miners
@@ -78,17 +70,21 @@ async def forward(self):
                         k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
-                    
+
                 self.peerids_to_uids = {
                     str(value[0]): key for key, value in self.uids_to_peerids.items()
                 }
-                
-                # Start AllReduce as master
+
+                if not hasattr(
+                    self, "bandwidth"
+                ):  # TODO Maybe run different location to not wait on this
+                    self.bandwidth = get_bandwidth()
+
                 results = await self.avg_handler.run_validator_allreduce(
-                    timeout=self.config.neuron.allreduce_timeout,
-                    peerids_to_uids=self.peerids_to_uids,
+                    timeout=self.allreduce_timeout,
                     dendrite_pool=self.dendrite_pool,
-                    miner_uids=self.miner_uids
+                    miner_uids=self.miner_uids,
+                    bandwidth=self.bandwidth,
                 )
 
                 if results:
@@ -116,13 +112,18 @@ async def forward(self):
 
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
-        
+
+            if not hasattr(
+                self, "bandwidth"
+            ):  # TODO Maybe run different location to not wait on this
+                self.bandwidth = get_bandwidth()
+
             results = await self.avg_handler.run_validator_allreduce(
-                    timeout=self.config.neuron.allreduce_timeout,
-                    peerids_to_uids=self.peerids_to_uids,
-                    dendrite_pool=self.dendrite_pool,
-                    miner_uids=self.miner_uids
-                )
+                timeout=self.allreduce_timeout,
+                dendrite_pool=self.dendrite_pool,
+                miner_uids=self.miner_uids,
+                bandwidth=self.bandwidth,
+            )
 
             if results:
                 # Calculate scores even as non-master
@@ -131,7 +132,6 @@ async def forward(self):
                     results["failed_peers"],
                     self.peerids_to_uids,
                 )
-
 
     else:
         # If running HF validation round, only call the sample_size
