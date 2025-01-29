@@ -53,7 +53,9 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
+    load_state_from_peer
 )
+from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.validator import forward
 
 # Add lamb to bnb str2optimizer8bit_blockwise
@@ -155,8 +157,8 @@ class Validator(BaseValidatorNeuron):
         self.model_loading_manager = ModelLoadingManager()
 
         # Load state if needed
-        # if self.local_progress.epoch < self.global_progress.epoch:
-        #     load_state_from_peer(self, epoch=self.global_progress.epoch)
+        if self.local_progress.epoch < self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -174,20 +176,18 @@ class Validator(BaseValidatorNeuron):
         """Initialize UID related components"""
         # Set UIDs
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.uid
-        # self.master_uid = self.metagraph.hotkeys.index(
-        #     self.config.neuron.master_ss58_address,
-        # )
+        self.master_uid = self.metagraph.hotkeys.index(
+            self.config.neuron.master_ss58_address,
+        )
 
         # Init UID mappings
-        self.uids_to_peerids = {
-            uid: (None, None) for uid in self.metagraph.uids.tolist()
+        self.uid_metadata_tracker = {
+            uid: {"peer_id": None, "model_huggingface_id": None, "last_updated_block": None} for uid in self.metagraph.uids.tolist()
         }
-        self.uid_iterator = UIDIterator(self.metagraph.uids.tolist())
 
         # Init UID to PeerID mapping
         self.stop_event = threading.Event()
-        # map_uid_to_peerid(self, self.metagraph.uids.tolist())
+        map_uid_to_peerid(self)
 
         # Update PeerID list
         # update_run_peerid_list(self)

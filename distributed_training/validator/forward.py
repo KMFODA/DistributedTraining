@@ -19,6 +19,8 @@
 import bittensor as bt
 
 from distributed_training.utils.misc import get_bandwidth
+from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_random_uids
 from distributed_training.validator.reward import get_rewards
 
@@ -33,27 +35,23 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-
-    # update_global_tracker_state(self)
-    # if self.local_progress.epoch != self.global_progress.epoch:
-    #     bt.logging.info(
-    #         f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-    #     )
-    #     load_state_from_peer(self, epoch=self.global_progress.epoch)
+    update_global_tracker_state(self)
+    if self.local_progress.epoch != self.global_progress.epoch:
+        bt.logging.info(
+            f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+        )
+        load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
-    should_allreduce = True
-    # should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
 
     responses = [[]]
     hf_miner_states = {}
     self.miner_uids = []
-
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
         all_reduce = True
-
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
             try:
@@ -70,7 +68,6 @@ async def forward(self):
                         k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
-
                 self.peerids_to_uids = {
                     str(value[0]): key for key, value in self.uids_to_peerids.items()
                 }
@@ -86,7 +83,6 @@ async def forward(self):
                     miner_uids=self.miner_uids,
                     bandwidth=self.bandwidth,
                 )
-
                 if results:
                     # Update scoring based on allreduce participation
                     self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
@@ -108,7 +104,7 @@ async def forward(self):
 
             except Exception as e:
                 bt.logging.error(f"AllReduce failed: {e}")
-                # await load_state_from_peer(self)
+                await load_state_from_peer(self)
 
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
@@ -153,7 +149,7 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         # Check if miners uploaded new state since last N blocks
-        # TODO: Implement HF state validation
+        # TODO: Implement HF state check
         # * Below is placeholder for now
 
         # try:

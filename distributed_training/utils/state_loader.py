@@ -133,7 +133,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # Initialize fresh optimizer
         self.inner_optimizer = torch.optim.AdamW(
             optim_groups,
-            lr=self.config.learning_rate_default,
+            lr=self.learning_rate_maximum,
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,

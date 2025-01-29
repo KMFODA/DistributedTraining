@@ -297,56 +297,94 @@ def map_uid_to_peerid_background_task(self):
     bt.logging.info("Exiting update models loop.")
 
 
-def map_uid_to_peerid(self, uids):
-    for next_uid in uids:
+def map_uid_to_peerid(self):
+    
+    subtensor = bt.subtensor(config=self.config)
+    result = subtensor.substrate.query_map(
+        module="Commitments",
+        storage_function="CommitmentOf",
+        params=[self.config.netuid],
+        block_hash=None,
+    )
+        
+    hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
+
+    for key, value in result:
+        hotkey = key.value
+        if hotkey not in hotkey_to_uid:
+            continue
+
+        uid = hotkey_to_uid[hotkey]
+        commitment_info = value.value.get("info", {})
+        fields = commitment_info.get("fields", [])
+        last_updated_block = value.value.get("block", None)
+
+        if not fields or not isinstance(fields[0], dict):
+            continue
+
+        field_value = next(iter(fields[0].values()))
+        if field_value.startswith("0x"):
+            field_value = field_value[2:]
+
         try:
-            # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-            metadata = bt.core.extrinsics.serving.get_metadata(
-                self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
-            )
-            if metadata is not None:
-                commitment = metadata["info"]["fields"][0]
-                hex_data = commitment[list(commitment.keys())[0]][2:]
-                chain_str = bytes.fromhex(hex_data).decode()
-                updated = (chain_str, metadata["block"])
-            else:
-                updated = (None, None)
-
-            if (self.uids_to_peerids[next_uid][0] != updated[0]) and (
-                updated[0]
-                not in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
-            ):
+            concatenated = bytes.fromhex(field_value).decode("utf-8").strip()
+            concatenated = eval(concatenated)
+            
+            if ('peer_id' not in concatenated):
                 bt.logging.info(
-                    f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
+                    f"Invalid commitment for UID {uid}: peer_id not in commitment metadata"
                 )
-                self.uids_to_peerids[next_uid] = updated
-            elif (self.uids_to_peerids[next_uid][0] != updated[0]) and (
-                updated[0]
-                in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
-            ):
-                indices = [
-                    index
-                    for index, peerid_info in enumerate(self.uids_to_peerids.values())
-                    if peerid_info[0] == updated[0]
-                ]
-                for index in indices:
-                    if self.uids_to_peerids[index][1] > updated[1]:
-                        self.uids_to_peerids[index] = (None, None)
-                        bt.logging.info(
-                            f"The same peerID was found for UID={index} with a later commit message. Setting the peerID for that UID={index} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        self.uids_to_peerids[next_uid] = updated
-                        bt.logging.info(
-                            f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        break
-                    else:
-                        updated = (None, None)
-                        bt.logging.info(
-                            f"The same peerID was found for UID={index} with an earlier commit message. Setting the peerID for UID={next_uid} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        self.uids_to_peerids[next_uid] = updated
-        except Exception as e:
-            bt.logging.error(f"Error in update loop: {e} \n {traceback.format_exc()}")
+                continue
+            if ('model_id' not in concatenated):
+                bt.logging.info(
+                    f"Invalid commitment for UID {uid}: model_id not in commitment metadata"
+                )
+            if concatenated['peer_id'] != self.uid_metadata_tracker[uid]['peer_id']:
+                uid_peerid_metadata = [metadata['peer_id'] for key, metadata in self.uid_metadata_tracker.items() if key != 0]
+                if concatenated['peer_id'] not in uid_peerid_metadata:
+                    self.uid_metadata_tracker[uid]['peer_id'] = concatenated['peer_id']
+                    self.uid_metadata_tracker[uid]['last_updated_block'] = last_updated_block 
+                else:
+                    uid_list = [
+                        uid
+                        for uid, metadata in self.uid_metadata_tracker.items()
+                        if metadata['peer_id'] == concatenated['peer_id']
+                    ]
+                    for uid_i in uid_list:
+                        if (self.uid_metadata_tracker[uid_i]["last_updated_block"] is not None) and (self.uid_metadata_tracker[uid_i]["last_updated_block"] > last_updated_block):
+                            self.uid_metadata_tracker[uid_i]["last_updated_block"] = None
+                            self.uid_metadata_tracker[uid_i]["model_huggingface_id"] = None
+                            self.uid_metadata_tracker[uid_i]["peer_id"] = None
+                        else:
+                            self.uid_metadata_tracker[uid]["last_updated_block"] = None
+                            self.uid_metadata_tracker[uid]["model_huggingface_id"] = None
+                            self.uid_metadata_tracker[uid]["peer_id"] = None
+            if concatenated['model_id'] != self.uid_metadata_tracker[uid]['model_huggingface_id']:  
+                self.uid_metadata_tracker[uid]['model_huggingface_id'] = concatenated['model_id']
+                uid_peerid_metadata = [metadata['model_id'] for key, metadata in self.uid_metadata_tracker.items() if key != 0]
+                if concatenated['model_id'] not in uid_peerid_metadata:
+                    self.uid_metadata_tracker[uid]['model_huggingface_id'] = concatenated['model_id']
+                    self.uid_metadata_tracker[uid]['last_updated_block'] = last_updated_block
+                else:
+                    uid_list = [
+                        uid
+                        for uid, metadata in self.uid_metadata_tracker.items()
+                        if metadata['model_id'] == concatenated['model_id']
+                    ]
+                    for uid_i in uid_list:
+                        if (self.uid_metadata_tracker[uid_i]["last_updated_block"] is not None) and (self.uid_metadata_tracker[uid_i]["last_updated_block"] > last_updated_block):
+                            self.uid_metadata_tracker[uid_i]["last_updated_block"] = None
+                            self.uid_metadata_tracker[uid_i]["model_huggingface_id"] = None
+                            self.uid_metadata_tracker[uid_i]["peer_id"] = None
+                        else:
+                            self.uid_metadata_tracker[uid]["last_updated_block"] = None
+                            self.uid_metadata_tracker[uid]["model_huggingface_id"] = None
+                            self.uid_metadata_tracker[uid]["peer_id"] = None                
+            
+            bt.logging.info(f"Retrieveds commitment for UID {uid}")
 
-    bt.logging.info("Finished uid to peerid mapping")
+        except Exception as e:
+            bt.logging.info(f"Failed to decode commitment for UID {uid}: {e}")
+            continue
+        
+    bt.logging.info("Finished extracting commitments for all uids")
