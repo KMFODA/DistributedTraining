@@ -67,7 +67,7 @@ class AveragingHandler:
     async def run_validator_allreduce(
         self,
         timeout: int,
-        peerids_to_uids,
+        # peerids_to_uids,
         dendrite_pool,
         miner_uids
     ) -> Tuple[bool, Dict[str, Any]]:
@@ -80,6 +80,7 @@ class AveragingHandler:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
+            bt.logging.success("Starting Pseudo Gradient Averaging..")
             gradient_averaging_step = self.grad_averager.step(
                 wait=False,
                 timeout=timeout,
@@ -90,14 +91,14 @@ class AveragingHandler:
             query_tasks.append(
                 dendrite_pool.async_forward(
                     miner_uids,
-                    [AllReduce(learning_rate=0.1) for _ in miner_uids],
+                    [AllReduce() for _ in miner_uids],
                     timeout=timeout,
                 )
             )
-            bt.logging.info("Query Sent Out")
+            bt.logging.info("AllReduce Query Sent Out..")
             # start_time = time.perf_counter() 
             await asyncio.gather(*query_tasks)
-            bt.logging.info("Query Responses Received")
+            bt.logging.info("AllReduce Query Responses Received..")
 
             self.grad_averager.notify_used_averaged_gradients()
             bt.logging.success("Finished Averaging Pseudo Gradients!")
@@ -239,6 +240,7 @@ class AveragingHandler:
     async def run_miner_allreduce(
         self,
         synapse,
+        bandwidth
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
         await self._wait_for_model_loading(self.model_loading_manager)
@@ -252,10 +254,9 @@ class AveragingHandler:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
             # Used for load balancing and scoring
-            self.grad_averager.bandwidth = (
-                self.bandwidth
-            )  # TODO Either use average bandwidth or set each time here
+            self.grad_averager.bandwidth = bandwidth  # TODO Either use average bandwidth or set each time here
 
+            bt.logging.success("Starting Pseudo Gradient Averaging..")
             gradient_averaging_step = self.grad_averager.step(
                 wait=True, timeout=synapse.timeout
             )

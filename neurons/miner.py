@@ -51,6 +51,7 @@ from distributed_training.utils.misc import (
     init_dht,
     load_wandb,
     setup_logging,
+    get_bandwidth
 )
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
@@ -137,8 +138,8 @@ class Miner(BaseMinerNeuron):
         self._block_cache_duration = 5  # Cache block number for 5 seconds
 
         # Initialize asyncio event loop
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
+        # self.loop = asyncio.new_event_loop() #TODO Unused
+        # asyncio.set_event_loop(self.loop)
 
         # Training control
         self.training_thread = None
@@ -151,12 +152,8 @@ class Miner(BaseMinerNeuron):
             max_workers=1, thread_name_prefix="training_worker"
         )
 
-        # Create event loop in main thread
-        self.loop = asyncio.get_event_loop()
-
         # Create a separate loop for training operations
         self.training_loop = asyncio.new_event_loop()
-
         self.training_lock = asyncio.Lock()
 
         # Training status tracking
@@ -384,7 +381,9 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
-        bt.logging.info("Pausing continuous training")
+        bt.logging.info(
+            ":warning: Pausing continuous training for all_reduce query :warning:"
+        )
 
     def resume_training(self):
         """Resumes the continuous training loop"""
@@ -499,16 +498,16 @@ class Miner(BaseMinerNeuron):
             async with self.training_lock:
                 # Ensure training is paused
                 self.pause_training()
-                bt.logging.info(
-                    ":warning: Pausing continuous training for all_reduce query :warning:"
-                )
 
                 # Wait for running training process to finish # TODO Wait for training_thread == WAIT instead
                 await asyncio.sleep(2)
+                
+                if not hasattr(self, "bandwidth"):
+                    self.bandwidth = get_bandwidth()
 
                 # Run allreduce with proper timeout
                 result = await self.avg_handler.run_miner_allreduce(
-                    synapse, timeout=synapse.timeout
+                    synapse, self.bandwidth
                 )
                 return result
 
