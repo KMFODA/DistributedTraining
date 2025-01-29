@@ -38,7 +38,7 @@ from hivemind.utils.streaming import combine_from_streaming
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
+from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     AsyncDendritePool,
     get_bandwidth,
@@ -49,6 +49,7 @@ from distributed_training.utils.misc import (
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
+    update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
@@ -120,9 +121,8 @@ class Validator(BaseValidatorNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        # update_global_tracker_state(self)
-        self.global_progress.epoch = 10
-        self.local_progress.epoch = self.global_progress  # TODO Fix this
+        update_global_tracker_state(self)
+        self.local_progress.epoch = self.global_progress.epoch
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
