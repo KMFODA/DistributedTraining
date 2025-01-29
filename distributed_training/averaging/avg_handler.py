@@ -107,9 +107,12 @@ class AveragingHandler:
             bt.logging.success("Finished Averaging Pseudo Gradients!")
 
             if gradient_averaging_step.done():
-                (failed_peers, participating_peers, modes, bandwidths) = (
-                    gradient_averaging_step.result()
-                )
+                (
+                    failed_peers,
+                    participating_peers,
+                    modes,
+                    bandwidths,
+                ) = gradient_averaging_step.result()
 
                 initial_weights = self._get_weights_sample()
                 bt.logging.debug(f"Initial weights sample: {initial_weights}")
@@ -134,9 +137,11 @@ class AveragingHandler:
                     "modes": modes,
                     "bandwidths": bandwidths,
                 }
-                
+
             else:  # TODO Ensure failing avaerging is handled
-                raise ModelStateError("Averaging Failed. Loading Updated Model State From HF.")
+                raise ModelStateError(
+                    "Averaging Failed. Loading Updated Model State From HF."
+                )
 
         except Exception as e:  # TODO Proper cleanup
             # await self._cleanup_failed_averaging(gradient_averaging_step)
@@ -301,8 +306,9 @@ class AveragingHandler:
 
             else:  # TODO Ensure failing avaerging is handled
                 # TODO Bonus to log/print timeout to understand if that is the cause
-                raise ModelStateError("Averaging Failed. Loading Updated Model State From HF.")
-
+                raise ModelStateError(
+                    "Averaging Failed. Loading Updated Model State From HF."
+                )
 
         except Exception as e:
             # await self._cleanup_failed_averaging(gradient_averaging_step)

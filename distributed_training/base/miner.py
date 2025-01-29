@@ -116,7 +116,7 @@ class BaseMinerNeuron(BaseNeuron):
         # Start  starts the miner's axon, making it active on the network.
         self.axon.start()
         bt.logging.info(f"Miner starting at block: {self.block}")
-        
+
         bt.logging.info("[magenta] Starting training..")
         self.start_continuous_training()
 
@@ -157,7 +157,9 @@ class BaseMinerNeuron(BaseNeuron):
         except KeyboardInterrupt:
             self.should_exit = True
             self.axon.stop()
-            bt.logging.success(":white_heavy_check_mark: Miner killed by keyboard interrupt.")
+            bt.logging.success(
+                ":white_heavy_check_mark: Miner killed by keyboard interrupt."
+            )
             exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.

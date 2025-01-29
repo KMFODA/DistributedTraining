@@ -43,6 +43,7 @@ torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
+
 # TODO HF validation logic
 def score_gradients(self, response, uid, threshold=0.75):
     try:
@@ -293,7 +294,7 @@ async def get_rewards(
         scores *= blacklist_scores
 
         # This is done via the all_reduce instead
-        # # Score miners bandwidth 
+        # # Score miners bandwidth
         # bandwidth_scores = await score_bandwidth(
         #     self,
         #     self.miner_uids,

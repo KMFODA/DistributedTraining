@@ -107,9 +107,9 @@ class DTGradAverager(DecentralizedAverager):
         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
         :note: in the current implementation, each step_control can only be used in one step.
         """
-        assert kwargs.get("weight") is None, (
-            "setting weight in schedule_step is not supported"
-        )
+        assert (
+            kwargs.get("weight") is None
+        ), "setting weight in schedule_step is not supported"
         return super().step(
             scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs
         )
@@ -166,7 +166,8 @@ class DTGradAverager(DecentralizedAverager):
         **kwargs,
     ) -> GatheredData:
         """Run aggregation in a given group and update tensors in place, return gathered metadata
-        This wrapper method helps allow return of banned senders for better visibility of global contributions"""
+        This wrapper method helps allow return of banned senders for better visibility of global contributions
+        """
         try:
             bandwidths, mode_ids, user_gathered_bytes = zip(
                 *map(self.serializer.loads, group_info.gathered)

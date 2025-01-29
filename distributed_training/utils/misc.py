@@ -382,7 +382,8 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error("Retrying...")
-                
+
+
 def get_current_block_safe(self):
     """Thread-safe method to get the current block number with caching"""
     with self._block_lock:

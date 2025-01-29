@@ -84,4 +84,6 @@ def log_peerid_to_chain(self):
         )
     except Exception:
         self.peer_id_logged_to_chain = False
-        bt.logging.debug("Unable to log DHT PeerID to chain. Retrying on the next step.")
+        bt.logging.debug(
+            "Unable to log DHT PeerID to chain. Retrying on the next step."
+        )

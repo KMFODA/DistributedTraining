@@ -87,6 +87,7 @@ class TrainingStatus(Enum):
     STOPPED = "😴 | Stopped"
     AVERAGING = "🔄 | Averaging"
 
+
 # TODO Consider when/how we would do model loading when using diloco
 # TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
 class Miner(BaseMinerNeuron):
@@ -242,7 +243,9 @@ class Miner(BaseMinerNeuron):
         while attempt < self.model_upload_retry_limit:
             try:
                 with tempfile.TemporaryDirectory() as tmp_folder:
-                    bt.logging.info(f":memory: Saving model state locally for epoch {epoch}")
+                    bt.logging.info(
+                        f":memory: Saving model state locally for epoch {epoch}"
+                    )
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
@@ -380,9 +383,7 @@ class Miner(BaseMinerNeuron):
         self.training_active.clear()
         self.training_status = TrainingStatus.AVERAGING
 
-        bt.logging.info(
-            ":warning: Pausing continuous training for AllReduce query"
-        )
+        bt.logging.info(":warning: Pausing continuous training for AllReduce query")
 
     def resume_training(self):
         """Resumes the continuous training loop"""

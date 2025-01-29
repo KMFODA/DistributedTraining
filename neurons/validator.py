@@ -53,7 +53,7 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
-    load_state_from_peer
+    load_state_from_peer,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.validator import forward
@@ -182,7 +182,12 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID mappings
         self.uid_metadata_tracker = {
-            uid: {"peer_id": None, "model_huggingface_id": None, "last_updated_block": None} for uid in self.metagraph.uids.tolist()
+            uid: {
+                "peer_id": None,
+                "model_huggingface_id": None,
+                "last_updated_block": None,
+            }
+            for uid in self.metagraph.uids.tolist()
         }
 
         # Init UID to PeerID mapping
