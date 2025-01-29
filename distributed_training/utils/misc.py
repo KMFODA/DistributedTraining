@@ -31,13 +31,13 @@ from typing import Any, Callable, List
 import bittensor as bt
 import hivemind
 import speedtest
-import wandb
 from bittensor.utils.btlogging import format
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from loguru import logger as bt_logger
 
+import wandb
 from distributed_training.protocol import AllReduce
 
 EVENTS_LEVEL_NUM = 38
@@ -204,7 +204,7 @@ def logging_filter(record):
 def setup_logging(
     local_logfile="logs_mylogfile.txt",
     config=None,  # Add config parameter
-    level=logging.INFO # Default logging level of bt logs
+    level=logging.INFO,  # Default logging level of bt logs
 ):
     """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
 
@@ -217,11 +217,12 @@ def setup_logging(
             ":lightning:": "⚡",
             ":error:": "❗",
             ":info:": "ℹ️",
+            ":idle:": "😴",
             ":network:": "🌐",
             ":memory:": "💾",
-            ":gear:": "⚙️",
+            ":training:": "🏋️",
             ":progress:": "📈",
-            ":time:": "⏰",
+            ":wait:": "⏳",
             ":clock:": "⏱️",
             ":signal:": "📶",
             ":broadcast:": "📡",
@@ -232,11 +233,9 @@ def setup_logging(
         }
     )
     _ = bt.logging()
-    
+
     logging.getLogger("transformers").setLevel(logging.ERROR)
     logging.getLogger("bittensor").setLevel(level)
-    
-  
 
     # Handle local file logging
     if os.path.exists(local_logfile):
@@ -388,12 +387,14 @@ def get_current_block_safe(self):
     """Thread-safe method to get the current block number with caching"""
     with self._block_lock:
         current_time = time.time()
-        
+
         # If we have a cached block number and it's fresh enough, return it
-        if (self._last_block is not None and 
-            current_time - self._last_block_time < self._block_cache_duration):
+        if (
+            self._last_block is not None
+            and current_time - self._last_block_time < self._block_cache_duration
+        ):
             return self._last_block
-        
+
         # Otherwise, fetch new block number
         try:
             self._last_block = self.subtensor.get_current_block()

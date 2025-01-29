@@ -17,7 +17,6 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-import asyncio
 import os
 import time
 from typing import Optional
@@ -36,12 +35,13 @@ from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
 
+from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
-from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.utils.chain import UIDIterator, log_peerid_to_chain
 from distributed_training.utils.misc import (
     AsyncDendritePool,
+    get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
@@ -49,16 +49,10 @@ from distributed_training.utils.misc import (
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
-    update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
-    load_state_from_peer,
-)
-from distributed_training.utils.uids import (
-    map_uid_to_peerid,
-    update_run_peerid_list,
 )
 from distributed_training.validator import forward
 
@@ -72,13 +66,14 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 
 hivemind_logger = get_logger(__name__)
 
+
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
 
         # Initialize class variables
         self.train_timeout = 120
-        self.all_reduce_timeout = 540
+        self.allreduce_timeout = 540
         self.load_state_timeout = 180
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 10
@@ -125,7 +120,7 @@ class Validator(BaseValidatorNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         # update_global_tracker_state(self)
         self.global_progress.epoch = 10
-        self.local_progress.epoch = self.global_progress # TODO Fix this
+        self.local_progress.epoch = self.global_progress  # TODO Fix this
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -165,8 +160,7 @@ class Validator(BaseValidatorNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.outer_optimizer, 
-            self.grad_averager, self.state_averager
+            self.model, self.grad_averager, self.state_averager
         )
 
     def _init_network_components(self):
@@ -193,14 +187,14 @@ class Validator(BaseValidatorNeuron):
 
         # Init UID to PeerID mapping
         self.stop_event = threading.Event()
-        map_uid_to_peerid(self, self.metagraph.uids.tolist())
+        # map_uid_to_peerid(self, self.metagraph.uids.tolist())
 
         # Update PeerID list
-        update_run_peerid_list(self)
+        # update_run_peerid_list(self)
 
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
-        
+
         # Init last_allreduce_block to current block # TODO needs to be set properly for newcomers
         self.last_allreduce_block = self.block
 
