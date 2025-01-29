@@ -136,10 +136,7 @@ class AveragingHandler:
                 }
                 
             else:  # TODO Ensure failing avaerging is handled
-                bt.logging.info(
-                    ":error: Averaging Failed. Loading Updated Model State From HF."
-                )
-                raise ModelStateError
+                raise ModelStateError("Averaging Failed. Loading Updated Model State From HF.")
 
         except Exception as e:  # TODO Proper cleanup
             # await self._cleanup_failed_averaging(gradient_averaging_step)
@@ -266,7 +263,7 @@ class AveragingHandler:
                 "download"
             ]  # TODO Either use average bandwidth or set each time here
 
-            bt.logging.success(":wait: Starting Pseudo Gradient Averaging..")
+            bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
             gradient_averaging_step = self.grad_averager.step(
                 wait=True, timeout=synapse.timeout
             )
@@ -303,10 +300,9 @@ class AveragingHandler:
                 return synapse
 
             else:  # TODO Ensure failing avaerging is handled
-                bt.logging.info(
-                    ":error: Averaging Failed. Loading Updated Model State From HF."
-                )
-                raise ModelStateError
+                # TODO Bonus to log/print timeout to understand if that is the cause
+                raise ModelStateError("Averaging Failed. Loading Updated Model State From HF.")
+
 
         except Exception as e:
             # await self._cleanup_failed_averaging(gradient_averaging_step)

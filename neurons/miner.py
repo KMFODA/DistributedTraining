@@ -82,11 +82,10 @@ bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
 
 
 class TrainingStatus(Enum):
-    RUNNING = ":training: Training"
-    ERROR = ":error: Error"
-    STOPPED = ":idle: Stopped"
-    PAUSED_FOR_ALLREDUCE = ":sync: Averaging"
-
+    ERROR = "❗ Error"
+    RUNNING = "🏋️ Training"
+    STOPPED = "😴 Stopped"
+    AVERAGING = "🔄 Averaging"
 
 # TODO Consider when/how we would do model loading when using diloco
 # TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
@@ -379,7 +378,7 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
-        self.training_status = TrainingStatus.PAUSED_FOR_ALLREDUCE
+        self.training_status = TrainingStatus.AVERAGING
 
         bt.logging.info(
             ":warning: Pausing continuous training for all_reduce query :warning:"
