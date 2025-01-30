@@ -30,13 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import bitsandbytes
 import bittensor as bt
+import distributed_training
 import numpy as np
 import torch
 from bitsandbytes.cextension import lib
-from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
-from transformers import AutoTokenizer
-
-import distributed_training
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
@@ -57,11 +54,14 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
+    update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
+from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
+from transformers import AutoTokenizer
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -120,7 +120,7 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        self.global_progress.epoch = 10  # TODO Fix this
+        update_global_tracker_state(self)
         self.local_progress.epoch = self.global_progress.epoch
 
         if self.global_progress.epoch is None:
@@ -176,7 +176,6 @@ class Miner(BaseMinerNeuron):
         # Model loading settings
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
-        self.config.neuron.hf_repo_id = "kmfoda/gpt2-1b-miner-1"
 
         # Initialize model and its components
         # self.model_loading_manager = ModelLoadingManager() # TODO We dont need this anymore, right?
@@ -230,7 +229,7 @@ class Miner(BaseMinerNeuron):
                 create_repo(
                     self.config.neuron.hf_repo_id,
                     repo_type="model",
-                    private=False,  # TODO ??
+                    private=False,
                 )
                 bt.logging.info(
                     f"Created new repository: {self.config.neuron.hf_repo_id}"
@@ -257,14 +256,6 @@ class Miner(BaseMinerNeuron):
                         repo_id=self.config.neuron.hf_repo_id,
                         repo_type="model",
                         commit_message=commit_message,
-                    )
-
-                    # Create a tag for this version
-                    create_tag(
-                        self.config.neuron.hf_repo_id,
-                        repo_type="model",
-                        tag=str(epoch),
-                        tag_message=commit_message,
                     )
 
                     bt.logging.info(
@@ -408,6 +399,9 @@ class Miner(BaseMinerNeuron):
                 pages_info=pages,
                 tokenizer=self.tokenizer,
             )
+
+            self.model.config.block_list.append(current_block)
+
             return dataset
         except Exception as e:
             bt.logging.error(f"Error fetching training data: {str(e)}")

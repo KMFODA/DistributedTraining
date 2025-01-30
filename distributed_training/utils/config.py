@@ -21,7 +21,6 @@ import os
 
 import bittensor as bt
 import torch
-
 from distributed_training import __run__, __version__
 
 
@@ -156,6 +155,13 @@ def add_args(cls, parser, prefix=None):
         type=str,
         help="The model to be trained",
         default="distributed/optimized-gpt2-2b",
+    )
+
+    parser.add_argument(
+        "--neuron.hf_repo_id",
+        type=str,
+        help="The model to be trained",
+        default=None,
     )
 
     parser.add_argument(

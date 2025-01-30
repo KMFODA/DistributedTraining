@@ -10,13 +10,10 @@ import bittensor as bt
 import hivemind
 import psutil
 import torch
+from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
+from distributed_training.utils.progress_tracker import get_global_epoch
 from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
-
-from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
-from distributed_training.utils.progress_tracker import (
-    get_global_epoch,
-)
 
 
 class ModelLoadingManager:
@@ -76,6 +73,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
+    self.model.config.block_list = []
 
     # Delete any historic model references in GlobalOptimManager
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
