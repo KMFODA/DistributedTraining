@@ -30,16 +30,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 import bitsandbytes
 import bittensor as bt
-import distributed_training
 import numpy as np
 import torch
 from bitsandbytes.cextension import lib
+from huggingface_hub import create_repo, repo_exists, upload_folder
+from transformers import AutoTokenizer
+
+import distributed_training
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.exceptions import (
-    TrainingError,
-    handle_error,
     log_and_handle_error,
 )
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -60,8 +61,6 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
-from transformers import AutoTokenizer
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -427,14 +426,13 @@ class Miner(BaseMinerNeuron):
                 self._process_training_batch(dataset)
 
             except Exception as e:
-                log_and_handle_error(e, "training loop failed")
+                bt.logging.warning("Training Loop Failed")
                 self.training_status = TrainingStatus.ERROR
                 self.training_error = str(e)
                 break
 
         self.training_status = TrainingStatus.STOPPED
 
-    @handle_error(error_types=(TrainingError, Exception))
     def _process_training_batch(self, dataset):
         """Process a single training batch"""
         total_loss = 0
