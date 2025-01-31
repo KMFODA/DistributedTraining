@@ -22,7 +22,8 @@ from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_random_uids
-from distributed_training.validator.reward import get_rewards
+from distributed_training.validator.reward import get_rewards, score_uid
+import random
 
 
 async def forward(self):
@@ -141,9 +142,6 @@ async def forward(self):
             k=sample_size,
             epoch=self.local_progress.epoch if all_reduce else None,
         )
-        if len(self.miner_uids) == 0:
-            bt.logging.info("No Active Miners Found This Step.")
-            return responses  # Early return if no active miners found
 
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -152,17 +150,8 @@ async def forward(self):
         # TODO: Implement HF state check
         # * Below is placeholder for now
 
-        # try:
-        #     repo_refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
-        #     for uid in range(int(self.metagraph.n)):
-        #         hf_miner_states[str(uid)] = await self._check_miner_hf_state(
-        #             uid, repo_refs
-        #         )
-        # except HfHubHTTPError as e:
-        #     bt.logging.error(f"Error checking HF states: {e}")
-        #     hf_miner_states = {
-        #         str(uid): {"updated": False} for uid in range(int(self.metagraph.n))
-        #     }
+        uid = random.choice(self.metagraph.uids.tolist())
+        score = await score_uid(self, uid)
 
         # * Placeholder finish
 

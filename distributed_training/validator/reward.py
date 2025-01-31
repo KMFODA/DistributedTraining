@@ -33,6 +33,12 @@ from distributed_training.utils.uids import (
     map_uid_to_peerid,
 )
 from hivemind.p2p import PeerID
+import torch.nn.functional as F
+from distributed_training.data.dataset import DatasetLoader
+import random
+from transformers import AutoModelForCausalLM
+import torch
+from huggingface_hub import list_repo_commits
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -436,3 +442,119 @@ async def get_rewards(
             scores = blacklist_scores * (gradient_scores * steps_scores)
 
     return scores
+
+
+async def fetch_training_data(self, block):
+    """Async function to fetch training data"""
+
+    try:
+        pages = await DatasetLoader.next_pages(
+            offset=block,
+            n_pages=5,
+            seed=self.uid if not self.config.random else random.randint(0, 1000),
+        )
+        random.shuffle(pages)
+
+        dataset = await DatasetLoader.create(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            pages_info=pages,
+            tokenizer=self.tokenizer,
+        )
+
+        return dataset
+    except Exception as e:
+        bt.logging.error(f"Error fetching training data: {str(e)}")
+        raise
+
+
+async def score_uid(self, uid):
+    """Score a single UID"""
+
+    commits = (
+        list_repo_commits(
+            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
+        )[0].commit_id,
+        list_repo_commits(
+            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
+        )[1].commit_id,
+    )
+    model_huggingface_id = self.uid_metadata_tracker[uid]["model_huggingface_id"]
+
+    self.model = AutoModelForCausalLM.from_pretrained(
+        model_huggingface_id, revision=commits[0], trust_remote_code=True
+    )
+    # Move the model to the appropriate device
+    self.model = self.model.to(self.device)
+
+    model_final = AutoModelForCausalLM.from_pretrained(
+        model_huggingface_id, revision=commits[1], trust_remote_code=True
+    )
+
+    blocks = model_final.config.block_list
+
+    for block in blocks:
+        dataset = await fetch_training_data(self, block)
+        total_loss = 0
+        batch_count = 0
+
+        for batch in dataset:
+            if not self.training_active.is_set():
+                self.inner_optimizer.zero_grad()
+                break
+
+            if isinstance(batch, tuple):
+                inputs, labels = batch
+            else:
+                inputs = torch.tensor(batch[:, :-1]).to(self.device)
+                labels = torch.tensor(batch[:, 1:]).to(self.device)
+
+            if not isinstance(inputs, torch.Tensor):
+                inputs = torch.tensor(inputs)
+            if not isinstance(labels, torch.Tensor):
+                labels = torch.tensor(labels)
+
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
+
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
+
+            loss.backward()
+
+            self.local_progress.samples_accumulated += inputs.size(0)
+            total_loss += loss.detach().item()
+            batch_count += 1
+            self.inner_step_counter += 1
+
+            if batch_count % 5 == 0:
+                bt.logging.info(
+                    f":training: Inner Step: {self.inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                )
+
+            if self.inner_step_counter % 20 == 0:
+                self.start_background_upload(
+                    epoch=self.local_progress.epoch,
+                    batch_size=self.config.neuron.local_batch_size_train,
+                )
+
+            self.inner_optimizer.step()
+            self.inner_optimizer.zero_grad()
+
+    return score_models(self.model, model_final)
+
+
+def score_models(model_1, model_2):
+    score = 0
+    index = 0
+
+    for param_1, param_2 in zip(model_1.parameters(), model_2.parameters()):
+        score += (
+            F.cosine_similarity(param_1.to("cpu"), param_2.to("cpu"), dim=0)
+            .mean()
+            .item()
+        )
+        index += 1
+
+    average_score = score / index

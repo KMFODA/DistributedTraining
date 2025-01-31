@@ -84,6 +84,6 @@ def log_peerid_to_chain(self):
         bt.logging.info(f"Metadata dict {metadata} succesfully logged to chain.")
     except Exception:
         self.peer_id_logged_to_chain = False
-        bt.logging.debug(
+        bt.logging.error(
             "Unable to log DHT PeerID to chain. Retrying on the next step."
         )

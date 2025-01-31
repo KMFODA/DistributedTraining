@@ -34,6 +34,7 @@ from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
+from transformers import AutoTokenizer
 
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
@@ -150,6 +151,11 @@ class Validator(BaseValidatorNeuron):
 
     def _init_model_components(self):
         """Initialize model and training components"""
+        # Init Tokenizer
+        model_name = "distilgpt2"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
         # Init learning rate and loss tracking
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
