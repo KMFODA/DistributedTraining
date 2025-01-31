@@ -258,7 +258,7 @@ class Miner(BaseMinerNeuron):
                     )
 
                     bt.logging.info(
-                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.model_name}"
+                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.hf_repo_id}"
                     )
                     return True
 

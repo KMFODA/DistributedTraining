@@ -17,19 +17,27 @@ from distributed_training.utils.state_loader import load_state_from_peer
 
 class AllReduceError(Exception):
     """Base exception for AllReduce-related errors."""
+
     pass
+
 
 class GradientAveragingTimeoutError(AllReduceError):
     """Raised when gradient averaging step times out."""
+
     pass
+
 
 class GradientAveragingError(AllReduceError):
     """Raised when gradient averaging fails for non-timeout reasons."""
+
     pass
+
 
 class StateAveragingError(AllReduceError):
     """Raised when state averaging fails."""
+
     pass
+
 
 # TODO cleanup code after moving to diloco
 class AveragingHandler:
@@ -62,7 +70,6 @@ class AveragingHandler:
             raise ModelStateError("NaN values detected in weights after update")
 
         return True
-
 
     async def run_validator_allreduce(
         self, timeout: int, dendrite_pool, miner_uids, bandwidth
@@ -100,9 +107,7 @@ class AveragingHandler:
                     ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
                 )
 
-                await asyncio.gather(
-                    *query_tasks
-                )
+                await asyncio.gather(*query_tasks)
                 bt.logging.info("AllReduce Query Responses Received..")
 
             self.grad_averager.notify_used_averaged_gradients()
@@ -157,7 +162,9 @@ class AveragingHandler:
             if gradient_averaging_step and not gradient_averaging_step.done():
                 gradient_averaging_step.cancel()
                 await asyncio.sleep(10)
-                load_state_from_peer(self, epoch=self.global_progress.epoch) # TODO self is not available here
+                load_state_from_peer(
+                    self, epoch=self.global_progress.epoch
+                )  # TODO self is not available here
 
     def calculate_allreduce_scores(
         self,
@@ -282,21 +289,18 @@ class AveragingHandler:
             gradient_averaging_step = self.grad_averager.step(
                 wait=True, timeout=synapse.timeout
             )
-            
+
             try:
                 # Wait for gradient averaging with timeout
                 await asyncio.wait_for(
                     asyncio.wrap_future(gradient_averaging_step),
-                    timeout=synapse.timeout
+                    timeout=synapse.timeout,
                 )
             except asyncio.TimeoutError:
-                raise GradientAveragingTimeoutError(
-                    "Gradient averaging step timed out"
-                )
+                raise GradientAveragingTimeoutError("Gradient averaging step timed out")
             except Exception as e:
                 raise GradientAveragingError(f"Gradient averaging failed: {str(e)}")
 
-        
             self.grad_averager.notify_used_averaged_gradients()
             bt.logging.success("Finished Averaging Pseudo Gradients!")
 
