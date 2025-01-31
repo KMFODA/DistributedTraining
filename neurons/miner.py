@@ -32,6 +32,7 @@ import bitsandbytes
 import bittensor as bt
 import numpy as np
 import torch
+import traceback
 from bitsandbytes.cextension import lib
 from huggingface_hub import create_repo, repo_exists, upload_folder
 from transformers import AutoTokenizer
@@ -40,9 +41,6 @@ import distributed_training
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
-from distributed_training.exceptions import (
-    log_and_handle_error,
-)
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     get_bandwidth,
@@ -60,6 +58,7 @@ from distributed_training.utils.progress_tracker import (
 from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
+    cleanup_old_cache,
 )
 
 # GPU optimizations.
@@ -87,14 +86,34 @@ class TrainingStatus(Enum):
     AVERAGING = "🔄 | Averaging"
 
 
+def log_and_handle_error(error: Exception, context: str = "") -> None:
+    """
+    Standardized error logging and handling.
+    Args:
+        error: The exception to handle
+        context: Additional context about where the error occurred
+    """
+    error_type = error.__class__.__name__
+    error_msg = str(error)
+    tb = traceback.format_exc()
+    bt.logging.error(f"Error in {context}: {error_type} - {error_msg}\n{tb}")
+
+
 # TODO Consider when/how we would do model loading when using diloco
 # TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
 
-        # Logging setup
-        setup_logging(config=self.config)
+        # Update wandb project
+        if self.neuron_type == "MinerNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_miners"
+            )
+        elif self.neuron_type == "ValidatorNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_validators"
+            )
 
         self._init_network_components()
         self._init_basic_components()
@@ -104,6 +123,9 @@ class Miner(BaseMinerNeuron):
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
+
+        # Init Logging
+        setup_logging(config=self.config)
 
         # Device and ID setup
         self.device = self.config.neuron.device
@@ -179,6 +201,7 @@ class Miner(BaseMinerNeuron):
         # Initialize model and its components
         # self.model_loading_manager = ModelLoadingManager() # TODO We dont need this anymore, right?
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+        cleanup_old_cache(self)
 
         # Load initial state if needed # TODO This check should see if after loading states we are still on the same epoch
         # if self.local_progress.epoch != self.global_progress.epoch:
@@ -473,7 +496,7 @@ class Miner(BaseMinerNeuron):
                     f":training: Inner Step: {self.inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                 )
 
-            if self.inner_step_counter % 20 == 0:
+            if self.inner_step_counter % 400 == 0:
                 self.start_background_upload(
                     epoch=self.local_progress.epoch,
                     batch_size=self.config.neuron.local_batch_size_train,

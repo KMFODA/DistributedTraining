@@ -55,6 +55,7 @@ from distributed_training.utils.state_loader import (
     ModelLoadingManager,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
+    cleanup_old_cache,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.validator import forward
@@ -88,6 +89,16 @@ class Validator(BaseValidatorNeuron):
         self.offload_optimizer = True
         self.failed_is_alive_counter_threshold = 10
 
+        # Update wandb project
+        if self.neuron_type == "MinerNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_miners"
+            )
+        elif self.neuron_type == "ValidatorNeuron":
+            self.config.neuron.wandb_project = (
+                self.config.neuron.wandb_project + "_validators"
+            )
+
         # Initialize components
         self._init_basic_components()
         self._init_model_components()
@@ -97,7 +108,7 @@ class Validator(BaseValidatorNeuron):
     def _init_basic_components(self):
         """Initialize basic validator components"""
 
-        # Logging setup
+        # Init logging
         setup_logging(config=self.config)
 
         bt.logging.debug("load_state()")
@@ -143,8 +154,9 @@ class Validator(BaseValidatorNeuron):
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
 
-        # Init Model, Optimizer & Gradient Averager
+        # Init Model, Optimizer & Gradient Averager & Clear Cache
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+        cleanup_old_cache(self)
 
         # Select test layers
         self.test_layer_indices = [

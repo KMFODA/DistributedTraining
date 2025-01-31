@@ -208,7 +208,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
 
 
-def load_state_from_peer(self, epoch=None, keep_recent=3):
+def load_state_from_peer(self, epoch=None):
     # Skip if we're already loading or if we've already loaded this epoch
     if self.model_loading_manager.is_loading:
         bt.logging.info(
@@ -271,7 +271,7 @@ def load_state_from_peer(self, epoch=None, keep_recent=3):
 
             # Clean up old cache
             try:
-                cleanup_old_cache(self, keep_recent)
+                cleanup_old_cache(self)
             except Exception as e:
                 bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 
@@ -291,26 +291,30 @@ def load_state_from_peer(self, epoch=None, keep_recent=3):
         return False
 
 
-def cleanup_old_cache(self, keep_recent):
+def cleanup_old_cache(self):
     """Helper method to clean up old cache files"""
     current_revision = self.model.config._commit_hash
     cache_info = scan_cache_dir()
+    bt.logging.info("Cache clearing warnings:")
+    bt.logging.info(f"{cache_info.warnings}")
+
     for repo in cache_info.repos:
         if repo.repo_id == self.config.neuron.model_name:
             revisions = sorted(
                 repo.revisions, key=lambda r: r.last_modified, reverse=True
             )
-            current_index = next(
-                (
-                    i
-                    for i, r in enumerate(revisions)
-                    if r.commit_hash == current_revision
-                ),
-                None,
-            )
-            if current_index is not None:
-                for revision in revisions[max(current_index + 1, keep_recent) :]:
-                    cache_info.delete_revisions(revision.commit_hash).execute()
+            if current_revision is not None:
+                bt.logging.info(
+                    f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
+                )
+                for revision in revisions:
+                    if revision.commit_hash == current_revision:
+                        continue
+                    else:
+                        bt.logging.info(
+                            f"Deleting cache for revision {revision.commit_hash}"
+                        )
+                        cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
 

@@ -7,10 +7,6 @@ import numpy as np
 import torch
 
 import distributed_training
-from distributed_training.exceptions import (
-    ModelStateError,
-    StateAveragingError,
-)
 from distributed_training.protocol import AllReduce
 from distributed_training.utils.state_loader import load_state_from_peer
 
