@@ -1,31 +1,19 @@
-import os
 import copy
-import time
 import gc
-import hivemind
-import logging
+import os
 import tempfile
 import threading
-from typing import Dict
+import time
+from functools import partial
 
 import bittensor as bt
-import torch
-from hivemind.utils import get_logger
-from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
-
-from bitsandbytes.optim import LAMB8bit
-from transformers import AutoModelForCausalLM
-
-from distributed_training.utils.progress_tracker import (
-    get_global_epoch,
-)
-from distributed_training.utils.gradient_averager import (
-    DTGradientAverager,
-)
+import hivemind
 import psutil
-
-logger = get_logger(__name__)
-logger.setLevel(logging.INFO)
+import torch
+from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
+from distributed_training.utils.progress_tracker import get_global_epoch
+from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
+from transformers import AutoModelForCausalLM
 
 
 class ModelLoadingManager:
@@ -57,12 +45,18 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
     # Delete existing model
     if hasattr(self, "model"):
-        del self.model.model.transformer.wte.weight
-        del self.model.model.transformer.wte.norm
-        del self.model.model.transformer.wpe.weight
-        del self.model.model.transformer.wpe.norm
-        del self.model.model.transformer.wte
-        del self.model.model.transformer.wpe
+        if hasattr(self.model.model.transformer.wte, "weight"):
+            del self.model.model.transformer.wte.weight
+        if hasattr(self.model.model.transformer.wte, "norm"):
+            del self.model.model.transformer.wte.norm
+        if hasattr(self.model.model.transformer.wpe, "weight"):
+            del self.model.model.transformer.wpe.weight
+        if hasattr(self.model.model.transformer.wpe, "norm"):
+            del self.model.model.transformer.wpe.norm
+        if hasattr(self.model.model.transformer, "wte"):
+            del self.model.model.transformer.wte
+        if hasattr(self.model.model.transformer, "wpe"):
+            del self.model.model.transformer.wpe
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
@@ -79,11 +73,12 @@ def load_model_optimizer_gradient_averager(self, epoch):
     )
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
+    self.model.config.block_list = []
 
     # Delete any historic model references in GlobalOptimManager
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
-        self.opt.mng.module_weight_config_triple = (
-            self.opt.mng.module_weight_config_triple[-2:]
+        self.inner_optimizer.mng.module_weight_config_triple = (
+            self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
     # Load a new optimizer
@@ -111,17 +106,17 @@ def load_model_optimizer_gradient_averager(self, epoch):
 
         # Delete existing optimizer
         if hasattr(self, "opt"):
-            self.opt.param_groups = optim_groups
+            self.inner_optimizer.param_groups = optim_groups
         else:
-            self.opt = LAMB8bit(
+            self.inner_optimizer = torch.optim.AdamW(
                 optim_groups,
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
                 eps=1e-8,
-                block_wise=True,
+                weight_decay=0.1,
             )
 
-        self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+        # self.inner_optimizer.load_state_dict(optimizer_state["optimizer_state_dict"])
 
         del optimizer_state
         gc.collect()
@@ -134,13 +129,14 @@ def load_model_optimizer_gradient_averager(self, epoch):
             f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
         )
         # Initialize fresh optimizer
-        self.opt = LAMB8bit(
+        self.inner_optimizer = torch.optim.AdamW(
             optim_groups,
             lr=self.learning_rate_maximum,
             betas=(0.9, 0.95),
             eps=1e-8,
-            block_wise=True,
+            weight_decay=0.1,
         )
+
     del (
         param_dict,
         decay_params,
@@ -150,9 +146,37 @@ def load_model_optimizer_gradient_averager(self, epoch):
     gc.collect()
     torch.cuda.empty_cache()
 
+    self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
+
     # Delete existing gradient averager
     if hasattr(self, "grad_averager"):
-        for i in self.grad_averager.parameters:
+        for i in self.grad_averager.main_parameters:
+            del i
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    else:
+        self.state_averager = DTStateAverager(
+            dht=self.dht,
+            prefix=f"{self.config.neuron.run_id}_state_averager",
+            optimizer=self.outer_optimizer,
+            params=self.model.parameters(),
+            initialize_optimizer=True,
+            offload_optimizer=self.offload_optimizer,
+            custom_gradients=self.offload_optimizer,
+            start=True,
+            min_group_size=self.config.neuron.min_group_size,
+            min_matchmaking_time=30.0,
+            request_timeout=10.0,
+            next_chunk_timeout=45.0,
+            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+        )
+    # self.outer_optimizer = self.state_averager.optimizer
+    # self.outer_optimizer = torch.optim.SGD(self.model.parameters(), lr=0.7, momentum=0.9, nesterov=True)
+
+    # Delete existing gradient averager
+    if hasattr(self, "grad_averager"):
+        for i in self.grad_averager.main_parameters:
             del i
         gc.collect()
         torch.cuda.empty_cache()
@@ -160,23 +184,23 @@ def load_model_optimizer_gradient_averager(self, epoch):
         # Reset gradient buffers and parameters
         self.grad_averager.parameters = tuple(self.model.parameters())
 
-        self.grad_averager.reset_accumulated_grads_()
+        # self.grad_averager.reset_accumulated_grads_()
 
     else:
         # Load a new gradient averager
-        self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
+        self.grad_averager = DTGradAverager(
+            main_parameters=self.state_averager.main_parameters,
+            offloaded_optimizer=self.state_averager.optimizer,
             dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
             state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
             start=True,
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
+            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         )
 
     bt.logging.info(
@@ -197,7 +221,7 @@ def load_state_from_peer(self, epoch=None):
 
     try:
         state_loaded = False
-        if epoch == None:
+        if epoch is None:
             self.global_progress.epoch = get_global_epoch(self)
             epoch = self.global_progress.epoch
 
@@ -317,7 +341,7 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 )
 
                 # Upload everything in one go
-                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.model_name,

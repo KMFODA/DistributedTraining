@@ -99,7 +99,7 @@ class BaseNeuron(ABC):
         )
         self.step = 0
 
-    @abstractmethod
+    # @abstractmethod # miner is not using this anymore
     async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
         ...
 
