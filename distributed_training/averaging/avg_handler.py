@@ -151,9 +151,7 @@ class AveragingHandler:
                 "AllReduce operation timed out waiting for miners to complete"
             )
         except Exception as e:
-            if isinstance(e, AllReduceError):
-                raise
-            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}")
+            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
         finally:
             if gradient_averaging_step and not gradient_averaging_step.done():
                 gradient_averaging_step.cancel()
@@ -322,9 +320,7 @@ class AveragingHandler:
             return synapse
 
         except Exception as e:
-            if isinstance(e, AllReduceError):
-                raise
-            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}")
+            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
             if gradient_averaging_step and not gradient_averaging_step.done():

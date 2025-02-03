@@ -117,7 +117,7 @@ class BaseMinerNeuron(BaseNeuron):
         self.axon.start()
         bt.logging.info(f"Miner starting at block: {self.block}")
 
-        bt.logging.info("[magenta] Starting training..")
+        # Starting training thread
         self.start_continuous_training()
 
         # This loop maintains the miner's operations until intentionally stopped.

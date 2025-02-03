@@ -74,8 +74,9 @@ def load_model_optimizer_gradient_averager(self, epoch):
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
     self.model.config.block_list = []
+    
 
-    # Delete any historic model references in GlobalOptimManager
+    # Delete any historic model references in GlobalOptimManager # TODO Do we still need this in here?
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
         self.inner_optimizer.mng.module_weight_config_triple = (
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
@@ -164,15 +165,13 @@ def load_model_optimizer_gradient_averager(self, epoch):
             initialize_optimizer=True,
             offload_optimizer=self.offload_optimizer,
             custom_gradients=self.offload_optimizer,
-            start=True,
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
             allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+            start=True,
         )
-    # self.outer_optimizer = self.state_averager.optimizer
-    # self.outer_optimizer = torch.optim.SGD(self.model.parameters(), lr=0.7, momentum=0.9, nesterov=True)
 
     # Delete existing gradient averager
     if hasattr(self, "grad_averager"):
@@ -189,18 +188,18 @@ def load_model_optimizer_gradient_averager(self, epoch):
     else:
         # Load a new gradient averager
         self.grad_averager = DTGradAverager(
+            dht=self.dht,
             main_parameters=self.state_averager.main_parameters,
             offloaded_optimizer=self.state_averager.optimizer,
-            dht=self.dht,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            start=True,
+            state_compression=hivemind.Uniform8BitQuantization(), # TODO Not sure this is necessary when we have the above
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
             next_chunk_timeout=45.0,
             allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+            start=True,
         )
 
     bt.logging.info(

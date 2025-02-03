@@ -32,19 +32,17 @@ import bitsandbytes
 import bittensor as bt
 import numpy as np
 import torch
-import traceback
 from bitsandbytes.cextension import lib
 from huggingface_hub import create_repo, repo_exists, upload_folder
 from transformers import AutoTokenizer
 
 import distributed_training
-from distributed_training.averaging.avg_handler import AveragingHandler
+from distributed_training.averaging.avg_handler import AveragingHandler, AllReduceError
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     get_bandwidth,
-    get_current_block_safe,
     init_dht,
     load_wandb,
     setup_logging,
@@ -84,19 +82,6 @@ class TrainingStatus(Enum):
     RUNNING = "🏋️ | Training"
     STOPPED = "😴 | Stopped"
     AVERAGING = "🔄 | Averaging"
-
-
-def log_and_handle_error(error: Exception, context: str = "") -> None:
-    """
-    Standardized error logging and handling.
-    Args:
-        error: The exception to handle
-        context: Additional context about where the error occurred
-    """
-    error_type = error.__class__.__name__
-    error_msg = str(error)
-    tb = traceback.format_exc()
-    bt.logging.error(f"Error in {context}: {error_type} - {error_msg}\n{tb}")
 
 
 # TODO Consider when/how we would do model loading when using diloco
@@ -406,10 +391,9 @@ class Miner(BaseMinerNeuron):
 
     async def fetch_training_data(self):
         """Async function to fetch training data"""
-        current_block = get_current_block_safe(self)
         try:
             pages = await DatasetLoader.next_pages(
-                offset=current_block,
+                offset=self.current_block,
                 n_pages=5,
                 seed=self.uid if not self.config.random else random.randint(0, 1000),
             )
@@ -422,7 +406,7 @@ class Miner(BaseMinerNeuron):
                 tokenizer=self.tokenizer,
             )
 
-            self.model.config.block_list.append(current_block)
+            self.model.config.block_list.append(self.current_block)
 
             return dataset
         except Exception as e:
@@ -449,14 +433,14 @@ class Miner(BaseMinerNeuron):
                 self._process_training_batch(dataset)
 
             except Exception as e:
-                bt.logging.warning("Training Loop Failed")
+                bt.logging.warning(f"Training Loop Failed with error: {e}")
                 self.training_status = TrainingStatus.ERROR
                 self.training_error = str(e)
                 break
 
         self.training_status = TrainingStatus.STOPPED
 
-    def _process_training_batch(self, dataset):
+    def _process_training_batch(self, dataset): # TODO Implement gradient accumulation
         """Process a single training batch"""
         total_loss = 0
         batch_count = 0
@@ -465,28 +449,21 @@ class Miner(BaseMinerNeuron):
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
-
-            if isinstance(batch, tuple):
-                inputs, labels = batch
-            else:
-                inputs = torch.tensor(batch[:, :-1]).to(self.device)
-                labels = torch.tensor(batch[:, 1:]).to(self.device)
-
-            if not isinstance(inputs, torch.Tensor):
-                inputs = torch.tensor(inputs)
-            if not isinstance(labels, torch.Tensor):
-                labels = torch.tensor(labels)
-
-            inputs = inputs.to(self.device)
-            labels = labels.to(self.device)
-
+            
+            # Convert batch to tensor and move to device
+            input_ids = torch.tensor(batch, dtype=torch.long).to(self.device)
+            
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[1]
+                _, loss = self.model(input_ids=input_ids, labels=input_ids)
+            
 
+            if loss is None or torch.isnan(loss):
+                bt.logging.warning("NaN loss detected after forward pass")
+            
+            # Backward pass
             loss.backward()
 
-            self.local_progress.samples_accumulated += inputs.size(0)
+            self.local_progress.samples_accumulated += input_ids.size(0)
             total_loss += loss.detach().item()
             batch_count += 1
             self.inner_step_counter += 1
@@ -502,6 +479,8 @@ class Miner(BaseMinerNeuron):
                     batch_size=self.config.neuron.local_batch_size_train,
                 )
 
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
             self.inner_optimizer.step()
             self.inner_optimizer.zero_grad()
 
@@ -514,7 +493,7 @@ class Miner(BaseMinerNeuron):
                 # Ensure training is paused
                 self.pause_training()
 
-                # Wait for running training process to finish # TODO Wait for training_thread == WAIT instead
+                # Wait for running training process to finish
                 await asyncio.sleep(2)
 
                 if not hasattr(self, "bandwidth"):
@@ -530,8 +509,7 @@ class Miner(BaseMinerNeuron):
                 return result
 
         except Exception as e:
-            log_and_handle_error(e, "all_reduce operation failed")
-            raise
+            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
             # Resume training when done
