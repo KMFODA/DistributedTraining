@@ -67,14 +67,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-# TODO make new model without these (possibly update with various modded-gpt concepts)
-# Add lamb to bnb str2optimizer8bit_blockwise
-bitsandbytes.functional.str2optimizer8bit_blockwise
-bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
-    lib.cadam_8bit_blockwise_grad_fp32,
-    lib.cadam_8bit_blockwise_grad_fp16,
-    lib.cadam_8bit_blockwise_grad_bf16,
-)
 
 
 class TrainingStatus(Enum):
