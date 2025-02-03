@@ -6,9 +6,8 @@ import traceback
 from typing import List
 
 import bittensor as bt
-import numpy as np
-
 import distributed_training
+import numpy as np
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 
@@ -129,6 +128,25 @@ async def get_random_uids(
         uids = np.array(available_uids)
     else:
         uids = np.array(random.sample(available_uids, k))
+    return uids
+
+
+async def get_hf_validation_uid(self, outer_step: int = None):
+    uids = []
+    self.uid_metadata_tracker = dict(
+        sorted(
+            self.uid_metadata_tracker.items(),
+            key=lambda item: item[1]["last_updated_score"],
+        )
+    )
+
+    for uid in self.uid_metadata_tracker.keys():
+        if self.uid_metadata_tracker[uid]["model_huggingface_id"] is not None:
+            uids.append(uid)
+            return uids
+        else:
+            continue
+
     return uids
 
 

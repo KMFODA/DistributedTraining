@@ -74,7 +74,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
     self.model.config.block_list = []
-    
 
     # Delete any historic model references in GlobalOptimManager # TODO Do we still need this in here?
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
@@ -193,7 +192,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
             offloaded_optimizer=self.state_averager.optimizer,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(), # TODO Not sure this is necessary when we have the above
+            state_compression=hivemind.Uniform8BitQuantization(),  # TODO Not sure this is necessary when we have the above
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,
@@ -290,30 +289,38 @@ def load_state_from_peer(self, epoch=None):
         return False
 
 
-def cleanup_old_cache(self):
+def cleanup_old_cache(self, repo_id=None, current_revision=None):
     """Helper method to clean up old cache files"""
-    current_revision = self.model.config._commit_hash
+    if repo_id is None:
+        repo_id = self.config.neuron.model_name
+        current_revision = self.model.config._commit_hash
+
     cache_info = scan_cache_dir()
     bt.logging.info("Cache clearing warnings:")
     bt.logging.info(f"{cache_info.warnings}")
 
     for repo in cache_info.repos:
-        if repo.repo_id == self.config.neuron.model_name:
+        if repo.repo_id == repo_id:
             revisions = sorted(
                 repo.revisions, key=lambda r: r.last_modified, reverse=True
             )
-            if current_revision is not None:
-                bt.logging.info(
-                    f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
-                )
-                for revision in revisions:
-                    if revision.commit_hash == current_revision:
-                        continue
-                    else:
-                        bt.logging.info(
-                            f"Deleting cache for revision {revision.commit_hash}"
-                        )
-                        cache_info.delete_revisions(revision.commit_hash).execute()
+
+            bt.logging.info(
+                f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
+            )
+            for revision in revisions:
+                if (current_revision is not None) and (
+                    revision.commit_hash == current_revision
+                ):
+                    bt.logging.info(
+                        f"Skipping cache for current revision {revision.commit_hash}"
+                    )
+                    continue
+                else:
+                    bt.logging.info(
+                        f"Deleting cache for revision {revision.commit_hash}"
+                    )
+                    cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
 

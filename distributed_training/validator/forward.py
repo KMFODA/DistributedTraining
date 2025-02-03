@@ -16,14 +16,15 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import bittensor as bt
+import random
+import time
 
+import bittensor as bt
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.state_loader import load_state_from_peer
-from distributed_training.utils.uids import get_random_uids
-from distributed_training.validator.reward import get_rewards, score_uid
-import random
+from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
+from distributed_training.validator.reward import score_uid
 
 
 async def forward(self):
@@ -46,9 +47,9 @@ async def forward(self):
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    should_allreduce = True
 
     responses = [[]]
-    hf_miner_states = {}
     self.miner_uids = []
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
@@ -59,7 +60,7 @@ async def forward(self):
                 sample_size = int(self.metagraph.n)
 
                 # Get active miners
-                while len(self.miner_uids) < 1:
+                while len(self.miner_uids) < self.config.neuron.min_group_size:
                     bt.logging.info(
                         f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids)} more UIDs."
                     )
@@ -69,8 +70,12 @@ async def forward(self):
                         k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
+                    import numpy as np
+
+                    self.miner_uids = np.array([0])
                 self.peerids_to_uids = {
-                    str(value[0]): key for key, value in self.uids_to_peerids.items()
+                    str(value["peer_id"]): key
+                    for key, value in self.uid_metadata_tracker.items()
                 }
 
                 if not hasattr(
@@ -84,6 +89,7 @@ async def forward(self):
                     miner_uids=self.miner_uids,
                     bandwidth=self.bandwidth,
                 )
+                breakpoint()
                 if results:
                     # Update scoring based on allreduce participation
                     self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
@@ -91,6 +97,7 @@ async def forward(self):
                         results["failed_peers"],
                         self.peerids_to_uids,
                     )
+                    breakpoint()
 
                     # Update state after successful allreduce
                     self.local_progress.epoch += 1
@@ -131,46 +138,26 @@ async def forward(self):
                 )
 
     else:
-        # If running HF validation round, only call the sample_size
-        sample_size = self.config.neuron.sample_size
+        # If running HF validation round, only call one UID each step
         all_reduce = False
         self.event.update({"synapse_type": "train"})
 
-        self.miner_uids = await get_random_uids(
+        self.miner_uids = await get_hf_validation_uid(
             self,
-            dendrite=self.dendrite,
-            k=sample_size,
-            epoch=self.local_progress.epoch if all_reduce else None,
         )
+
+        # Early return if no active miners found
+        if len(self.miner_uids) == 0:
+            bt.logging.info("No Active Miners Found This Step.")
+            return responses
 
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-        # Check if miners uploaded new state since last N blocks
-        # TODO: Implement HF state check
-        # * Below is placeholder for now
-
-        uid = random.choice(self.metagraph.uids.tolist())
-        score = await score_uid(self, uid)
-
-        # * Placeholder finish
-
-    # Adjust the scores based on responses from miners.
-    rewards = await get_rewards(
-        self,
-        uids=self.miner_uids,
-        miner_states=hf_miner_states,
-        all_reduce=all_reduce,
-    )
-
-    # Normalize rewards if any exist
-    if len(rewards) > 0 and rewards.sum() != 0:
-        rewards = rewards / rewards.sum()
-    bt.logging.info(f"Final Scores: {rewards}")
-
-    if not all_reduce:
-        # Update the tracker based on the rewards
-        self.update_local_tracker_state(rewards, responses)
+        uid = self.miner_uids[0]
+        rewards = await score_uid(self, uid)
+        self.uid_metadata_tracker[uid]["score"] = rewards
+        self.uid_metadata_tracker[uid]["last_updated_score"] = time.time()
 
     self.event.update(
         {
@@ -182,7 +169,7 @@ async def forward(self):
             "global_samples_accumulated": self.global_progress.samples_accumulated,
         }
     )
-
+    breakpoint()
     # Update scores
     if len(rewards) > 0:
         self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)

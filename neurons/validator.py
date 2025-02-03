@@ -29,13 +29,6 @@ import bitsandbytes
 import bittensor as bt
 from bitarray import bitarray
 from bitsandbytes.cextension import lib
-from hivemind.compression import deserialize_torch_tensor
-from hivemind.proto import averaging_pb2
-from hivemind.utils import get_logger
-from hivemind.utils.asyncio import aiter_with_timeout
-from hivemind.utils.streaming import combine_from_streaming
-from transformers import AutoTokenizer
-
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.data.dataset import DataLoader
@@ -54,12 +47,18 @@ from distributed_training.utils.progress_tracker import (
 )
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
+    cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
-    cleanup_old_cache,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.validator import forward
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
+from transformers import AutoTokenizer
 
 # Add lamb to bnb str2optimizer8bit_blockwise
 bitsandbytes.functional.str2optimizer8bit_blockwise
@@ -204,6 +203,8 @@ class Validator(BaseValidatorNeuron):
                 "peer_id": None,
                 "model_huggingface_id": None,
                 "last_updated_block": None,
+                "score": None,
+                "last_updated_score": 0,
             }
             for uid in self.metagraph.uids.tolist()
         }

@@ -149,14 +149,14 @@ def add_args(cls, parser, prefix=None):
         help="Amount of blocks between each all reduce",
         default=30,
     )
-    
+
     parser.add_argument(
         "--neuron.grad_accum_steps",
         type=int,
         help="Amount of micro batches for gradient accumulation",
         default=512,
     )
-    
+
     parser.add_argument(
         "--neuron.model_name",
         type=str,

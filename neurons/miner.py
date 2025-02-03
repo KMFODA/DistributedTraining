@@ -432,26 +432,26 @@ class Miner(BaseMinerNeuron):
 
     def _process_training_batch(self, dataset):
         """Process a single training batch"""
-        running_loss = getattr(self, '_running_loss', 0)  
-        num_batches_processed = getattr(self, '_num_batches', 0)
-        total_samples_processed = getattr(self, '_total_samples', 0)
-        
+        running_loss = getattr(self, "_running_loss", 0)
+        num_batches_processed = getattr(self, "_num_batches", 0)
+        total_samples_processed = getattr(self, "_total_samples", 0)
+
         MICRO_BATCH_SIZE = self.config.neuron.local_batch_size_train
         TARGET_SAMPLES = self.config.neuron.grad_accum_steps  # 512
         LOGGING_INTERVAL = 5  # Log every 5 batches
         NUM_MICRO_BATCHES = TARGET_SAMPLES // MICRO_BATCH_SIZE
-        
+
         for batch in dataset:
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
 
             input_ids = torch.tensor(batch).to(self.device)
-            
+
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=input_ids, labels=input_ids)
                 scaled_loss = loss / NUM_MICRO_BATCHES
-                
+
             scaled_loss.backward()
 
             running_loss += loss.detach().item()
@@ -472,18 +472,18 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.inner_step_counter += 1
-                
+
                 # Periodic model upload
                 if self.inner_step_counter % 400 == 0:
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
-                        batch_size=total_samples_processed
+                        batch_size=total_samples_processed,
                     )
-                
+
                 running_loss = 0
                 num_batches_processed = 0
                 total_samples_processed = 0
-                
+
         self._running_loss = running_loss
         self._num_batches = num_batches_processed
         self._total_samples = total_samples_processed

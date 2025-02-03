@@ -17,28 +17,25 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import base58
 import random
 import time
 from typing import List
 
+import base58
 import bittensor as bt
 import numpy as np
 import torch
-
-from distributed_training.data.dataset import DataLoader
+import torch.nn.functional as F
+from distributed_training.data.dataset import DataLoader, DatasetLoader
+from distributed_training.utils.state_loader import cleanup_old_cache
 from distributed_training.utils.uids import (
     get_random_uids,
-    update_run_peerid_list,
     map_uid_to_peerid,
+    update_run_peerid_list,
 )
 from hivemind.p2p import PeerID
-import torch.nn.functional as F
-from distributed_training.data.dataset import DatasetLoader
-import random
-from transformers import AutoModelForCausalLM
-import torch
 from huggingface_hub import list_repo_commits
+from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -416,10 +413,12 @@ async def get_rewards(
         if hasattr(self, "all_reduce_scores"):
             all_reduce_scores = torch.FloatTensor(
                 [
-                    1
-                    if str(uid) in self.all_reduce_scores
-                    and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
-                    else 0
+                    (
+                        1
+                        if str(uid) in self.all_reduce_scores
+                        and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
+                        else 0
+                    )
                     for uid in uids.tolist()
                 ]
             ).to(self.device)
@@ -471,6 +470,15 @@ async def fetch_training_data(self, block):
 async def score_uid(self, uid):
     """Score a single UID"""
 
+    if self.uid_metadata_tracker[uid]["model_huggingface_id"] is None:
+        return 0
+
+    cleanup_old_cache(
+        self,
+        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        current_revision=None,
+    )
+
     commits = (
         list_repo_commits(
             self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
@@ -497,12 +505,9 @@ async def score_uid(self, uid):
         dataset = await fetch_training_data(self, block)
         total_loss = 0
         batch_count = 0
+        inner_step_counter = 0
 
         for batch in dataset:
-            if not self.training_active.is_set():
-                self.inner_optimizer.zero_grad()
-                break
-
             if isinstance(batch, tuple):
                 inputs, labels = batch
             else:
@@ -526,22 +531,20 @@ async def score_uid(self, uid):
             self.local_progress.samples_accumulated += inputs.size(0)
             total_loss += loss.detach().item()
             batch_count += 1
-            self.inner_step_counter += 1
+            inner_step_counter += 1
 
             if batch_count % 5 == 0:
                 bt.logging.info(
-                    f":training: Inner Step: {self.inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
-                )
-
-            if self.inner_step_counter % 20 == 0:
-                self.start_background_upload(
-                    epoch=self.local_progress.epoch,
-                    batch_size=self.config.neuron.local_batch_size_train,
+                    f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
                 )
 
             self.inner_optimizer.step()
             self.inner_optimizer.zero_grad()
-
+    cleanup_old_cache(
+        self,
+        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        current_revision=None,
+    )
     return score_models(self.model, model_final)
 
 
@@ -557,4 +560,5 @@ def score_models(model_1, model_2):
         )
         index += 1
 
-    average_score = score / index
+    average_score = torch.tensor(score / index)
+    return average_score
