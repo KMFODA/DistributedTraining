@@ -28,16 +28,14 @@ os.environ["NEST_ASYNCIO"] = "0"
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-import bitsandbytes
 import bittensor as bt
 import numpy as np
 import torch
-from bitsandbytes.cextension import lib
 from huggingface_hub import create_repo, repo_exists, upload_folder
 from transformers import AutoTokenizer
 
 import distributed_training
-from distributed_training.averaging.avg_handler import AveragingHandler, AllReduceError
+from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -54,9 +52,9 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
+    cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
-    cleanup_old_cache,
 )
 
 # GPU optimizations.
@@ -96,7 +94,7 @@ class Miner(BaseMinerNeuron):
         self._init_basic_components()
         self._init_model_components()
 
-        # self._init_background_tasks()
+        # self._init_background_tasks() # TODO Remove or use??
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
@@ -432,49 +430,63 @@ class Miner(BaseMinerNeuron):
 
         self.training_status = TrainingStatus.STOPPED
 
-    def _process_training_batch(self, dataset): # TODO Implement gradient accumulation
+    def _process_training_batch(self, dataset):
         """Process a single training batch"""
-        total_loss = 0
-        batch_count = 0
-
+        running_loss = getattr(self, '_running_loss', 0)  
+        num_batches_processed = getattr(self, '_num_batches', 0)
+        total_samples_processed = getattr(self, '_total_samples', 0)
+        
+        MICRO_BATCH_SIZE = self.config.neuron.local_batch_size_train
+        TARGET_SAMPLES = self.config.neuron.grad_accum_steps  # 512
+        LOGGING_INTERVAL = 5  # Log every 5 batches
+        NUM_MICRO_BATCHES = TARGET_SAMPLES // MICRO_BATCH_SIZE
+        
         for batch in dataset:
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
-            
-            # Convert batch to tensor and move to device
-            input_ids = torch.tensor(batch, dtype=torch.long).to(self.device)
+
+            input_ids = torch.tensor(batch).to(self.device)
             
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=input_ids, labels=input_ids)
-            
+                scaled_loss = loss / NUM_MICRO_BATCHES
+                
+            scaled_loss.backward()
 
-            if loss is None or torch.isnan(loss):
-                bt.logging.warning("NaN loss detected after forward pass")
-            
-            # Backward pass
-            loss.backward()
+            running_loss += loss.detach().item()
+            num_batches_processed += 1
+            total_samples_processed += MICRO_BATCH_SIZE
 
-            self.local_progress.samples_accumulated += input_ids.size(0)
-            total_loss += loss.detach().item()
-            batch_count += 1
-            self.inner_step_counter += 1
-
-            if batch_count % 5 == 0:
+            if num_batches_processed % LOGGING_INTERVAL == 0:
+                average_loss = running_loss / num_batches_processed
                 bt.logging.info(
-                    f":training: Inner Step: {self.inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                    f":training: Inner Step: {self.inner_step_counter} | "
+                    f"Average Loss: {average_loss:.4f} | "
+                    f"Micro Batches: [{total_samples_processed}/{TARGET_SAMPLES}]"
                 )
 
-            if self.inner_step_counter % 400 == 0:
-                self.start_background_upload(
-                    epoch=self.local_progress.epoch,
-                    batch_size=self.config.neuron.local_batch_size_train,
-                )
-
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-            self.inner_optimizer.step()
-            self.inner_optimizer.zero_grad()
+            if total_samples_processed >= TARGET_SAMPLES:
+                self.local_progress.samples_accumulated += total_samples_processed
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.inner_optimizer.step()
+                self.inner_optimizer.zero_grad()
+                self.inner_step_counter += 1
+                
+                # Periodic model upload
+                if self.inner_step_counter % 400 == 0:
+                    self.start_background_upload(
+                        epoch=self.local_progress.epoch,
+                        batch_size=total_samples_processed
+                    )
+                
+                running_loss = 0
+                num_batches_processed = 0
+                total_samples_processed = 0
+                
+        self._running_loss = running_loss
+        self._num_batches = num_batches_processed
+        self._total_samples = total_samples_processed
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -600,5 +612,5 @@ class Miner(BaseMinerNeuron):
 if __name__ == "__main__":
     with Miner() as miner:
         while True:
-            bt.logging.info(f"Miner Training Status: {miner.training_status.value}")
-            time.sleep(30)
+            bt.logging.info(":lightning: Miner Running..")
+            time.sleep(45)
