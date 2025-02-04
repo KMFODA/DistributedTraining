@@ -47,7 +47,6 @@ async def forward(self):
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
-    should_allreduce = True
 
     responses = [[]]
     self.miner_uids = []
@@ -89,7 +88,6 @@ async def forward(self):
                     miner_uids=self.miner_uids,
                     bandwidth=self.bandwidth,
                 )
-                breakpoint()
                 if results:
                     # Update scoring based on allreduce participation
                     self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
@@ -97,7 +95,6 @@ async def forward(self):
                         results["failed_peers"],
                         self.peerids_to_uids,
                     )
-                    breakpoint()
 
                     # Update state after successful allreduce
                     self.local_progress.epoch += 1
