@@ -69,9 +69,7 @@ async def forward(self):
                         k=1,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
-                    import numpy as np
 
-                    self.miner_uids = np.array([0])
                 self.peerids_to_uids = {
                     str(value["peer_id"]): key
                     for key, value in self.uid_metadata_tracker.items()
