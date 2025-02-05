@@ -50,6 +50,7 @@ from distributed_training.utils.state_loader import (
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
+    save_and_upload_state,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
 from distributed_training.validator import forward
@@ -261,6 +262,10 @@ class Validator(BaseValidatorNeuron):
             "dividends": self.metagraph.dividends[self.uid],
             "emissions": self.metagraph.emission[self.uid],
         }
+
+    def upload_new_state(self, epoch: int, results: dict):
+        status = save_and_upload_state(self, epoch, results)
+        return status
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
         metadata = None

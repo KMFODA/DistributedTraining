@@ -29,12 +29,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import bittensor as bt
+import distributed_training
 import numpy as np
 import torch
-from huggingface_hub import create_repo, repo_exists, upload_folder
-from transformers import AutoTokenizer
-
-import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
@@ -56,6 +53,8 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
+from huggingface_hub import create_repo, repo_exists, upload_folder
+from transformers import AutoTokenizer
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -447,9 +446,17 @@ class Miner(BaseMinerNeuron):
                 break
 
             input_ids = torch.tensor(batch).to(self.device)
+            label_ids = torch.stack(
+                [
+                    torch.cat([input_ids[0][1:], torch.tensor([50256]).to("cuda")]),
+                    torch.cat([input_ids[1][1:], torch.tensor([50256]).to("cuda")]),
+                    torch.cat([input_ids[2][1:], torch.tensor([50256]).to("cuda")]),
+                    torch.cat([input_ids[3][1:], torch.tensor([50256]).to("cuda")]),
+                ]
+            )
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                _, loss = self.model(input_ids=input_ids, labels=input_ids)
+                _, loss = self.model(input_ids=input_ids, labels=label_ids)
                 scaled_loss = loss / NUM_MICRO_BATCHES
 
             scaled_loss.backward()
@@ -500,13 +507,13 @@ class Miner(BaseMinerNeuron):
                 # Wait for running training process to finish
                 await asyncio.sleep(2)
 
-                # if not hasattr(self, "bandwidth"):
-                #     self.bandwidth = get_bandwidth()
-
-                # Run allreduce with proper timeout
-                result = await self.avg_handler.run_miner_allreduce(
-                    synapse,
-                )
+                try:
+                    # Run allreduce with proper timeout
+                    result = await self.avg_handler.run_miner_allreduce(
+                        synapse, self.local_progress
+                    )
+                except:
+                    load_state_from_peer(self, epoch=self.global_progress.epoch)
                 self.inner_step_counter = 0
                 bt.logging.debug("Reset inner step counter after AllReduce")
 

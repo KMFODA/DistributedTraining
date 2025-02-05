@@ -32,13 +32,13 @@ import bittensor as bt
 import hivemind
 import speedtest
 from bittensor.utils.btlogging import format
+from distributed_training.protocol import AllReduce
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
 from loguru import logger as bt_logger
 
 import wandb
-from distributed_training.protocol import AllReduce
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -248,7 +248,7 @@ def setup_logging(
 
     # Setup root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(logging.INFO)
 
     # Setup BittensorLogHandler
     bt_handler = BittensorLogHandler()

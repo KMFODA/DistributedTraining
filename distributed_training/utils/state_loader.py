@@ -324,8 +324,13 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
             break
 
 
-def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_peers):
+def save_and_upload_state(self, epoch, results):
     """Unified function to save and upload both model and optimizer state"""
+    batch_size = sum(
+        [result for result in results[1]["gathered"].values() if result is not None]
+    )
+    participating_peers = results[1]["participating_peers"]
+    failed_peers = results[1]["failed_peers"]
     attempt = 0
     while attempt < self.model_upload_retry_limit:
         try:
@@ -336,7 +341,7 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 self.model.save_pretrained(tmp_folder)
                 # Save optimizer state
                 optimizer_state = {
-                    "optimizer_state_dict": self.opt.state_dict(),
+                    "optimizer_state_dict": self.state_averager.optimizer.state_dict(),
                     "learning_rate": self.learning_rate_maximum,
                     "epoch": epoch,
                 }

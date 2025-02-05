@@ -20,6 +20,7 @@ import random
 import time
 
 import bittensor as bt
+import torch
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import update_global_tracker_state
 from distributed_training.utils.state_loader import load_state_from_peer
@@ -50,58 +51,63 @@ async def forward(self):
 
     responses = [[]]
     self.miner_uids = []
+    rewards = torch.tensor([])
+
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
         all_reduce = True
+        self.peerids_to_uids = {
+            str(value["peer_id"]): key
+            for key, value in self.uid_metadata_tracker.items()
+        }
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
             try:
                 sample_size = int(self.metagraph.n)
 
                 # Get active miners
-                while len(self.miner_uids) < self.config.neuron.min_group_size:
+                while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
                     bt.logging.info(
-                        f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids)} more UIDs."
+                        f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids) - 1} more UIDs."
                     )
                     self.miner_uids = await get_random_uids(
                         self,
                         dendrite=self.dendrite,
-                        k=1,
+                        k=sample_size,
                         epoch=self.local_progress.epoch if all_reduce else None,
                     )
 
-                self.peerids_to_uids = {
-                    str(value["peer_id"]): key
-                    for key, value in self.uid_metadata_tracker.items()
-                }
-
-                # if not hasattr(
-                #     self, "bandwidth"
-                # ):  # TODO Maybe run different location to not wait on this
-                #     self.bandwidth = get_bandwidth()
+                self.event.update({"UIDs": self.miner_uids})
+                bt.logging.info(f"UIDs:  {self.miner_uids}")
 
                 results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.allreduce_timeout,
                     dendrite_pool=self.dendrite_pool,
+                    peerids_to_uids=self.peerids_to_uids,
                     miner_uids=self.miner_uids,
                     # bandwidth=self.bandwidth,
+                    epoch=self.global_progress.epoch,
                 )
-                if results:
+                if results and results[0]:
                     # Update scoring based on allreduce participation
-                    self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
-                        results["participating_peers"],
-                        results["failed_peers"],
-                        self.peerids_to_uids,
+                    (
+                        self.allreduce_scores,
+                        self.event,
+                    ) = self.avg_handler.calculate_allreduce_scores(
+                        participating_peers=results[1]["participating_peers"],
+                        failed_peers=results[1]["failed_peers"],
+                        modes=results[1]["modes"],
+                        bandwidths=results[1]["bandwidths"],
+                        peerids_to_uids=self.peerids_to_uids,
+                        event=self.event,
+                        metagraph=self.metagraph,
                     )
-
                     # Update state after successful allreduce
                     self.local_progress.epoch += 1
                     self.local_progress.samples_accumulated = 0
-
                     # Upload new state
-                    await self._upload_new_state(
+                    self.upload_new_state(
                         epoch=self.local_progress.epoch,
-                        batch_size=sum(results["gathered"].values()),
                         results=results,
                     )
                 else:
@@ -114,25 +120,29 @@ async def forward(self):
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
 
-            if not hasattr(
-                self, "bandwidth"
-            ):  # TODO Maybe run different location to not wait on this
-                self.bandwidth = get_bandwidth()
-
             results = await self.avg_handler.run_validator_allreduce(
                 timeout=self.allreduce_timeout,
                 dendrite_pool=self.dendrite_pool,
                 miner_uids=self.miner_uids,
-                bandwidth=self.bandwidth,
+                # bandwidth=self.bandwidth,
+                epoch=self.global_progress.epoch,
             )
 
             if results:
                 # Calculate scores even as non-master
-                self.allreduce_scores = self.scoring.calculate_allreduce_scores(
-                    results["participating_peers"],
-                    results["failed_peers"],
-                    self.peerids_to_uids,
+                self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
+                    participating_peers=results["participating_peers"],
+                    failed_peers=results["failed_peers"],
+                    modes=[
+                        "AveragingMode.CLIENT" for i in results["participating_peers"]
+                    ],
+                    bandwidths=self.bandwidth,
+                    peerids_to_uids=self.peerids_to_uids,
                 )
+
+                # Update state after successful allreduce
+                self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
 
     else:
         # If running HF validation round, only call one UID each step

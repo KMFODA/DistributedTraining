@@ -1,12 +1,14 @@
 import asyncio
+import time
 from typing import Any, Dict, List, Tuple
 
 import bittensor as bt
+import distributed_training
 import numpy as np
 import torch
-
-import distributed_training
 from distributed_training.protocol import AllReduce
+from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.utils.state_loader import load_state_from_peer
 
 
 class AllReduceError(Exception):
@@ -33,6 +35,12 @@ class StateAveragingError(AllReduceError):
     pass
 
 
+class ModelStateError(AllReduceError):
+    """Raised when model weights are corrupted after an all reduce."""
+
+    pass
+
+
 # TODO cleanup code after moving to diloco
 class AveragingHandler:
     """Handles averaging round and outer step for both validators and miners."""
@@ -53,7 +61,7 @@ class AveragingHandler:
         """Get a sample of model weights for validation."""
         return [layer for layer in self.model.parameters()][-2][-10:].tolist()
 
-    async def _validate_weight_update(self, initial_weights: List[float]) -> bool:
+    def _validate_weight_update(self, initial_weights: List[float]) -> bool:
         """Validate model weight updates."""
         final_weights = self._get_weights_sample()
 
@@ -66,7 +74,13 @@ class AveragingHandler:
         return True
 
     async def run_validator_allreduce(
-        self, timeout: int, dendrite_pool, miner_uids, #bandwidth
+        self,
+        timeout: int,
+        dendrite_pool,
+        peerids_to_uids,
+        miner_uids,
+        epoch,
+        bandwidth=None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Process allreduce specifically for validator.
@@ -76,21 +90,24 @@ class AveragingHandler:
             - success: True if allreduce completed successfully, False otherwise
             - results: Dictionary containing peers and bandwidth info if successful, empty dict if failed
         """
-        grad_averager_step = None
         query_tasks = []
+        all_reduce_success_status = True
+        results = {}
 
         try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
             # Used for load balancing and scoring
-            # self.grad_averager.bandwidth = bandwidth["download"]
+            if bandwidth is not None:
+                self.grad_averager.bandwidth = bandwidth["download"]
 
             bt.logging.info("Starting Pseudo Gradient Averaging..")
             # Start gradient averaging without waiting
-            grad_averager_step = self.grad_averager.step(
+            gradient_averaging_step = self.grad_averager.step(
+                gather=0,
                 wait=False,
-                timeout=timeout,
+                peerids_to_uids=peerids_to_uids,
             )
 
             # Send AllReduce query to pause miner training and perform global sync
@@ -104,58 +121,90 @@ class AveragingHandler:
             bt.logging.info(
                 ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
             )
+            start_time = time.perf_counter()
+            responses = await asyncio.gather(*query_tasks)
+            bt.logging.info("AllReduce Query Responses Received..")
 
-            # First wait for queries to complete
-            await asyncio.gather(*query_tasks)
-
-            averaging_result = await grad_averager_step
-         
-            if averaging_result is None:
-                bt.logging.error("Averaging Failed")
-                return False, {}
-
-            failed_peers, participating_peers, modes, bandwidths = averaging_result
-
-            self.grad_averager.notify_used_averaged_gradients()
-            bt.logging.success("Finished Averaging Pseudo Gradients!")
+            while (gradient_averaging_step.done() is False) and (
+                (time.perf_counter() - start_time) <= (timeout)
+            ):
+                time.sleep(1)
 
             initial_weights = self._get_weights_sample()
-            bt.logging.debug(f"Initial weights sample: {initial_weights}")
+            bt.logging.info(f"Initial weights sample: {initial_weights}")
+            if gradient_averaging_step.done():
+                bt.logging.success("Finished Averaging Pseudo Gradients!")
+                (
+                    gathered,
+                    failed_peers,
+                    participating_peers,
+                    modes,
+                    bandwidths,
+                ) = gradient_averaging_step.result()
 
-            # Perform offloaded outer optimization steps
-            bt.logging.info("Performing Outer Optimizer Step..")
-            self.state_averager.step(
-                increment_epoch=True, optimizer_step=True, zero_grad=False
-            )
-            self.state_averager.update_main_param_after_outer_step()
-            self.state_averager.optimizer.zero_grad()
-            bt.logging.success(
-                ":white_heavy_check_mark: Finished Outer Optimizer Step!"
-            )
+                initial_weights = self._get_weights_sample()
 
-            # Validate weight updates
-            await self._validate_weight_update(initial_weights)
+                bt.logging.debug(f"Initial weights sample: {initial_weights}")
 
-            return True, {
-                "failed_peers": failed_peers,
-                "participating_peers": participating_peers,
-                "modes": modes,
-                "bandwidths": bandwidths,
-            }
+                # Perform offloaded outer optimization steps
+                bt.logging.info("Performing Outer Optimizer Step..")
+                self.state_averager.step(
+                    increment_epoch=True, optimizer_step=True, zero_grad=False
+                )
+                self.state_averager.update_main_param_after_outer_step()
+                self.state_averager.optimizer.zero_grad()
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                )
+
+                # Perform offloaded outer optimization steps
+                bt.logging.info("Performing Outer Optimizer Step..")
+                self.state_averager.step(
+                    increment_epoch=True, optimizer_step=True, zero_grad=False
+                )
+                self.state_averager.update_main_param_after_outer_step()
+                self.state_averager.optimizer.zero_grad()
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                )
+
+                # Validate weight updates
+                self._validate_weight_update(initial_weights)
+
+                all_reduce_success_status = False
+                results = {
+                    "gathered": gathered,
+                    "failed_peers": failed_peers,
+                    "participating_peers": participating_peers,
+                    "modes": modes,
+                    "bandwidths": bandwidths,
+                }
+            else:
+                all_reduce_success_status = False
 
         except Exception as e:
             bt.logging.error(f"Error during AllReduce setup: {str(e)}")
-            return False, {}
+            all_reduce_success_status = False
 
         finally:
-            if grad_averager_step:
-                grad_averager_step.cancel()
+            if gradient_averaging_step:
+                gradient_averaging_step.cancel()
+                bt.logging.info("Gradient Step Cancelled")
+            with self.grad_averager.use_averaged_gradients():
+                self.state_averager.optimizer.zero_grad()
+            if not all_reduce_success_status:
+                self.model_loading_manager.set_loading_state(False)
+                self.global_progress.epoch = get_global_epoch(self)
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
+            return all_reduce_success_status, results
 
     def calculate_allreduce_scores(
         self,
         participating_peers: list,
         failed_peers: list,
         peerids_to_uids: dict,
+        event: dict,
+        metagraph,
         modes: list = None,
         bandwidths: list = None,
     ) -> dict:
@@ -193,7 +242,7 @@ class AveragingHandler:
         successful_peers_count = len(participating_peers) - len(failed_peers)
 
         # Update event metrics
-        self.event.update(
+        event.update(
             {
                 "failed_peers_count": len(failed_peers),
                 "participating_peers_count": len(participating_peers),
@@ -202,13 +251,19 @@ class AveragingHandler:
         )
 
         # Find max bandwidth for normalization if bandwidths are provided
-        max_bandwidth = max(bandwidths) if bandwidths else 1.0
+        if (
+            bandwidths
+            and max([bandwidth for bandwidth in bandwidths if bandwidth is not None])
+            != []
+        ):
+            max_bandwidth = max(
+                [bandwidth for bandwidth in bandwidths if bandwidth is not None]
+            )
 
         # Initialize scores dictionary
         scores = {}
         status_dict = {}
-
-        for uid in range(256):  # Assuming 256 UIDs in metagraph
+        for uid in range(metagraph.n):  # Assuming 256 UIDs in metagraph
             str_uid = str(uid)
             if uid in participating_uids and uid not in failed_uids:
                 # Base score for successful participation
@@ -228,13 +283,16 @@ class AveragingHandler:
                     and uid in uid_bandwidths
                     and status != "WRONG_MODE"
                 ):
-                    bandwidth_bonus = 0.5 * (uid_bandwidths[uid] / max_bandwidth)
-                    final_score += bandwidth_bonus
-                    bt.logging.debug(
-                        f"UID {uid} score breakdown - Base: {base_score:.2f}, Bandwidth bonus: {bandwidth_bonus:.2f}"
-                    )
+                    if uid_bandwidths[uid] is None:
+                        final_score = 0.0
+                    else:
+                        bandwidth_bonus = 0.5 * (uid_bandwidths[uid] / max_bandwidth)
+                        final_score += bandwidth_bonus
+                        bt.logging.debug(
+                            f"UID {uid} score breakdown - Base: {base_score:.2f}, Bandwidth bonus: {bandwidth_bonus:.2f}"
+                        )
 
-                scores[str_uid] = final_score
+                scores[str_uid] = 1.0
                 status_dict[str_uid] = status
 
             elif uid in failed_uids:
@@ -253,10 +311,7 @@ class AveragingHandler:
             bt.logging.debug(f"Bandwidths by UID: {uid_bandwidths}")
         bt.logging.info(f"AllReduce UID Scores: {scores}")
 
-        # Store status in model config
-        self.all_reduce_scores = status_dict
-
-        return scores
+        return scores, event
 
     @staticmethod
     async def _wait_for_model_loading(model_loading_manager):
@@ -266,63 +321,88 @@ class AveragingHandler:
                 await asyncio.sleep(1)
 
     async def run_miner_allreduce(
-        self, synapse
+        self,
+        synapse,
+        local_progress,
+        bandwidth=None,
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
         await self._wait_for_model_loading(self.model_loading_manager)
 
         if self.model_loading_manager:
             self.model_loading_manager.set_loading_state(True)
-        # TODO Weight/gradient validation
-        grad_averager_step = None
+
         try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            # # Used for load balancing and scoring
-            # self.grad_averager.bandwidth = bandwidth[
-            #     "download"
-            # ]  # TODO Either use average bandwidth or set each time here
+            # Used for load balancing and scoring
+            if bandwidth is not None:
+                self.grad_averager.bandwidth = bandwidth["download"]
 
-            try:
-                bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
-                grad_averager_step = self.grad_averager.step(
-                    wait=True, timeout=synapse.timeout
-                )
-            except asyncio.TimeoutError:
-                raise GradientAveragingTimeoutError("Gradient averaging step timed out")
-            except Exception as e:
-                raise GradientAveragingError(f"Gradient averaging failed: {str(e)}")
+            bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
+            gradient_averaging_step = self.grad_averager.step(
+                timeout=(synapse.timeout - 20),
+                wait=False,
+                gather=local_progress.samples_accumulated,
+            )
+            start_time = time.perf_counter()
 
-            self.grad_averager.notify_used_averaged_gradients()
-            bt.logging.success("Finished Averaging Pseudo Gradients!")
+            while (gradient_averaging_step.done() is False) and (
+                (time.perf_counter() - start_time) <= (synapse.timeout)
+            ):
+                time.sleep(1)
 
             initial_weights = self._get_weights_sample()
-            bt.logging.debug(f"Initial weights sample: {initial_weights}")
+            bt.logging.info(f"Initial weights sample: {initial_weights}")
+            if gradient_averaging_step.done():
+                bt.logging.success("Finished Averaging Pseudo Gradients!")
+                initial_weights = self._get_weights_sample()
 
-            # Perform offloaded outer optimization steps
-            bt.logging.info("Performing Outer Optimizer Step..")
-            self.state_averager.step(
-                increment_epoch=True, optimizer_step=True, zero_grad=False
-            )
-            self.state_averager.update_main_param_after_outer_step()
-            self.state_averager.optimizer.zero_grad()
-            bt.logging.success("Finished Outer Optimizer Step!")
-            bt.logging.success(
-                ":white_heavy_check_mark: Finished Outer Optimizer Step!"
-            )
+                bt.logging.info(f"Initial weights sample: {initial_weights}")
 
-            # Validate weight updates
-            await self._validate_weight_update(initial_weights)
+                # Perform offloaded outer optimization steps
+                bt.logging.info("Performing Outer Optimizer Step..")
+                self.state_averager.step(
+                    increment_epoch=True, optimizer_step=True, zero_grad=False
+                )
+                self.state_averager.update_main_param_after_outer_step()
+                self.state_averager.optimizer.zero_grad()
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                )
 
-            synapse.completion = "True"
-            return synapse
+                # Perform offloaded outer optimization steps
+                bt.logging.info("Performing Outer Optimizer Step..")
+                self.state_averager.step(
+                    increment_epoch=True, optimizer_step=True, zero_grad=False
+                )
+                self.state_averager.update_main_param_after_outer_step()
+                self.state_averager.optimizer.zero_grad()
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                )
+
+                # Validate weight updates
+                self._validate_weight_update(initial_weights)
+
+                synapse.completion = True
+                return synapse
+            else:
+                synapse.completion = False
 
         except Exception as e:
+            synapse.completion = False
             raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
-            if grad_averager_step:
-                grad_averager_step.cancel()
-            if self.model_loading_manager:
+            if gradient_averaging_step:
+                gradient_averaging_step.cancel()
+                bt.logging.info("Gradient Step Cancelled")
+            with self.grad_averager.use_averaged_gradients():
+                self.state_averager.optimizer.zero_grad()
+            if not synapse.completion:
                 self.model_loading_manager.set_loading_state(False)
+                self.global_progress.epoch = get_global_epoch(self)
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
+            return synapse

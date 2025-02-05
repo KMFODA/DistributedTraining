@@ -540,6 +540,7 @@ async def score_uid(self, uid):
 
             self.inner_optimizer.step()
             self.inner_optimizer.zero_grad()
+
     cleanup_old_cache(
         self,
         repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
@@ -560,5 +561,5 @@ def score_models(model_1, model_2):
         )
         index += 1
 
-    average_score = torch.tensor(score / index)
+    average_score = torch.tensor([score / index])
     return average_score
