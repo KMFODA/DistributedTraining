@@ -190,8 +190,7 @@ class AveragingHandler:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
-            with self.grad_averager.use_averaged_gradients():
-                self.state_averager.optimizer.zero_grad()
+            self.state_averager.optimizer.zero_grad()
             if not all_reduce_success_status:
                 self.model_loading_manager.set_loading_state(False)
                 self.global_progress.epoch = get_global_epoch(self)
@@ -399,8 +398,7 @@ class AveragingHandler:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
-            with self.grad_averager.use_averaged_gradients():
-                self.state_averager.optimizer.zero_grad()
+            self.state_averager.optimizer.zero_grad()
             if not synapse.completion:
                 self.model_loading_manager.set_loading_state(False)
                 self.global_progress.epoch = get_global_epoch(self)

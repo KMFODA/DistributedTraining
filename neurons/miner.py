@@ -49,6 +49,7 @@ from distributed_training.utils.progress_tracker import (
     update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
+    ModelLoadingManager,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
@@ -173,17 +174,22 @@ class Miner(BaseMinerNeuron):
         self.model_upload_retry_delay = 6
 
         # Initialize model and its components
-        # self.model_loading_manager = ModelLoadingManager() # TODO We dont need this anymore, right?
+        self.model_loading_manager = (
+            ModelLoadingManager()
+        )  # TODO We dont need this anymore, right?
         load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
         cleanup_old_cache(self)
 
         # Load initial state if needed # TODO This check should see if after loading states we are still on the same epoch
-        # if self.local_progress.epoch != self.global_progress.epoch:
-        #     load_state_from_peer(self, epoch=self.global_progress.epoch)
+        if self.local_progress.epoch != self.global_progress.epoch:
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.grad_averager, self.state_averager
+            self.model,
+            self.grad_averager,
+            self.state_averager,
+            model_loading_manager=self.model_loading_manager,
         )
 
         # Initialize thread pool for background uploads
