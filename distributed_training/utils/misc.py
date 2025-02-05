@@ -193,8 +193,10 @@ class BittensorLogHandler(logging.Handler):
 
 
 def logging_filter(record):
-    if (record.name != "hivemind.dht.protocol") and (
-        record.name != "hivemind.optim.progress_tracker"
+    if (
+        (record.name != "hivemind.dht.protocol")
+        and (record.name != "hivemind.optim.progress_tracker")
+        and (record.name != "hivemind.p2p.p2p_daemon_bindings.control")
     ):
         return True
     else:
@@ -234,8 +236,27 @@ def setup_logging(
     )
     _ = bt.logging()
 
+    # Setup formatters
+    formatter = logging.Formatter("%(message)s")
+
+    # Setup bittensor logger
+    bt_logger = logging.getLogger("bittensor")
+    bt_logger.setLevel(level)
+    bt_logger.propagate = False
+
+    use_hivemind_log_handler("nowhere")
+
+    # Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    # Setup BittensorLogHandler
+    bt_handler = BittensorLogHandler()
+    bt_handler.setFormatter(formatter)
+    root_logger.addHandler(bt_handler)
+
+    # Reduce HF logs
     logging.getLogger("transformers").setLevel(logging.ERROR)
-    logging.getLogger("bittensor").setLevel(level)
 
     # Handle local file logging
     if os.path.exists(local_logfile):

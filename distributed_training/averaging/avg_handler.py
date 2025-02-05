@@ -1,5 +1,4 @@
 import asyncio
-import time
 from typing import Any, Dict, List, Tuple
 
 import bittensor as bt
@@ -8,7 +7,6 @@ import torch
 
 import distributed_training
 from distributed_training.protocol import AllReduce
-from distributed_training.utils.state_loader import load_state_from_peer
 
 
 class AllReduceError(Exception):
@@ -68,11 +66,17 @@ class AveragingHandler:
         return True
 
     async def run_validator_allreduce(
-        self, timeout: int, dendrite_pool, miner_uids, bandwidth
+        self, timeout: int, dendrite_pool, miner_uids, #bandwidth
     ) -> Tuple[bool, Dict[str, Any]]:
-        """Process allreduce specifically for validator."""
-        # TODO Weight/gradient validation
-        gradient_averaging_step = None
+        """
+        Process allreduce specifically for validator.
+
+        Returns:
+            Tuple[bool, Dict[str, Any]]: (success, results)
+            - success: True if allreduce completed successfully, False otherwise
+            - results: Dictionary containing peers and bandwidth info if successful, empty dict if failed
+        """
+        grad_averager_step = None
         query_tasks = []
 
         try:
@@ -80,93 +84,80 @@ class AveragingHandler:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
             # Used for load balancing and scoring
-            self.grad_averager.bandwidth = bandwidth[
-                "download"
-            ]  # TODO Either use average bandwidth or set each time here
+            # self.grad_averager.bandwidth = bandwidth["download"]
 
             bt.logging.info("Starting Pseudo Gradient Averaging..")
-            gradient_averaging_step = self.grad_averager.step(
+            # Start gradient averaging without waiting
+            grad_averager_step = self.grad_averager.step(
                 wait=False,
                 timeout=timeout,
             )
 
-            async with asyncio.timeout(timeout):
-                # Send AllReduce query to pause miner training and perform global sync
-                query_tasks.append(
-                    dendrite_pool.async_forward(
-                        miner_uids,
-                        [AllReduce() for _ in miner_uids],
-                        timeout=timeout,
-                    )
+            # Send AllReduce query to pause miner training and perform global sync
+            query_tasks.append(
+                dendrite_pool.async_forward(
+                    miner_uids,
+                    [AllReduce() for _ in miner_uids],
+                    timeout=timeout,
                 )
-                bt.logging.info(
-                    ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
-                )
+            )
+            bt.logging.info(
+                ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
+            )
 
-                await asyncio.gather(*query_tasks)
-                bt.logging.info("AllReduce Query Responses Received..")
+            # First wait for queries to complete
+            await asyncio.gather(*query_tasks)
+
+            averaging_result = await grad_averager_step
+         
+            if averaging_result is None:
+                bt.logging.error("Averaging Failed")
+                return False, {}
+
+            failed_peers, participating_peers, modes, bandwidths = averaging_result
 
             self.grad_averager.notify_used_averaged_gradients()
             bt.logging.success("Finished Averaging Pseudo Gradients!")
 
-            if gradient_averaging_step.done():
-                (
-                    failed_peers,
-                    participating_peers,
-                    modes,
-                    bandwidths,
-                ) = gradient_averaging_step.result()
+            initial_weights = self._get_weights_sample()
+            bt.logging.debug(f"Initial weights sample: {initial_weights}")
 
-                initial_weights = self._get_weights_sample()
-                bt.logging.debug(f"Initial weights sample: {initial_weights}")
-
-                # Perform offloaded outer optimization steps
-                bt.logging.info("Performing Outer Optimizer Step..")
-                self.state_averager.step(
-                    increment_epoch=True, optimizer_step=True, zero_grad=False
-                )
-                self.state_averager.update_main_param_after_outer_step()
-                self.state_averager.optimizer.zero_grad()
-                bt.logging.success(
-                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
-                )
-
-                # Validate weight updates
-                await self._validate_weight_update(initial_weights)
-
-                return {
-                    "failed_peers": failed_peers,
-                    "participating_peers": participating_peers,
-                    "modes": modes,
-                    "bandwidths": bandwidths,
-                }
-
-            else:  # TODO Ensure failing avaerging is handled
-                raise ModelStateError(
-                    "Averaging Failed. Loading Updated Model State From HF."
-                )
-
-        except asyncio.TimeoutError:
-            raise GradientAveragingTimeoutError(
-                "AllReduce operation timed out waiting for miners to complete"
+            # Perform offloaded outer optimization steps
+            bt.logging.info("Performing Outer Optimizer Step..")
+            self.state_averager.step(
+                increment_epoch=True, optimizer_step=True, zero_grad=False
             )
+            self.state_averager.update_main_param_after_outer_step()
+            self.state_averager.optimizer.zero_grad()
+            bt.logging.success(
+                ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+            )
+
+            # Validate weight updates
+            await self._validate_weight_update(initial_weights)
+
+            return True, {
+                "failed_peers": failed_peers,
+                "participating_peers": participating_peers,
+                "modes": modes,
+                "bandwidths": bandwidths,
+            }
+
         except Exception as e:
-            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
+            bt.logging.error(f"Error during AllReduce setup: {str(e)}")
+            return False, {}
+
         finally:
-            if gradient_averaging_step and not gradient_averaging_step.done():
-                gradient_averaging_step.cancel()
-                await asyncio.sleep(10)
-                load_state_from_peer(
-                    self, epoch=self.global_progress.epoch
-                )  # TODO self is not available here
+            if grad_averager_step:
+                grad_averager_step.cancel()
 
     def calculate_allreduce_scores(
         self,
         participating_peers: list,
         failed_peers: list,
-        modes: list,
-        bandwidths: list,
         peerids_to_uids: dict,
+        modes: list = None,
+        bandwidths: list = None,
     ) -> dict:
         """
         Calculate scores based on AllReduce participation status, modes, and bandwidths.
@@ -174,14 +165,14 @@ class AveragingHandler:
         Args:
             participating_peers (list): List of peers that participated in AllReduce
             failed_peers (list): List of peers that failed during AllReduce
-            modes (list): List of modes for each participating peer
-            bandwidths (list): List of bandwidths for each participating peer
             peerids_to_uids (dict): Mapping of peer IDs to UIDs
+            modes (list, optional): List of modes for each participating peer
+            bandwidths (list, optional): List of bandwidths for each participating peer
 
         Returns:
-            dict: Scores for each UID based on participation, mode, and bandwidth
+            dict: Scores for each UID based on participation and optional mode/bandwidth
         """
-        # Convert peer IDs to UIDs and create mode/bandwidth mappings
+        # Convert peer IDs to UIDs
         participating_uids = []
         uid_modes = {}
         uid_bandwidths = {}
@@ -189,8 +180,10 @@ class AveragingHandler:
         for idx, peer in enumerate(participating_peers):
             uid = peerids_to_uids.get(str(peer), "'''")
             participating_uids.append(uid)
-            uid_modes[uid] = modes[idx]
-            uid_bandwidths[uid] = bandwidths[idx]
+            if modes is not None:
+                uid_modes[uid] = modes[idx]
+            if bandwidths is not None:
+                uid_bandwidths[uid] = bandwidths[idx]
 
         failed_uids = [
             peerids_to_uids.get(str(failed_peer), "'''") for failed_peer in failed_peers
@@ -208,7 +201,7 @@ class AveragingHandler:
             }
         )
 
-        # Find max bandwidth for normalization
+        # Find max bandwidth for normalization if bandwidths are provided
         max_bandwidth = max(bandwidths) if bandwidths else 1.0
 
         # Initialize scores dictionary
@@ -218,21 +211,31 @@ class AveragingHandler:
         for uid in range(256):  # Assuming 256 UIDs in metagraph
             str_uid = str(uid)
             if uid in participating_uids and uid not in failed_uids:
-                # Check if mode is not CLIENT
-                if uid_modes[uid] == "AveragingMode.CLIENT":
-                    scores[str_uid] = 0.0
-                    status_dict[str_uid] = "WRONG_MODE"
-                else:
-                    # Base score for successful participation
-                    base_score = 1.0
-                    # Add normalized bandwidth bonus (up to 0.5 additional score)
-                    bandwidth_bonus = 0.5 * (uid_bandwidths[uid] / max_bandwidth)
-                    scores[str_uid] = base_score + bandwidth_bonus
-                    status_dict[str_uid] = "SUCCESS"
+                # Base score for successful participation
+                base_score = 1.0
+                final_score = base_score
+                status = "SUCCESS"
 
+                # Apply mode penalty if modes are provided
+                if modes is not None and uid in uid_modes:
+                    if uid_modes[uid] == "AveragingMode.CLIENT":
+                        final_score = 0.0
+                        status = "WRONG_MODE"
+
+                # Apply bandwidth bonus if bandwidths are provided
+                if (
+                    bandwidths is not None
+                    and uid in uid_bandwidths
+                    and status != "WRONG_MODE"
+                ):
+                    bandwidth_bonus = 0.5 * (uid_bandwidths[uid] / max_bandwidth)
+                    final_score += bandwidth_bonus
                     bt.logging.debug(
                         f"UID {uid} score breakdown - Base: {base_score:.2f}, Bandwidth bonus: {bandwidth_bonus:.2f}"
                     )
+
+                scores[str_uid] = final_score
+                status_dict[str_uid] = status
 
             elif uid in failed_uids:
                 scores[str_uid] = 0.0
@@ -244,8 +247,10 @@ class AveragingHandler:
         # Log participation and scoring details
         bt.logging.info(f"Failed UIDs: {failed_uids}")
         bt.logging.info(f"Participating UIDs: {participating_uids}")
-        bt.logging.debug(f"Modes by UID: {uid_modes}")
-        bt.logging.debug(f"Bandwidths by UID: {uid_bandwidths}")
+        if modes is not None:
+            bt.logging.debug(f"Modes by UID: {uid_modes}")
+        if bandwidths is not None:
+            bt.logging.debug(f"Bandwidths by UID: {uid_bandwidths}")
         bt.logging.info(f"AllReduce UID Scores: {scores}")
 
         # Store status in model config
@@ -261,7 +266,7 @@ class AveragingHandler:
                 await asyncio.sleep(1)
 
     async def run_miner_allreduce(
-        self, synapse, bandwidth
+        self, synapse
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
         await self._wait_for_model_loading(self.model_loading_manager)
@@ -269,26 +274,20 @@ class AveragingHandler:
         if self.model_loading_manager:
             self.model_loading_manager.set_loading_state(True)
         # TODO Weight/gradient validation
-        gradient_averaging_step = None
+        grad_averager_step = None
         try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            # Used for load balancing and scoring
-            self.grad_averager.bandwidth = bandwidth[
-                "download"
-            ]  # TODO Either use average bandwidth or set each time here
-
-            bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
-            gradient_averaging_step = self.grad_averager.step(
-                wait=True, timeout=synapse.timeout
-            )
+            # # Used for load balancing and scoring
+            # self.grad_averager.bandwidth = bandwidth[
+            #     "download"
+            # ]  # TODO Either use average bandwidth or set each time here
 
             try:
-                # Wait for gradient averaging with timeout
-                await asyncio.wait_for(
-                    asyncio.wrap_future(gradient_averaging_step),
-                    timeout=synapse.timeout,
+                bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
+                grad_averager_step = self.grad_averager.step(
+                    wait=True, timeout=synapse.timeout
                 )
             except asyncio.TimeoutError:
                 raise GradientAveragingTimeoutError("Gradient averaging step timed out")
@@ -323,7 +322,7 @@ class AveragingHandler:
             raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
-            if gradient_averaging_step and not gradient_averaging_step.done():
-                gradient_averaging_step.cancel()
+            if grad_averager_step:
+                grad_averager_step.cancel()
             if self.model_loading_manager:
                 self.model_loading_manager.set_loading_state(False)

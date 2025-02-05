@@ -500,12 +500,12 @@ class Miner(BaseMinerNeuron):
                 # Wait for running training process to finish
                 await asyncio.sleep(2)
 
-                if not hasattr(self, "bandwidth"):
-                    self.bandwidth = get_bandwidth()
+                # if not hasattr(self, "bandwidth"):
+                #     self.bandwidth = get_bandwidth()
 
                 # Run allreduce with proper timeout
                 result = await self.avg_handler.run_miner_allreduce(
-                    synapse, self.bandwidth
+                    synapse,
                 )
                 self.inner_step_counter = 0
                 bt.logging.debug("Reset inner step counter after AllReduce")

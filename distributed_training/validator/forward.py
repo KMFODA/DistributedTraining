@@ -75,16 +75,16 @@ async def forward(self):
                     for key, value in self.uid_metadata_tracker.items()
                 }
 
-                if not hasattr(
-                    self, "bandwidth"
-                ):  # TODO Maybe run different location to not wait on this
-                    self.bandwidth = get_bandwidth()
+                # if not hasattr(
+                #     self, "bandwidth"
+                # ):  # TODO Maybe run different location to not wait on this
+                #     self.bandwidth = get_bandwidth()
 
                 results = await self.avg_handler.run_validator_allreduce(
                     timeout=self.allreduce_timeout,
                     dendrite_pool=self.dendrite_pool,
                     miner_uids=self.miner_uids,
-                    bandwidth=self.bandwidth,
+                    # bandwidth=self.bandwidth,
                 )
                 if results:
                     # Update scoring based on allreduce participation
@@ -104,10 +104,12 @@ async def forward(self):
                         batch_size=sum(results["gathered"].values()),
                         results=results,
                     )
+                else:
+                    raise Exception
 
             except Exception as e:
                 bt.logging.error(f"AllReduce failed: {e}")
-                await load_state_from_peer(self)
+                load_state_from_peer(self)
 
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
@@ -164,7 +166,6 @@ async def forward(self):
             "global_samples_accumulated": self.global_progress.samples_accumulated,
         }
     )
-    breakpoint()
     # Update scores
     if len(rewards) > 0:
         self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)
