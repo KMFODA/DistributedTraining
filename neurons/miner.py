@@ -189,7 +189,7 @@ class Miner(BaseMinerNeuron):
             self.model,
             self.grad_averager,
             self.state_averager,
-            model_loading_manager=self.model_loading_manager,
+            self.model_loading_manager,
         )
 
         # Initialize thread pool for background uploads

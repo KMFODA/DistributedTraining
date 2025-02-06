@@ -182,7 +182,8 @@ class Validator(BaseValidatorNeuron):
         self.avg_handler = AveragingHandler(
             self.model,
             self.grad_averager,
-            self.state_averager.self.model_loading_manager,
+            self.state_averager,
+            self.model_loading_manager,
         )
 
     def _init_network_components(self):
