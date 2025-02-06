@@ -482,7 +482,7 @@ class Miner(BaseMinerNeuron):
                 self.inner_step_counter += 1
 
                 # Periodic model upload
-                if self.inner_step_counter % 400 == 0:
+                if self.inner_step_counter % 20 == 0:
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
                         batch_size=total_samples_processed,
