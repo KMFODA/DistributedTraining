@@ -175,21 +175,29 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
 
 
 class BittensorLogHandler(logging.Handler):
+    """Handler that routes log messages through bittensor's logging system"""
+    
+    def __init__(self):
+        super().__init__()
+        self.bt_logger = logging.getLogger("bittensor")
+    
     def emit(self, record):
-        log_entry = self.format(record)
-
-        if record.levelno >= logging.CRITICAL:
-            bt_logger.critical(log_entry)
-        elif record.levelno >= logging.ERROR:
-            bt_logger.error(log_entry)
-        elif record.levelno >= logging.WARNING:
-            bt_logger.warning(log_entry)
-        elif record.levelno >= logging.INFO:
-            bt_logger.info(log_entry)
-        elif record.levelno >= logging.DEBUG:
-            bt_logger.debug(log_entry)
-        else:
-            bt_logger.trace(log_entry)
+        try:
+            msg = self.format(record)
+            level_map = {
+                logging.CRITICAL: self.bt_logger.critical,
+                logging.ERROR: self.bt_logger.error,
+                logging.WARNING: self.bt_logger.warning,
+                logging.INFO: self.bt_logger.info,
+                logging.DEBUG: self.bt_logger.debug,
+                logging.TRACE: self.bt_logger.trace
+            }
+            
+            log_method = level_map.get(record.levelno, self.bt_logger.info)
+            log_method(msg)
+            
+        except Exception:
+            self.handleError(record)
 
 
 def logging_filter(record):
@@ -206,7 +214,6 @@ def logging_filter(record):
 def setup_logging(
     local_logfile="logs_mylogfile.txt",
     config=None,  # Add config parameter
-    level=logging.INFO,  # Default logging level of bt logs
 ):
     """Sets up comprehensive logging including bittensor, hivemind, and events logging"""
 
@@ -234,51 +241,48 @@ def setup_logging(
             ":pages:": "📑",
         }
     )
-    _ = bt.logging()
-
-    # Setup formatters
-    formatter = logging.Formatter("%(message)s")
-
-    # Setup bittensor logger
-    bt_logger = logging.getLogger("bittensor")
-    bt_logger.setLevel(level)
-    bt_logger.propagate = False
-
-    use_hivemind_log_handler("nowhere")
-
-    # Setup root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-
-    # Setup BittensorLogHandler
-    bt_handler = BittensorLogHandler()
-    bt_handler.setFormatter(formatter)
-    root_logger.addHandler(bt_handler)
-
-    # Reduce HF logs
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-
+    
+    bt_level = logging.INFO
+    if config and hasattr(config, 'logging'):
+        if config.logging.debug:
+            bt_level = logging.DEBUG
+        elif config.logging.trace:
+            bt_level = logging.TRACE
+        elif config.logging.info:
+            bt_level = logging.INFO
+            
+    if bt_level > logging.DEBUG:
+        from bittensor.utils.btlogging.format import LOG_FORMATS, Fore, Style
+        for level in LOG_FORMATS:
+            # Simplify bt formatting for logging.INFO
+            LOG_FORMATS[level] = f"{Fore.BLUE}%(asctime)s{Fore.RESET} | {Style.BRIGHT}%(levelname)s{Style.RESET_ALL} | %(message)s"
+    
     # Handle local file logging
     if os.path.exists(local_logfile):
         shutil.copyfile(local_logfile, local_logfile.replace(".txt", "_archive.txt"))
         os.remove(local_logfile)
 
     # Setup hivemind logger
-    use_hivemind_log_handler("nowhere")
-    hivemind_logger = logging.getLogger("hivemind")
-    hivemind_logger.handlers.clear()
-    hivemind_logger.setLevel(logging.DEBUG)
-    hivemind_logger.propagate = False
+    for logger_name in logging.root.manager.loggerDict:
+        if logger_name == "hivemind" or logger_name.startswith("hivemind."):
+            logger = logging.getLogger(logger_name)
+            logger.handlers.clear()
+            logger.setLevel(logging.DEBUG)
+            logger.propagate = False
 
-    file_handler = logging.FileHandler(local_logfile)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.addFilter(logging_filter)
-    hivemind_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    file_handler.setFormatter(hivemind_formatter)
-    hivemind_logger.addHandler(file_handler)
-    hivemind_logger.propagate = False
+            file_handler = logging.FileHandler(local_logfile)
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.addFilter(logging_filter)
+            hivemind_formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            file_handler.setFormatter(hivemind_formatter)
+            logger.addHandler(file_handler)
+
+    use_hivemind_log_handler("nowhere")
+
+    # Reduce HF logs
+    logging.getLogger("transformers").setLevel(logging.ERROR)
 
     # Setup events logger if config is provided
     if config and not config.neuron.dont_save_events:
