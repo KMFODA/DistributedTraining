@@ -328,8 +328,7 @@ def map_uid_to_peerid(self):
     )
 
     hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
-    return
-    breakpoint()
+
     for key, value in result:
         hotkey = key.value
         if hotkey not in hotkey_to_uid:
@@ -411,9 +410,9 @@ def map_uid_to_peerid(self):
                     if key != 0
                 ]
                 if concatenated["model_huggingface_id"] not in uid_peerid_metadata:
-                    self.uid_metadata_tracker[uid][
-                        "model_huggingface_id"
-                    ] = concatenated["model_huggingface_id"]
+                    self.uid_metadata_tracker[uid]["model_huggingface_id"] = (
+                        concatenated["model_huggingface_id"]
+                    )
                     self.uid_metadata_tracker[uid][
                         "last_updated_block"
                     ] = last_updated_block
