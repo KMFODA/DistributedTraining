@@ -113,7 +113,7 @@ class AveragingHandler:
             query_tasks.append(
                 dendrite_pool.async_forward(
                     miner_uids,
-                    [AllReduce() for _ in miner_uids],
+                    [AllReduce(completion=False) for _ in miner_uids],
                     timeout=timeout,
                 )
             )
@@ -235,6 +235,7 @@ class AveragingHandler:
         # Find max bandwidth for normalization if bandwidths are provided
         if (
             bandwidths
+            and [bandwidth for bandwidth in bandwidths if bandwidth is not None] != []
             and max([bandwidth for bandwidth in bandwidths if bandwidth is not None])
             != []
         ):
