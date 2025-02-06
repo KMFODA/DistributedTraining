@@ -452,17 +452,12 @@ class Miner(BaseMinerNeuron):
                 break
 
             input_ids = torch.tensor(batch).to(self.device)
-            label_ids = torch.stack(
-                [
-                    torch.cat([input_ids[0][1:], torch.tensor([50256]).to("cuda")]),
-                    torch.cat([input_ids[1][1:], torch.tensor([50256]).to("cuda")]),
-                    torch.cat([input_ids[2][1:], torch.tensor([50256]).to("cuda")]),
-                    torch.cat([input_ids[3][1:], torch.tensor([50256]).to("cuda")]),
-                ]
-            )
+            labels = input_ids.clone()
+            labels = labels[:, 1:].contiguous()  
+            input_ids = input_ids[:, :-1].contiguous() 
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                _, loss = self.model(input_ids=input_ids, labels=label_ids)
+                _, loss = self.model(input_ids=input_ids, labels=labels)
                 scaled_loss = loss / NUM_MICRO_BATCHES
 
             scaled_loss.backward()
@@ -501,6 +496,7 @@ class Miner(BaseMinerNeuron):
         self._num_batches = num_batches_processed
         self._total_samples = total_samples_processed
 
+
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
     ) -> distributed_training.protocol.AllReduce:
@@ -515,15 +511,17 @@ class Miner(BaseMinerNeuron):
 
                 try:
                     # Run allreduce with proper timeout
-                    result = await self.avg_handler.run_miner_allreduce(
+                    results = await self.avg_handler.run_miner_allreduce(
                         synapse, self.local_progress
                     )
-                except:
+                    if not results and results[0]:
+                        raise Exception
+                except Exception:
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
                 self.inner_step_counter = 0
                 bt.logging.debug("Reset inner step counter after AllReduce")
 
-                return result
+                return results
 
         except Exception as e:
             raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
