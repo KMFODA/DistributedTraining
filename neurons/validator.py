@@ -52,7 +52,7 @@ from distributed_training.utils.state_loader import (
     load_state_from_peer,
     save_and_upload_state,
 )
-from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 from distributed_training.validator import forward
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
@@ -180,7 +180,9 @@ class Validator(BaseValidatorNeuron):
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
-            self.model, self.grad_averager, self.state_averager
+            self.model,
+            self.grad_averager,
+            self.state_averager.self.model_loading_manager,
         )
 
     def _init_network_components(self):
@@ -215,7 +217,7 @@ class Validator(BaseValidatorNeuron):
         map_uid_to_peerid(self)
 
         # Update PeerID list
-        # update_run_peerid_list(self)
+        update_run_peerid_list(self)
 
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}

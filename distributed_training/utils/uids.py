@@ -55,12 +55,15 @@ async def check_uid_availability(
         bool: True if uid is available, False otherwise
     """
     # Filter non serving axons.
+
     if not metagraph.axons[uid].is_serving:
         return False
+
     # Filter validator permit > 1024 stake.
     if metagraph.validator_permit[uid]:
-        if metagraph.S[uid] > vpermit_tao_limit:
+        if metagraph.S[uid].tao > vpermit_tao_limit:
             return False
+
     # Filter for miners that are processing other responses
     if not await check_uid(dendrite, metagraph.axons[uid], uid, epoch):
         return False
@@ -325,7 +328,8 @@ def map_uid_to_peerid(self):
     )
 
     hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
-
+    return
+    breakpoint()
     for key, value in result:
         hotkey = key.value
         if hotkey not in hotkey_to_uid:

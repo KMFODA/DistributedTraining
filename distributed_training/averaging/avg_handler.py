@@ -130,8 +130,6 @@ class AveragingHandler:
             ):
                 time.sleep(1)
 
-            initial_weights = self._get_weights_sample()
-            bt.logging.info(f"Initial weights sample: {initial_weights}")
             if gradient_averaging_step.done():
                 bt.logging.success("Finished Averaging Pseudo Gradients!")
                 (
@@ -157,21 +155,10 @@ class AveragingHandler:
                     ":white_heavy_check_mark: Finished Outer Optimizer Step!"
                 )
 
-                # Perform offloaded outer optimization steps
-                bt.logging.info("Performing Outer Optimizer Step..")
-                self.state_averager.step(
-                    increment_epoch=True, optimizer_step=True, zero_grad=False
-                )
-                self.state_averager.update_main_param_after_outer_step()
-                self.state_averager.optimizer.zero_grad()
-                bt.logging.success(
-                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
-                )
-
                 # Validate weight updates
                 self._validate_weight_update(initial_weights)
 
-                all_reduce_success_status = False
+                all_reduce_success_status = True
                 results = {
                     "gathered": gathered,
                     "failed_peers": failed_peers,
@@ -191,10 +178,6 @@ class AveragingHandler:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
             self.state_averager.optimizer.zero_grad()
-            if not all_reduce_success_status:
-                self.model_loading_manager.set_loading_state(False)
-                self.global_progress.epoch = get_global_epoch(self)
-                load_state_from_peer(self, epoch=self.global_progress.epoch)
             return all_reduce_success_status, results
 
     def calculate_allreduce_scores(
@@ -352,24 +335,10 @@ class AveragingHandler:
             ):
                 time.sleep(1)
 
-            initial_weights = self._get_weights_sample()
-            bt.logging.info(f"Initial weights sample: {initial_weights}")
             if gradient_averaging_step.done():
                 bt.logging.success("Finished Averaging Pseudo Gradients!")
                 initial_weights = self._get_weights_sample()
-
                 bt.logging.info(f"Initial weights sample: {initial_weights}")
-
-                # Perform offloaded outer optimization steps
-                bt.logging.info("Performing Outer Optimizer Step..")
-                self.state_averager.step(
-                    increment_epoch=True, optimizer_step=True, zero_grad=False
-                )
-                self.state_averager.update_main_param_after_outer_step()
-                self.state_averager.optimizer.zero_grad()
-                bt.logging.success(
-                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
-                )
 
                 # Perform offloaded outer optimization steps
                 bt.logging.info("Performing Outer Optimizer Step..")
@@ -386,7 +355,6 @@ class AveragingHandler:
                 self._validate_weight_update(initial_weights)
 
                 synapse.completion = True
-                return synapse
             else:
                 synapse.completion = False
 
@@ -399,8 +367,4 @@ class AveragingHandler:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cancelled")
             self.state_averager.optimizer.zero_grad()
-            if not synapse.completion:
-                self.model_loading_manager.set_loading_state(False)
-                self.global_progress.epoch = get_global_epoch(self)
-                load_state_from_peer(self, epoch=self.global_progress.epoch)
             return synapse

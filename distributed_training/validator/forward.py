@@ -22,7 +22,10 @@ import time
 import bittensor as bt
 import torch
 from distributed_training.utils.misc import get_bandwidth
-from distributed_training.utils.progress_tracker import update_global_tracker_state
+from distributed_training.utils.progress_tracker import (
+    get_global_epoch,
+    update_global_tracker_state,
+)
 from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
 from distributed_training.validator.reward import score_uid
@@ -48,6 +51,7 @@ async def forward(self):
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    should_allreduce = True
 
     responses = [[]]
     self.miner_uids = []
@@ -80,7 +84,10 @@ async def forward(self):
                 self.event.update({"UIDs": self.miner_uids})
                 bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-                results = await self.avg_handler.run_validator_allreduce(
+                (
+                    all_reduce_success_status,
+                    results,
+                ) = await self.avg_handler.run_validator_allreduce(
                     timeout=self.allreduce_timeout,
                     dendrite_pool=self.dendrite_pool,
                     peerids_to_uids=self.peerids_to_uids,
@@ -88,16 +95,16 @@ async def forward(self):
                     # bandwidth=self.bandwidth,
                     epoch=self.global_progress.epoch,
                 )
-                if results and results[0]:
+                if all_reduce_success_status:
                     # Update scoring based on allreduce participation
                     (
                         self.allreduce_scores,
                         self.event,
                     ) = self.avg_handler.calculate_allreduce_scores(
-                        participating_peers=results[1]["participating_peers"],
-                        failed_peers=results[1]["failed_peers"],
-                        modes=results[1]["modes"],
-                        bandwidths=results[1]["bandwidths"],
+                        participating_peers=results["participating_peers"],
+                        failed_peers=results["failed_peers"],
+                        modes=results["modes"],
+                        bandwidths=results["bandwidths"],
                         peerids_to_uids=self.peerids_to_uids,
                         event=self.event,
                         metagraph=self.metagraph,
@@ -115,31 +122,37 @@ async def forward(self):
 
             except Exception as e:
                 bt.logging.error(f"AllReduce failed: {e}")
-                load_state_from_peer(self)
+                self.model_loading_manager.set_loading_state(False)
+                self.global_progress.epoch = get_global_epoch(self)
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         else:
             # Non-master validators participate in AllReduce to help spread the load and update local model
-
-            results = await self.avg_handler.run_validator_allreduce(
+            (
+                all_reduce_success_status,
+                results,
+            ) = await self.avg_handler.run_validator_allreduce(
                 timeout=self.allreduce_timeout,
                 dendrite_pool=self.dendrite_pool,
+                peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
                 # bandwidth=self.bandwidth,
                 epoch=self.global_progress.epoch,
             )
-
-            if results:
-                # Calculate scores even as non-master
-                self.allreduce_scores = self.avg_handler.calculate_allreduce_scores(
+            if all_reduce_success_status:
+                # Update scoring based on allreduce participation
+                (
+                    self.allreduce_scores,
+                    self.event,
+                ) = self.avg_handler.calculate_allreduce_scores(
                     participating_peers=results["participating_peers"],
                     failed_peers=results["failed_peers"],
-                    modes=[
-                        "AveragingMode.CLIENT" for i in results["participating_peers"]
-                    ],
-                    bandwidths=self.bandwidth,
+                    modes=results["modes"],
+                    bandwidths=results["bandwidths"],
                     peerids_to_uids=self.peerids_to_uids,
+                    event=self.event,
+                    metagraph=self.metagraph,
                 )
-
                 # Update state after successful allreduce
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
