@@ -17,22 +17,25 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import base58
 import random
 import time
 from typing import List
 
+import base58
 import bittensor as bt
 import numpy as np
 import torch
-
-from distributed_training.data.dataset import DataLoader
+import torch.nn.functional as F
+from distributed_training.data.dataset import DataLoader, DatasetLoader
+from distributed_training.utils.state_loader import cleanup_old_cache
 from distributed_training.utils.uids import (
     get_random_uids,
-    update_run_peerid_list,
     map_uid_to_peerid,
+    update_run_peerid_list,
 )
 from hivemind.p2p import PeerID
+from huggingface_hub import list_repo_commits
+from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -44,6 +47,7 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
 
+# TODO HF validation logic
 def score_gradients(self, response, uid, threshold=0.75):
     try:
         if "gradient_sums" not in response.__dict__:
@@ -292,21 +296,22 @@ async def get_rewards(
         )
         scores *= blacklist_scores
 
-        # Score miners bandwidth
-        bandwidth_scores = await score_bandwidth(
-            self,
-            self.miner_uids,
-        )
-        bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-        self.event.update(
-            {
-                f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                for uid, bandwidth_score in zip(
-                    self.miner_uids.tolist(), bandwidth_scores
-                )
-            }
-        )
-        scores *= bandwidth_scores
+        # This is done via the all_reduce instead
+        # # Score miners bandwidth
+        # bandwidth_scores = await score_bandwidth(
+        #     self,
+        #     self.miner_uids,
+        # )
+        # bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
+        # self.event.update(
+        #     {
+        #         f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
+        #         for uid, bandwidth_score in zip(
+        #             self.miner_uids.tolist(), bandwidth_scores
+        #         )
+        #     }
+        # )
+        # scores *= bandwidth_scores
 
     # Score an empty responses
     elif (responses == [[]]) or (
@@ -388,7 +393,7 @@ async def get_rewards(
                     if (
                         (response.dendrite.status_code == 200)
                         and (response.dataset_indices is not None)
-                        and (type(response.dataset_indices) == list)
+                        and (type(response.dataset_indices) is list)
                     )
                     else 0
                 )
@@ -405,13 +410,15 @@ async def get_rewards(
         steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
 
         # Score miners based off wether they where succesfull or not in the all_reduce round
-        if hasattr(self.model.config, "all_reduce_scores"):
+        if hasattr(self, "all_reduce_scores"):
             all_reduce_scores = torch.FloatTensor(
                 [
-                    1
-                    if str(uid) in self.model.config.all_reduce_scores
-                    and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
-                    else 0
+                    (
+                        1
+                        if str(uid) in self.all_reduce_scores
+                        and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
+                        else 0
+                    )
                     for uid in uids.tolist()
                 ]
             ).to(self.device)
@@ -434,3 +441,125 @@ async def get_rewards(
             scores = blacklist_scores * (gradient_scores * steps_scores)
 
     return scores
+
+
+async def fetch_training_data(self, block):
+    """Async function to fetch training data"""
+
+    try:
+        pages = await DatasetLoader.next_pages(
+            offset=block,
+            n_pages=5,
+            seed=self.uid if not self.config.random else random.randint(0, 1000),
+        )
+        random.shuffle(pages)
+
+        dataset = await DatasetLoader.create(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            pages_info=pages,
+            tokenizer=self.tokenizer,
+        )
+
+        return dataset
+    except Exception as e:
+        bt.logging.error(f"Error fetching training data: {str(e)}")
+        raise
+
+
+async def score_uid(self, uid):
+    """Score a single UID"""
+
+    if self.uid_metadata_tracker[uid]["model_huggingface_id"] is None:
+        return 0
+
+    cleanup_old_cache(
+        self,
+        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        current_revision=None,
+    )
+
+    commits = (
+        list_repo_commits(
+            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
+        )[0].commit_id,
+        list_repo_commits(
+            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
+        )[1].commit_id,
+    )
+    model_huggingface_id = self.uid_metadata_tracker[uid]["model_huggingface_id"]
+
+    self.model = AutoModelForCausalLM.from_pretrained(
+        model_huggingface_id, revision=commits[0], trust_remote_code=True
+    )
+    # Move the model to the appropriate device
+    self.model = self.model.to(self.device)
+
+    model_final = AutoModelForCausalLM.from_pretrained(
+        model_huggingface_id, revision=commits[1], trust_remote_code=True
+    )
+
+    blocks = model_final.config.block_list
+
+    for block in blocks:
+        dataset = await fetch_training_data(self, block)
+        total_loss = 0
+        batch_count = 0
+        inner_step_counter = 0
+
+        for batch in dataset:
+            if isinstance(batch, tuple):
+                inputs, labels = batch
+            else:
+                inputs = torch.tensor(batch[:, :-1]).to(self.device)
+                labels = torch.tensor(batch[:, 1:]).to(self.device)
+
+            if not isinstance(inputs, torch.Tensor):
+                inputs = torch.tensor(inputs)
+            if not isinstance(labels, torch.Tensor):
+                labels = torch.tensor(labels)
+
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
+
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1]
+
+            loss.backward()
+
+            self.local_progress.samples_accumulated += inputs.size(0)
+            total_loss += loss.detach().item()
+            batch_count += 1
+            inner_step_counter += 1
+
+            if batch_count % 5 == 0:
+                bt.logging.info(
+                    f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                )
+
+            self.inner_optimizer.step()
+            self.inner_optimizer.zero_grad()
+
+    cleanup_old_cache(
+        self,
+        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        current_revision=None,
+    )
+    return score_models(self.model, model_final)
+
+
+def score_models(model_1, model_2):
+    score = 0
+    index = 0
+
+    for param_1, param_2 in zip(model_1.parameters(), model_2.parameters()):
+        score += (
+            F.cosine_similarity(param_1.to("cpu"), param_2.to("cpu"), dim=0)
+            .mean()
+            .item()
+        )
+        index += 1
+
+    average_score = torch.tensor([score / index])
+    return average_score

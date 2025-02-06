@@ -56,7 +56,8 @@ class BaseNeuron(ABC):
 
     @property
     def block(self):
-        return ttl_get_block(self)
+        self.current_block = ttl_get_block(self)
+        return self.current_block
 
     def __init__(self, config=None):
         base_config = copy.deepcopy(config or BaseNeuron.config())
@@ -99,7 +100,7 @@ class BaseNeuron(ABC):
         )
         self.step = 0
 
-    @abstractmethod
+    # @abstractmethod # miner is not using this anymore
     async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
         ...
 
