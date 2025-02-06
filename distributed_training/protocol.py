@@ -35,8 +35,8 @@ class IsAlive(bt.Synapse):
 
 class AllReduce(bt.Synapse):
     answer: Optional[str] = None
-    completion: str = pydantic.Field(
-        "",
+    completion: bool = pydantic.Field(
+        None,
         title="Completion",
         description="Completion status of the current StreamPrompting object. "
         "This attribute is mutable and can be updated.",

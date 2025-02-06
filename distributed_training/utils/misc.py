@@ -267,10 +267,12 @@ def setup_logging(
 
     # Setup hivemind logger
     for logger_name in logging.root.manager.loggerDict:
+        # Set Hivemind logs
         if logger_name == "hivemind" or logger_name.startswith("hivemind."):
-            logger = logging.getLogger(logger_name)
+            logger = logging.getLogger("hivemind")
             logger.handlers.clear()
-            logger.setLevel(logging.DEBUG)
+            logger.setLevel(logging.CRITICAL)
+            logger.addFilter(logging_filter)
             logger.propagate = False
 
             file_handler = logging.FileHandler(local_logfile)
@@ -281,11 +283,14 @@ def setup_logging(
             )
             file_handler.setFormatter(hivemind_formatter)
             logger.addHandler(file_handler)
+        # Reduce HuggingFace or Torch logs
+        if ("transformers" in logger_name) or ("torch" in logger_name):
+            logger = logging.getLogger(logger_name).setLevel(logging.ERROR)
+        # Set level for bittensor logs
+        if logger_name == "bittensor":
+            logger = logging.getLogger(logger_name).setLevel(bt_level)
 
     use_hivemind_log_handler("nowhere")
-
-    # Reduce HF logs
-    logging.getLogger("transformers").setLevel(logging.ERROR)
 
     # Setup events logger if config is provided
     if config and not config.neuron.dont_save_events:

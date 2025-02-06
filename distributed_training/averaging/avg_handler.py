@@ -64,14 +64,13 @@ class AveragingHandler:
     def _validate_weight_update(self, initial_weights: List[float]) -> bool:
         """Validate model weight updates."""
         final_weights = self._get_weights_sample()
+        bt.logging.info(f"Final Weights Sample: {final_weights}")
 
         if final_weights == initial_weights:
             raise ModelStateError("Weights unchanged after update")
 
         if sum(np.isnan(final_weights)) > 1:
             raise ModelStateError("NaN values detected in weights after update")
-
-        return True
 
     async def run_validator_allreduce(
         self,
@@ -131,7 +130,9 @@ class AveragingHandler:
                 time.sleep(1)
 
             if gradient_averaging_step.done():
-                bt.logging.success("Finished Averaging Pseudo Gradients!")
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
+                )
                 (
                     gathered,
                     failed_peers,
@@ -141,18 +142,17 @@ class AveragingHandler:
                 ) = gradient_averaging_step.result()
 
                 initial_weights = self._get_weights_sample()
-
-                bt.logging.debug(f"Initial weights sample: {initial_weights}")
+                bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
-                bt.logging.info("Performing Outer Optimizer Step..")
+                bt.logging.info(":wait: Performing Outer Optimizer Step")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
                 self.state_averager.update_main_param_after_outer_step()
                 self.state_averager.optimizer.zero_grad()
                 bt.logging.success(
-                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
 
                 # Validate weight updates
@@ -176,7 +176,7 @@ class AveragingHandler:
         finally:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
-                bt.logging.info("Gradient Step Cancelled")
+                bt.logging.info(":white_heavy_check_mark: Gradient Step Cancelled")
             self.state_averager.optimizer.zero_grad()
             return all_reduce_success_status, results
 
@@ -270,7 +270,7 @@ class AveragingHandler:
                     else:
                         bandwidth_bonus = 0.5 * (uid_bandwidths[uid] / max_bandwidth)
                         final_score += bandwidth_bonus
-                        bt.logging.debug(
+                        bt.logging.info(
                             f"UID {uid} score breakdown - Base: {base_score:.2f}, Bandwidth bonus: {bandwidth_bonus:.2f}"
                         )
 
@@ -288,9 +288,9 @@ class AveragingHandler:
         bt.logging.info(f"Failed UIDs: {failed_uids}")
         bt.logging.info(f"Participating UIDs: {participating_uids}")
         if modes is not None:
-            bt.logging.debug(f"Modes by UID: {uid_modes}")
+            bt.logging.info(f"Modes by UID: {uid_modes}")
         if bandwidths is not None:
-            bt.logging.debug(f"Bandwidths by UID: {uid_bandwidths}")
+            bt.logging.info(f"Bandwidths by UID: {uid_bandwidths}")
         bt.logging.info(f"AllReduce UID Scores: {scores}")
 
         return scores, event
@@ -336,24 +336,25 @@ class AveragingHandler:
                 time.sleep(1)
 
             if gradient_averaging_step.done():
-                bt.logging.success("Finished Averaging Pseudo Gradients!")
+                bt.logging.success(
+                    ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
+                )
                 initial_weights = self._get_weights_sample()
-                bt.logging.info(f"Initial weights sample: {initial_weights}")
+                bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
-                bt.logging.info("Performing Outer Optimizer Step..")
+                bt.logging.info(":wait: Performing Outer Optimizer Step")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
                 self.state_averager.update_main_param_after_outer_step()
                 self.state_averager.optimizer.zero_grad()
                 bt.logging.success(
-                    ":white_heavy_check_mark: Finished Outer Optimizer Step!"
+                    ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
 
                 # Validate weight updates
                 self._validate_weight_update(initial_weights)
-
                 synapse.completion = True
             else:
                 synapse.completion = False
@@ -365,6 +366,6 @@ class AveragingHandler:
         finally:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
-                bt.logging.info("Gradient Step Cancelled")
+                bt.logging.info(":white_heavy_check_mark: Gradient Step Cancelled")
             self.state_averager.optimizer.zero_grad()
             return synapse
