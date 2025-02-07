@@ -9,39 +9,9 @@ import torch
 from distributed_training.protocol import AllReduce
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.utils.state_loader import load_state_from_peer
+from exceptions import AllReduceError, ModelStateError
 
 
-class AllReduceError(Exception):
-    """Base exception for AllReduce-related errors."""
-
-    pass
-
-
-class GradientAveragingTimeoutError(AllReduceError):
-    """Raised when gradient averaging step times out."""
-
-    pass
-
-
-class GradientAveragingError(AllReduceError):
-    """Raised when gradient averaging fails for non-timeout reasons."""
-
-    pass
-
-
-class StateAveragingError(AllReduceError):
-    """Raised when state averaging fails."""
-
-    pass
-
-
-class ModelStateError(AllReduceError):
-    """Raised when model weights are corrupted after an all reduce."""
-
-    pass
-
-
-# TODO cleanup code after moving to diloco
 class AveragingHandler:
     """Handles averaging round and outer step for both validators and miners."""
 

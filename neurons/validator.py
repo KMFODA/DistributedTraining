@@ -132,7 +132,7 @@ class Validator(BaseValidatorNeuron):
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
-        self.local_progress.epoch = get_local_epoch(self)
+        self.local_progress.epoch = self.global_progress.epoch
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
@@ -208,7 +208,9 @@ class Validator(BaseValidatorNeuron):
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
 
-        # Init last_allreduce_block to current block # TODO needs to be set properly for newcomers
+        # Init last_allreduce_block to current block
+        # TODO This can be done by pushing the block alongside the global model uplod on the validator side.
+        # TODO This way all new validators can now which block the all_reduce ended on and which block training restarted on.
         self.last_allreduce_block = self.block
 
     def update_local_tracker_state(self, rewards, responses):

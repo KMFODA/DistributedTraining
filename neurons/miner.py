@@ -74,8 +74,6 @@ class TrainingStatus(Enum):
     AVERAGING = "🔄 | Averaging"
 
 
-# TODO Consider when/how we would do model loading when using diloco
-# TODO I.e. if peers join in-between outer steps, then load the latest, but skip training to only sync the model, to then start training the new step
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)

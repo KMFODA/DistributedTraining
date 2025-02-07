@@ -73,7 +73,7 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
     self.model = self.model.to(self.device)
     self.model.config.block_list = []
 
-    # Delete any historic model references in GlobalOptimManager # TODO Do we still need this in here?
+    # Delete any historic model references in GlobalOptimManager
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
         self.inner_optimizer.mng.module_weight_config_triple = (
             self.inner_optimizer.mng.module_weight_config_triple[-2:]

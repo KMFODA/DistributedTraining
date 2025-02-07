@@ -21,6 +21,7 @@ import time
 
 import bittensor as bt
 import torch
+from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
@@ -51,7 +52,6 @@ async def forward(self):
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
-    should_allreduce = True
 
     responses = [[]]
     self.miner_uids = []
@@ -118,11 +118,10 @@ async def forward(self):
                         results=results,
                     )
                 else:
-                    raise Exception
+                    raise GradientAveragingError("Unsuccessful all reduce step")
 
             except Exception as e:
                 bt.logging.error(f"AllReduce failed: {e}")
-                self.model_loading_manager.set_loading_state(False)
                 self.global_progress.epoch = get_global_epoch(self)
                 load_state_from_peer(self, epoch=self.global_progress.epoch)
 
@@ -157,6 +156,7 @@ async def forward(self):
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
 
+        # TODO Re-introduce bandwidth scoring
     else:
         # If running HF validation round, only call one UID each step
         all_reduce = False
