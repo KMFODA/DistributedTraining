@@ -54,7 +54,14 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
+from huggingface_hub import (
+    create_repo,
+    create_tag,
+    repo_exists,
+    upload_folder,
+    list_repo_refs,
+    delete_tag,
+)
 from transformers import AutoTokenizer
 
 # GPU optimizations.
@@ -249,13 +256,31 @@ class Miner(BaseMinerNeuron):
                         repo_type="model",
                         commit_message=commit_message,
                     )
-                    # Create a tag for this version
-                    create_tag(
-                        self.config.neuron.hf_repo_id,
-                        repo_type="model",
-                        tag=str(epoch),
-                        tag_message=commit_message,
+
+                    refs = list_repo_refs(
+                        self.config.neuron.model_name, repo_type="model"
                     )
+                    if epoch in [int(tag.name) for tag in refs.tags]:
+                        # Update tag for this version
+                        delete_tag(
+                            self.config.neuron.hf_repo_id,
+                            repo_type="model",
+                            tag=str(epoch),
+                        )
+                        create_tag(
+                            self.config.neuron.hf_repo_id,
+                            repo_type="model",
+                            tag=str(epoch),
+                            tag_message=commit_message,
+                        )
+                    else:
+                        # Create new tag for this version
+                        create_tag(
+                            self.config.neuron.hf_repo_id,
+                            repo_type="model",
+                            tag=str(epoch),
+                            tag_message=commit_message,
+                        )
 
                     bt.logging.info(
                         f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.hf_repo_id}"
