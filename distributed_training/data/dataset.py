@@ -14,188 +14,13 @@
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-
-import math
-import time
-import typing
-
-import bittensor as bt
-import requests
-import torch
-from torch.utils.data import IterableDataset
-from transformers import AutoTokenizer
-
-model_name = "distilgpt2"
-tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
-tokenizer.pad_token = tokenizer.eos_token
-
-
-# Modified version of https://github.com/RaoFoundation/pretraining/blob/main/pretrain/dataset.py
-class DataLoader(IterableDataset):
-    max_rows: int = 10_800_000
-
-    def __init__(
-        self, batch_size, sequence_length, rows: typing.List[int], tokenizer=tokenizer
-    ):
-        self.batch_size = batch_size
-        self.sequence_length = sequence_length
-        self.tokenizer = tokenizer
-        self.base_url = "https://datasets-server.huggingface.co/rows"
-        self.params = {
-            "dataset": "airtrain-ai/fineweb-edu-fortified",
-            "config": "CC-MAIN-2013-20",
-            "split": "train",
-        }
-        self.rows = rows
-        self.buffer = []
-        self.retry_limit = 10  # Number of retries
-        self.retry_delay = 5  # Seconds to wait between retries
-        self.fetch_data_for_page(min(self.rows), len(self.rows))
-
-        self.total_batches = len(self.buffer) // (
-            self.sequence_length * self.batch_size
-        )
-
-    def fetch_data_for_page(self, offset, length):
-        iterations = math.ceil(length / 100)
-        for iteration in range(iterations):
-            self.params["offset"] = offset + (iteration * 100)
-            self.params["length"] = min(100, length - (iteration * 100))
-            attempt = 0
-            while attempt < self.retry_limit:
-                try:
-                    response = requests.get(self.base_url, params=self.params)
-                    response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
-
-                    for row in response.json()["rows"]:
-                        content = row["row"]["text"]
-                        self.buffer += self.tokenizer(content, truncation=True)[
-                            "input_ids"
-                        ]
-                        self.buffer += [self.tokenizer.eos_token_id]
-                    break  # If the request was successful, break out of the retry loop
-                except requests.exceptions.RequestException:
-                    attempt += 1
-                    bt.logging.warning(
-                        f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
-                    )
-                    if attempt < self.retry_limit:
-                        time.sleep(self.retry_delay)  # Wait before the next retry
-                    else:
-                        bt.logging.error(
-                            "Maximum retry limit reached. Unable to fetch data."
-                        )
-                        raise
-
-    def __len__(self):
-        return self.total_batches
-
-    def __iter__(self):
-        while len(self.buffer) >= self.sequence_length * self.batch_size:
-            batch = []
-            label = []
-            for _ in range(self.batch_size):
-                if len(self.buffer[: self.sequence_length]) != self.sequence_length:
-                    batch.append(
-                        torch.tensor(
-                            self.buffer[: self.sequence_length]
-                            + (
-                                [self.tokenizer.eos_token_id]
-                                * (
-                                    self.sequence_length
-                                    - len(self.buffer[: self.sequence_length])
-                                )
-                            )
-                        )
-                    )
-                else:
-                    batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-
-                if len(self.buffer[: self.sequence_length]) != self.sequence_length:
-                    label.append(
-                        torch.tensor(
-                            self.buffer[1 : self.sequence_length + 1]
-                            + (
-                                [self.tokenizer.eos_token_id]
-                                * (
-                                    self.sequence_length
-                                    - len(self.buffer[1 : self.sequence_length + 1])
-                                )
-                            )
-                        )
-                    )
-                else:
-                    label.append(
-                        torch.tensor(self.buffer[1 : self.sequence_length + 1])
-                    )
-
-                self.buffer = self.buffer[self.sequence_length :]
-            yield torch.stack(batch), torch.stack(label)
-
-    def __next__(self):
-        batch = []
-        label = []
-        for _ in range(self.batch_size):
-            if len(self.buffer[: self.sequence_length]) != self.sequence_length:
-                batch.append(
-                    torch.tensor(
-                        self.buffer[: self.sequence_length]
-                        + (
-                            [self.tokenizer.eos_token_id]
-                            * (
-                                self.sequence_length
-                                - len(self.buffer[: self.sequence_length])
-                            )
-                        )
-                    )
-                )
-            else:
-                batch.append(torch.tensor(self.buffer[: self.sequence_length]))
-
-            if len(self.buffer[: self.sequence_length]) != self.sequence_length:
-                label.append(
-                    torch.tensor(
-                        self.buffer[1 : self.sequence_length + 1]
-                        + (
-                            [self.tokenizer.eos_token_id]
-                            * (
-                                self.sequence_length
-                                - len(self.buffer[1 : self.sequence_length + 1])
-                            )
-                        )
-                    )
-                )
-            else:
-                label.append(torch.tensor(self.buffer[1 : self.sequence_length + 1]))
-
-            self.buffer = self.buffer[self.sequence_length :]
-        yield torch.stack(batch), torch.stack(label)
-
-
-# The MIT License (MIT)
-# © 2024 templar.tech
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
-# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
-# the Software.
-
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-
-# Global imports
 import asyncio
 import random
 import typing
 
 import aiohttp
 import numpy as np
+import torch
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
 
@@ -219,19 +44,13 @@ class SubsetLoader(IterableDataset):
         self.num_pages = num_pages
         self.tokenizer = tokenizer
         self.pack_samples = pack_samples
-
         self.num_rows_per_page = 100
 
-        # Buffer to hold pages loaded from the api
+        # Buffers
         self.buffer = []
-
-        # Buffer to hold pages already loaded into a batch
         self.used_buffer = []
-
-        # Buffer to hold padded pages
         self.padded_buffer = []
-
-        self.lock = asyncio.Lock()  # For thread-safe operations
+        self.lock = asyncio.Lock()
 
     async def fetch_data_for_pages(self, pages):
         """
@@ -291,70 +110,98 @@ class SubsetLoader(IterableDataset):
                     raise
 
     def _get_pad_size(self, input_ids):
-        """
-        Get the number of tokens to be padded to the sample to match
-        the max allowed sequence length.
-        If sample packing is activated, then return 1
-        """
-
+        """Calculate padding size for a sequence"""
         if self.pack_samples:
             return 1
 
         sample_size = len(input_ids)
-
         remainder = sample_size % self.sequence_length
-        pad_size = self.sequence_length - remainder
-
-        # Apply modulo again to guarantee a pad size of 0 if remainder is 0
-        pad_size = pad_size % self.sequence_length
-
-        return pad_size
+        return self.sequence_length - remainder if remainder != 0 else 0
 
     def _refill_padded_buffer(self):
         """
-        This methods pulls one page from `self.buffer`, pads it and pushs
+        This methods pulls one page from `self.buffer`, pads it and pushes
         it to the `self.padded_buffer`.
         """
-
+        print(f"\n--- Starting _refill_padded_buffer ---")
+        print(f"Initial state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}")
+        
         while self.buffer and len(self.padded_buffer) < self.sequence_length:
-            input_ids = []
+            try:
+                # search for EOS token index and cut the buffer at it.
+                EOS_index = self.buffer.index(self.tokenizer.eos_token_id)
+                print(f"Found EOS token at index {EOS_index}")
+                
+                input_ids = self.buffer[: EOS_index + 1]
+                self.buffer = self.buffer[EOS_index + 1 :]
 
-            # search for EOS token index and cut the buffer at it.
-            EOS_index = self.buffer.index(self.tokenizer.eos_token_id)
-            input_ids = self.buffer[: EOS_index + 1]
-            self.buffer = self.buffer[EOS_index + 1 :]
+                self.used_buffer += input_ids
 
-            self.used_buffer += input_ids
+                # Add to padded buffer without the EOS token.
+                self.padded_buffer += input_ids[:-1]
 
-            # Add to padded buffer without the EOS token.
-            self.padded_buffer += input_ids[:-1]
+                # Calculate and apply padding
+                pad_size = self._get_pad_size(input_ids=input_ids[:-1])
+                print(f"Adding sequence of length {len(input_ids[:-1])} with padding {pad_size}")
+                
+                self.padded_buffer += [self.tokenizer.eos_token_id] * pad_size
+                
+            except ValueError:
+                print("No EOS token found in buffer!")
+                if len(self.buffer) > 0:
+                    print(f"Buffer content preview: {self.buffer[:10]}...")
+                break
+                
+        print(f"Final state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}")
+        print("--- Finished _refill_padded_buffer ---\n")
 
-            # Pad
-            self.padded_buffer += [self.tokenizer.eos_token_id] * self._get_pad_size(
-                input_ids=input_ids[:-1]
-            )
 
     def __iter__(self):
-        self.buffer = self.used_buffer + self.buffer
-        self.padded_buffer = []
-
-        # Pad and prepare one page for batching
-        self._refill_padded_buffer()
-
         return self
-
+    
     def __next__(self):
+        # Check if we have enough tokens for at least one batch
+        required_tokens = self.sequence_length * self.batch_size
+        if len(self.buffer) < required_tokens:
+            raise StopIteration
+
         batch = []
+        labels = []
+        
+        for i in range(self.batch_size):
+            # Get input sequence and pad if necessary
+            current_seq = self.buffer[:self.sequence_length]
+            current_seq_len = len(current_seq)
 
-        while len(self.padded_buffer) >= self.sequence_length:
-            batch.append(self.padded_buffer[: self.sequence_length])
-            self.padded_buffer = self.padded_buffer[self.sequence_length :]
-            self._refill_padded_buffer()
+            if current_seq_len != self.sequence_length:
+                input_seq = current_seq + [self.tokenizer.eos_token_id] * (
+                    self.sequence_length - current_seq_len
+                )
+            else:
+                input_seq = current_seq
+            
+            # Get label sequence (shifted by 1) and pad if necessary
+            label_seq_raw = self.buffer[1:self.sequence_length + 1]
+            label_seq_len = len(label_seq_raw)
+            
+            if label_seq_len != self.sequence_length:
+                label_seq = label_seq_raw + [self.tokenizer.eos_token_id] * (
+                    self.sequence_length - label_seq_len
+                )
+            else:
+                label_seq = label_seq_raw
 
-            if len(batch) == self.batch_size:
-                return np.stack(batch)
+            # Add to batch
+            batch.append(torch.tensor(input_seq))
+            labels.append(torch.tensor(label_seq))
 
-        raise StopIteration
+            # Move buffer forward
+            self.buffer = self.buffer[self.sequence_length:]
+
+        stacked_batch = torch.stack(batch)
+        stacked_labels = torch.stack(labels)
+                
+        return stacked_batch, stacked_labels
 
 
 class DatasetLoader(SubsetLoader):

@@ -423,8 +423,6 @@ class Miner(BaseMinerNeuron):
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
-
-                # Process the dataset
                 self._process_training_batch(dataset)
 
             except Exception as e:
@@ -446,18 +444,17 @@ class Miner(BaseMinerNeuron):
         LOGGING_INTERVAL = 5  # Log every 5 batches
         NUM_MICRO_BATCHES = TARGET_SAMPLES // MICRO_BATCH_SIZE
 
-        for batch in dataset:
+        for inputs, labels in dataset:
+        
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
-
-            input_ids = torch.tensor(batch).to(self.device)
-            labels = input_ids.clone()
-            labels = labels[:, 1:].contiguous()
-            input_ids = input_ids[:, :-1].contiguous()
+            
+            # Move to device
+            inputs, labels = inputs.to(self.device), labels.to(self.device)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                _, loss = self.model(input_ids=input_ids, labels=labels)
+                _, loss = self.model(input_ids=inputs, labels=labels)
                 scaled_loss = loss / NUM_MICRO_BATCHES
 
             scaled_loss.backward()
