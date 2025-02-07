@@ -104,6 +104,9 @@ class Miner(BaseMinerNeuron):
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
 
+        # DHT initialization
+        init_dht(self)
+
         # Progress tracking initialization
         self.local_progress = LocalTrainingProgress(
             peer_id=self.dht.peer_id.to_bytes(),
@@ -116,6 +119,12 @@ class Miner(BaseMinerNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = get_local_epoch(self)
+
+        # Wandb initialization if enabled
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb = load_wandb(
+                self, self.config, self.wallet, "miner", str(self.dht.peer_id)
+            )
 
         if self.global_progress.epoch is None:
             bt.logging.error(
@@ -184,11 +193,20 @@ class Miner(BaseMinerNeuron):
         )
         cleanup_old_cache(self)
 
+        # Initialize thread pool for background uploads
+        self.upload_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="model_upload"
+        )
+        self.current_upload_future = None
+
         # Load state if
         if (self.local_progress.epoch is None) or (
             self.local_progress.epoch != self.global_progress.epoch
         ):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
+            self.start_background_upload(
+                epoch=self.global_progress.epoch, inner_step=0, batch_size=0
+            )
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -196,26 +214,6 @@ class Miner(BaseMinerNeuron):
             self.grad_averager,
             self.state_averager,
         )
-
-        # Initialize thread pool for background uploads
-        self.upload_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="model_upload"
-        )
-        self.current_upload_future = None
-
-    def _init_network_components(self):
-        """Initialize network and DHT-related components."""
-        # DHT initialization
-        init_dht(self)
-
-        # UID to PeerID mapping
-        self.uids_to_peerids = {uid: None for uid in self.metagraph.uids.tolist()}
-
-        # Wandb initialization if enabled
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(
-                self, self.config, self.wallet, "miner", str(self.dht.peer_id)
-            )
 
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""

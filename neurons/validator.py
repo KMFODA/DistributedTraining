@@ -34,7 +34,6 @@ from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     AsyncDendritePool,
-    get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
@@ -42,10 +41,10 @@ from distributed_training.utils.misc import (
 from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
-    update_global_tracker_state,
+    get_global_epoch,
+    get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
-    ModelLoadingManager,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
@@ -132,8 +131,8 @@ class Validator(BaseValidatorNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        update_global_tracker_state(self)
-        self.local_progress.epoch = self.global_progress.epoch
+        self.global_progress.epoch = get_global_epoch(self)
+        self.local_progress.epoch = get_local_epoch(self)
 
         # Init Wandb
         if not self.config.neuron.dont_wandb_log:
