@@ -6,10 +6,10 @@ import bittensor as bt
 import distributed_training
 import numpy as np
 import torch
+from distributed_training.averaging.exceptions import AllReduceError, ModelStateError
 from distributed_training.protocol import AllReduce
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.utils.state_loader import load_state_from_peer
-from exceptions import AllReduceError, ModelStateError
 
 
 class AveragingHandler:
