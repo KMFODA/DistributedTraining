@@ -55,7 +55,6 @@ class AveragingHandler:
         self.model = model
         self.grad_averager = grad_averager
         self.state_averager = state_averager
-        self.model_loading_manager = model_loading_manager
 
     def _get_weights_sample(self) -> List[float]:
         """Get a sample of model weights for validation."""
@@ -78,7 +77,6 @@ class AveragingHandler:
         dendrite_pool,
         peerids_to_uids,
         miner_uids,
-        epoch,
         bandwidth=None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -296,13 +294,6 @@ class AveragingHandler:
 
         return scores, event
 
-    @staticmethod
-    async def _wait_for_model_loading(model_loading_manager):
-        """Wait for any ongoing model loading to complete."""
-        if model_loading_manager:
-            while model_loading_manager.is_loading:
-                await asyncio.sleep(1)
-
     async def run_miner_allreduce(
         self,
         synapse,
@@ -310,11 +301,6 @@ class AveragingHandler:
         bandwidth=None,
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
-        await self._wait_for_model_loading(self.model_loading_manager)
-
-        if self.model_loading_manager:
-            self.model_loading_manager.set_loading_state(True)
-
         try:
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)

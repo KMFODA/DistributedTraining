@@ -8,6 +8,7 @@ from typing import List
 import bittensor as bt
 import distributed_training
 import numpy as np
+from bittensor.core.chain_data import decode_account_id
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 
@@ -318,6 +319,13 @@ def map_uid_to_peerid_background_task(self):
     bt.logging.info("Exiting update models loop.")
 
 
+def decode_metadata(encoded_ss58: tuple, metadata: dict) -> tuple[str, str]:
+    decoded_key = decode_account_id(encoded_ss58[0])
+    commitment = metadata["info"]["fields"][0][0]
+    bytes_tuple = commitment[next(iter(commitment.keys()))][0]
+    return decoded_key, bytes(bytes_tuple).decode()
+
+
 def map_uid_to_peerid(self):
     subtensor = bt.subtensor(config=self.config)
     result = subtensor.substrate.query_map(
@@ -330,25 +338,14 @@ def map_uid_to_peerid(self):
     hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
 
     for key, value in result:
-        hotkey = key.value
-        if hotkey not in hotkey_to_uid:
-            continue
-
-        uid = hotkey_to_uid[hotkey]
-        commitment_info = value.value.get("info", {})
-        fields = commitment_info.get("fields", [])
-        last_updated_block = value.value.get("block", None)
-
-        if not fields or not isinstance(fields[0], dict):
-            continue
-
-        field_value = next(iter(fields[0].values()))
-        if field_value.startswith("0x"):
-            field_value = field_value[2:]
-
         try:
-            concatenated = bytes.fromhex(field_value).decode("utf-8").strip()
-            concatenated = eval(concatenated)
+            hotkey, metadata = decode_metadata(key, value.value)
+            if hotkey not in hotkey_to_uid:
+                continue
+
+            uid = hotkey_to_uid[hotkey]
+            last_updated_block = value.value.get("block", None)
+            concatenated = eval(metadata)
 
             if "peer_id" not in concatenated:
                 bt.logging.info(
@@ -363,7 +360,7 @@ def map_uid_to_peerid(self):
                 uid_peerid_metadata = [
                     metadata["peer_id"]
                     for key, metadata in self.uid_metadata_tracker.items()
-                    if key != 0
+                    if key != uid
                 ]
                 if concatenated["peer_id"] not in uid_peerid_metadata:
                     self.uid_metadata_tracker[uid]["peer_id"] = concatenated["peer_id"]
@@ -407,7 +404,7 @@ def map_uid_to_peerid(self):
                 uid_peerid_metadata = [
                     metadata["model_huggingface_id"]
                     for key, metadata in self.uid_metadata_tracker.items()
-                    if key != 0
+                    if key != uid
                 ]
                 if concatenated["model_huggingface_id"] not in uid_peerid_metadata:
                     self.uid_metadata_tracker[uid][

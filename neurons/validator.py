@@ -31,7 +31,6 @@ from bitarray import bitarray
 from bitsandbytes.cextension import lib
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
-from distributed_training.data.dataset import DataLoader
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
     AsyncDendritePool,
@@ -142,10 +141,6 @@ class Validator(BaseValidatorNeuron):
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
 
-        # Init Dataset
-        dataset_length = DataLoader.max_rows
-        self.dataset_indices = bitarray(dataset_length)
-
         # Init Device
         self.device = self.config.neuron.device
 
@@ -161,18 +156,10 @@ class Validator(BaseValidatorNeuron):
         self.average_loss = None
 
         # Init Model, Optimizer & Gradient Averager & Clear Cache
-        load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+        load_model_optimizer_gradient_averager(
+            self, self.config.neuron.model_name, self.global_progress.epoch
+        )
         cleanup_old_cache(self)
-
-        # Select test layers
-        self.test_layer_indices = [
-            i
-            for i, layer in enumerate(self.model.parameters())
-            if len(layer.size()) == 1
-        ]
-
-        # Init model loading manager
-        self.model_loading_manager = ModelLoadingManager()
 
         # Load state if needed
         if self.local_progress.epoch < self.global_progress.epoch:
@@ -183,7 +170,6 @@ class Validator(BaseValidatorNeuron):
             self.model,
             self.grad_averager,
             self.state_averager,
-            self.model_loading_manager,
         )
 
     def _init_network_components(self):

@@ -124,14 +124,16 @@ class SubsetLoader(IterableDataset):
         it to the `self.padded_buffer`.
         """
         print(f"\n--- Starting _refill_padded_buffer ---")
-        print(f"Initial state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}")
-        
+        print(
+            f"Initial state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}"
+        )
+
         while self.buffer and len(self.padded_buffer) < self.sequence_length:
             try:
                 # search for EOS token index and cut the buffer at it.
                 EOS_index = self.buffer.index(self.tokenizer.eos_token_id)
                 print(f"Found EOS token at index {EOS_index}")
-                
+
                 input_ids = self.buffer[: EOS_index + 1]
                 self.buffer = self.buffer[EOS_index + 1 :]
 
@@ -142,23 +144,26 @@ class SubsetLoader(IterableDataset):
 
                 # Calculate and apply padding
                 pad_size = self._get_pad_size(input_ids=input_ids[:-1])
-                print(f"Adding sequence of length {len(input_ids[:-1])} with padding {pad_size}")
-                
+                print(
+                    f"Adding sequence of length {len(input_ids[:-1])} with padding {pad_size}"
+                )
+
                 self.padded_buffer += [self.tokenizer.eos_token_id] * pad_size
-                
+
             except ValueError:
                 print("No EOS token found in buffer!")
                 if len(self.buffer) > 0:
                     print(f"Buffer content preview: {self.buffer[:10]}...")
                 break
-                
-        print(f"Final state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}")
-        print("--- Finished _refill_padded_buffer ---\n")
 
+        print(
+            f"Final state: buffer size={len(self.buffer)}, padded_buffer size={len(self.padded_buffer)}"
+        )
+        print("--- Finished _refill_padded_buffer ---\n")
 
     def __iter__(self):
         return self
-    
+
     def __next__(self):
         # Check if we have enough tokens for at least one batch
         required_tokens = self.sequence_length * self.batch_size
@@ -167,10 +172,10 @@ class SubsetLoader(IterableDataset):
 
         batch = []
         labels = []
-        
+
         for i in range(self.batch_size):
             # Get input sequence and pad if necessary
-            current_seq = self.buffer[:self.sequence_length]
+            current_seq = self.buffer[: self.sequence_length]
             current_seq_len = len(current_seq)
 
             if current_seq_len != self.sequence_length:
@@ -179,11 +184,11 @@ class SubsetLoader(IterableDataset):
                 )
             else:
                 input_seq = current_seq
-            
+
             # Get label sequence (shifted by 1) and pad if necessary
-            label_seq_raw = self.buffer[1:self.sequence_length + 1]
+            label_seq_raw = self.buffer[1 : self.sequence_length + 1]
             label_seq_len = len(label_seq_raw)
-            
+
             if label_seq_len != self.sequence_length:
                 label_seq = label_seq_raw + [self.tokenizer.eos_token_id] * (
                     self.sequence_length - label_seq_len
@@ -196,11 +201,11 @@ class SubsetLoader(IterableDataset):
             labels.append(torch.tensor(label_seq))
 
             # Move buffer forward
-            self.buffer = self.buffer[self.sequence_length:]
+            self.buffer = self.buffer[self.sequence_length :]
 
         stacked_batch = torch.stack(batch)
         stacked_labels = torch.stack(labels)
-                
+
         return stacked_batch, stacked_labels
 
 

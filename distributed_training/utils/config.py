@@ -147,7 +147,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.blocks_per_allreduce",
         type=int,
         help="Amount of blocks between each all reduce",
-        default=30,
+        default=3600,
     )
 
     parser.add_argument(
@@ -161,7 +161,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
-        default="distributed/optimized-gpt2-1b-vtestnet",
+        default="distributed/optimized-gpt2-1b",
     )
 
     parser.add_argument(

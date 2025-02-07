@@ -39,7 +39,7 @@ class ModelLoadingManager:
                 self._last_loaded_epoch = epoch
 
 
-def load_model_optimizer_gradient_averager(self, epoch):
+def load_model_optimizer_gradient_averager(self, model_name, epoch):
     bt.logging.info(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
@@ -64,12 +64,10 @@ def load_model_optimizer_gradient_averager(self, epoch):
     # Load a new model
     self.model = (
         AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name, revision=str(epoch), trust_remote_code=True
+            model_name, revision=str(epoch), trust_remote_code=True
         )
         if epoch
-        else AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name, trust_remote_code=True
-        )
+        else AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
     )
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
@@ -96,7 +94,7 @@ def load_model_optimizer_gradient_averager(self, epoch):
     try:
         optimizer_state = torch.load(
             hf_hub_download(
-                repo_id=self.config.neuron.model_name,
+                repo_id=model_name,
                 filename="optimizer.pt",
                 revision=str(epoch),
             ),
@@ -207,16 +205,6 @@ def load_model_optimizer_gradient_averager(self, epoch):
 
 
 def load_state_from_peer(self, epoch=None):
-    # Skip if we're already loading or if we've already loaded this epoch
-    if self.model_loading_manager.is_loading:
-        bt.logging.info(
-            "Model loading already in progress. Skipping load_state_from_peer."
-        )
-        return False
-
-    # Set loading state
-    self.model_loading_manager.set_loading_state(True, epoch)
-
     try:
         state_loaded = False
         if epoch is None:
@@ -242,7 +230,9 @@ def load_state_from_peer(self, epoch=None):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    load_model_optimizer_gradient_averager(self, epoch)
+                    load_model_optimizer_gradient_averager(
+                        self, self.config.neuron.model_name, epoch
+                    )
                     break
 
                 except Exception as e:
@@ -276,16 +266,10 @@ def load_state_from_peer(self, epoch=None):
         else:
             bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
 
-        if state_loaded:
-            self.model_loading_manager.set_loading_state(False, epoch)
-        else:
-            self.model_loading_manager.set_loading_state(False, None)
-
         return state_loaded
 
     except Exception as e:
         bt.logging.error(f"Error loading state: {str(e)}")
-        self.model_loading_manager.set_loading_state(False, None)
         return False
 
 

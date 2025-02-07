@@ -46,7 +46,7 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
-    update_global_tracker_state,
+    get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
@@ -54,7 +54,7 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-from huggingface_hub import create_repo, repo_exists, upload_folder
+from huggingface_hub import create_repo, create_tag, repo_exists, upload_folder
 from transformers import AutoTokenizer
 
 # GPU optimizations.
@@ -90,11 +90,9 @@ class Miner(BaseMinerNeuron):
                 self.config.neuron.wandb_project + "_validators"
             )
 
-        self._init_network_components()
         self._init_basic_components()
         self._init_model_components()
-
-        # self._init_background_tasks() # TODO Remove or use??
+        self._init_network_components()
 
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
@@ -116,8 +114,8 @@ class Miner(BaseMinerNeuron):
             client_mode=False,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        update_global_tracker_state(self)
-        self.local_progress.epoch = self.global_progress.epoch
+        self.global_progress.epoch = get_global_epoch(self)
+        self.local_progress.epoch = get_local_epoch(self)
 
         if self.global_progress.epoch is None:
             bt.logging.error(
@@ -154,6 +152,13 @@ class Miner(BaseMinerNeuron):
         self.training_error = None
         self.training_thread = None
 
+    def _init_network_components(self):
+        """Initialize network and P2P components"""
+
+        # Log PeerID to chain
+        bt.logging.info("Logging PeerID to chain")
+        log_peerid_to_chain(self)
+
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
         # Tokenizer setup
@@ -174,14 +179,15 @@ class Miner(BaseMinerNeuron):
         self.model_upload_retry_delay = 6
 
         # Initialize model and its components
-        self.model_loading_manager = (
-            ModelLoadingManager()
-        )  # TODO We dont need this anymore, right?
-        load_model_optimizer_gradient_averager(self, self.global_progress.epoch)
+        load_model_optimizer_gradient_averager(
+            self, self.config.neuron.hf_repo_id, self.local_progress.epoch
+        )
         cleanup_old_cache(self)
 
-        # Load initial state if needed # TODO This check should see if after loading states we are still on the same epoch
-        if self.local_progress.epoch != self.global_progress.epoch:
+        # Load state if
+        if (self.local_progress.epoch is None) or (
+            self.local_progress.epoch != self.global_progress.epoch
+        ):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
         # Initialize AveragingHandler for allreduce
@@ -189,7 +195,6 @@ class Miner(BaseMinerNeuron):
             self.model,
             self.grad_averager,
             self.state_averager,
-            self.model_loading_manager,
         )
 
         # Initialize thread pool for background uploads
@@ -212,18 +217,7 @@ class Miner(BaseMinerNeuron):
                 self, self.config, self.wallet, "miner", str(self.dht.peer_id)
             )
 
-        # Log PeerID to chain
-        bt.logging.info("Logging PeerID to chain")
-        log_peerid_to_chain(self)
-
-    def _init_background_tasks(self):
-        """Initialize and start background tasks."""
-        self.update_model_thread = threading.Thread(
-            target=self.load_latest_model, daemon=True
-        )
-        self.update_model_thread.start()
-
-    def upload_model(self, epoch, batch_size):
+    def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
 
         if not repo_exists(self.config.neuron.hf_repo_id, repo_type="model"):
@@ -252,12 +246,19 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(
                         f"Uploading model and optimizer states to repo: {self.config.neuron.hf_repo_id}"
                     )
-                    commit_message = f"Block {epoch}. Batch Size {batch_size}."
+                    commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
                     upload_folder(
                         folder_path=tmp_folder,
                         repo_id=self.config.neuron.hf_repo_id,
                         repo_type="model",
                         commit_message=commit_message,
+                    )
+                    # Create a tag for this version
+                    create_tag(
+                        self.config.neuron.hf_repo_id,
+                        repo_type="model",
+                        tag=str(epoch),
+                        tag_message=commit_message,
                     )
 
                     bt.logging.info(
@@ -279,7 +280,7 @@ class Miner(BaseMinerNeuron):
                     raise
         return False
 
-    def start_background_upload(self, epoch, batch_size):
+    def start_background_upload(self, epoch, inner_step, batch_size):
         """Starts a background upload of the model state, managing ongoing uploads."""
         # If there's an ongoing upload, check if it's done
         if self.current_upload_future and not self.current_upload_future.done():
@@ -288,7 +289,7 @@ class Miner(BaseMinerNeuron):
 
         # Start new upload
         self.current_upload_future = self.upload_executor.submit(
-            self.upload_model, epoch, batch_size
+            self.upload_model, epoch, inner_step, batch_size
         )
 
         # Optional: Add callback to handle completion
@@ -300,48 +301,6 @@ class Miner(BaseMinerNeuron):
                 bt.logging.error(f"Validation state upload failed: {str(e)}")
 
         self.current_upload_future.add_done_callback(upload_completed)
-
-    def load_latest_model(self):
-        while not self.stop_event.is_set():
-            # Skip checking if we're currently loading
-            if (self.model_loading_manager.is_loading) or (
-                hasattr(self, "model") is False
-            ):
-                time.sleep(5)  # Short sleep before checking again
-                continue
-
-            self.global_progress.epoch = get_global_epoch(self)
-
-            if self.global_progress.epoch is None:
-                time.sleep(30)
-                continue
-
-            if (
-                self.global_progress.epoch
-                == self.model_loading_manager.last_loaded_epoch
-                and self.global_progress.epoch == self.local_progress.epoch
-            ):
-                time.sleep(30)
-                continue
-
-            needs_update = (
-                self.local_progress.epoch < self.global_progress.epoch
-                or sum(
-                    np.isnan(
-                        [layer for layer in self.model.parameters()][-2][-10:].tolist()
-                    )
-                )
-                > 1
-            )
-
-            if needs_update:
-                bt.logging.info(
-                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-                )
-                if not self.model_loading_manager.is_loading:
-                    load_state_from_peer(self, epoch=self.global_progress.epoch)
-            else:
-                time.sleep(30)
 
     def get_miner_info(self):
         return {
@@ -445,11 +404,10 @@ class Miner(BaseMinerNeuron):
         NUM_MICRO_BATCHES = TARGET_SAMPLES // MICRO_BATCH_SIZE
 
         for inputs, labels in dataset:
-        
             if not self.training_active.is_set():
                 self.inner_optimizer.zero_grad()
                 break
-            
+
             # Move to device
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
@@ -479,9 +437,10 @@ class Miner(BaseMinerNeuron):
                 self.inner_step_counter += 1
 
                 # Periodic model upload
-                if self.inner_step_counter % 20 == 0:
+                if self.inner_step_counter % 5 == 0:
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
+                        inner_step=self.inner_step_counter,
                         batch_size=total_samples_processed,
                     )
 
@@ -511,11 +470,9 @@ class Miner(BaseMinerNeuron):
                         synapse, self.local_progress
                     )
                     if not synapse.completion:
-                        self.model_loading_manager.set_loading_state(False)
                         self.global_progress.epoch = get_global_epoch(self)
                         load_state_from_peer(self, epoch=self.global_progress.epoch)
                 except Exception:
-                    self.model_loading_manager.set_loading_state(False)
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
                 self.inner_step_counter = 0

@@ -2,10 +2,11 @@ from dataclasses import dataclass
 
 import bittensor as bt
 import pandas as pd
-import wandb
 from huggingface_hub import list_repo_refs
 from pydantic import BaseModel, StrictBool, StrictFloat, confloat, conint
 from tqdm import tqdm
+
+import wandb
 
 
 @dataclass(frozen=False)
@@ -30,6 +31,16 @@ def get_global_epoch(self):
         return global_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_global_epoch: {str(e)}")
+        return None
+
+
+def get_local_epoch(self):
+    try:
+        refs = list_repo_refs(self.config.neuron.hf_repo_id, repo_type="model")
+        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        return global_epoch
+    except Exception as e:
+        bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
         return None
 
 
