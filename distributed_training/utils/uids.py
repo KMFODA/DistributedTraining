@@ -62,7 +62,7 @@ async def check_uid_availability(
 
     # Filter validator permit > 1024 stake.
     if metagraph.validator_permit[uid]:
-        if metagraph.S[uid].tao > vpermit_tao_limit:
+        if metagraph.S[uid] > vpermit_tao_limit:
             return False
 
     # Filter for miners that are processing other responses

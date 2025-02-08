@@ -253,6 +253,9 @@ class AveragingHandler:
                 scores[str_uid] = 0.0
                 status_dict[str_uid] = "NON_PARTICIPATING"
 
+        # Create rewards tesnor
+        rewards = torch.tesnor([reward for reward in scores.values()])
+
         # Log participation and scoring details
         bt.logging.info(f"Failed UIDs: {failed_uids}")
         bt.logging.info(f"Participating UIDs: {participating_uids}")
@@ -261,8 +264,9 @@ class AveragingHandler:
         if bandwidths is not None:
             bt.logging.info(f"Bandwidths by UID: {uid_bandwidths}")
         bt.logging.info(f"AllReduce UID Scores: {scores}")
+        bt.logging.info(f"AllReduce UID Rewards: {rewards}")
 
-        return scores, event
+        return rewards, event
 
     async def run_miner_allreduce(
         self,

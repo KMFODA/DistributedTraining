@@ -20,6 +20,7 @@ import random
 import time
 
 import bittensor as bt
+import numpy as np
 import torch
 from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
@@ -66,66 +67,26 @@ async def forward(self):
         }
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
-            try:
-                sample_size = int(self.metagraph.n)
+            sample_size = int(self.metagraph.n)
 
-                # Get active miners
-                while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
-                    bt.logging.info(
-                        f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids) - 1} more UIDs."
-                    )
-                    self.miner_uids = await get_random_uids(
-                        self,
-                        dendrite=self.dendrite,
-                        k=sample_size,
-                        epoch=self.local_progress.epoch if all_reduce else None,
-                    )
-
-                self.event.update({"UIDs": self.miner_uids})
-                bt.logging.info(f"UIDs:  {self.miner_uids}")
-
-                (
-                    all_reduce_success_status,
-                    results,
-                ) = await self.avg_handler.run_validator_allreduce(
-                    timeout=self.allreduce_timeout,
-                    dendrite_pool=self.dendrite_pool,
-                    peerids_to_uids=self.peerids_to_uids,
-                    miner_uids=self.miner_uids,
-                    # bandwidth=self.bandwidth,
-                    epoch=self.global_progress.epoch,
+            # Get active miners
+            while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
+                bt.logging.info(
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids) - 1} more UIDs."
                 )
-                if all_reduce_success_status:
-                    # Update scoring based on allreduce participation
-                    (
-                        self.allreduce_scores,
-                        self.event,
-                    ) = self.avg_handler.calculate_allreduce_scores(
-                        participating_peers=results["participating_peers"],
-                        failed_peers=results["failed_peers"],
-                        modes=results["modes"],
-                        bandwidths=results["bandwidths"],
-                        peerids_to_uids=self.peerids_to_uids,
-                        event=self.event,
-                        metagraph=self.metagraph,
-                    )
-                    # Update state after successful allreduce
-                    self.local_progress.epoch += 1
-                    self.local_progress.samples_accumulated = 0
-                    # Upload new state
-                    self.upload_new_state(
-                        epoch=self.local_progress.epoch,
-                        results=results,
-                    )
-                else:
-                    raise GradientAveragingError("Unsuccessful all reduce step")
+                self.miner_uids = await get_random_uids(
+                    self,
+                    dendrite=self.dendrite,
+                    k=sample_size,
+                    epoch=self.local_progress.epoch if all_reduce else None,
+                )
 
-            except Exception as e:
-                bt.logging.error(f"AllReduce failed: {e}")
-                self.global_progress.epoch = get_global_epoch(self)
-                load_state_from_peer(self, epoch=self.global_progress.epoch)
+        self.miner_uids = np.array([n for n in range(self.metagraph.n)])
+        self.event.update({"UIDs": self.miner_uids})
+        bt.logging.info(f"UIDs:  {self.miner_uids}")
 
-        else:
+        try:
+            self.miner_uids = np.array([n for n in range(self.metagraph.n)])
             # Non-master validators participate in AllReduce to help spread the load and update local model
             (
                 all_reduce_success_status,
@@ -135,8 +96,6 @@ async def forward(self):
                 dendrite_pool=self.dendrite_pool,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
-                # bandwidth=self.bandwidth,
-                epoch=self.global_progress.epoch,
             )
             if all_reduce_success_status:
                 # Update scoring based on allreduce participation
@@ -155,6 +114,14 @@ async def forward(self):
                 # Update state after successful allreduce
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
+            else:
+                raise GradientAveragingError("Unsuccessful AllReduce Step")
+
+        except Exception as e:
+            bt.logging.error(f"AllReduce Failed: {e}")
+            self.global_progress.epoch = get_global_epoch(self)
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
+            return
 
         # TODO Re-introduce bandwidth scoring
     else:
