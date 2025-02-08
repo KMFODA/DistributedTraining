@@ -22,6 +22,8 @@ class LocalTrainingProgress(BaseModel):
     samples_per_second: confloat(ge=0.0, strict=True)
     time: StrictFloat
     client_mode: StrictBool
+    inner_step: conint(ge=0, strict=True)
+    loss: confloat(ge=0.0, strict=True)
 
 
 def get_global_epoch(self):

@@ -120,6 +120,8 @@ class Miner(BaseMinerNeuron):
             samples_per_second=0.0,
             time=0.0,
             client_mode=False,
+            inner_step=0,
+            loss=0.0,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
@@ -186,7 +188,6 @@ class Miner(BaseMinerNeuron):
         self.allreduce_timeout = 360
         self.num_inner_steps = 500
         self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
-        self.inner_step_counter = 0
 
         # Model loading settings
         self.model_upload_retry_limit = 3
@@ -196,7 +197,7 @@ class Miner(BaseMinerNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.hf_repo_id, self.local_progress.epoch
         )
-        cleanup_old_cache(self)
+        cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id)
 
         # Initialize thread pool for background uploads
         self.upload_executor = ThreadPoolExecutor(
@@ -218,6 +219,17 @@ class Miner(BaseMinerNeuron):
             self.model,
             self.grad_averager,
             self.state_averager,
+        )
+
+        # Init training parameters
+        self.local_batch_size_train = self.config.neuron.local_batch_size_train
+        self.local_batch_size_train_effective = (
+            self.config.neuron.local_batch_size_train_effective
+        )
+        self.logging_interval = 5
+        self.number_of_local_steps = (
+            self.config.neuron.local_batch_size_train_effective
+            // self.config.neuron.local_batch_size_train
         )
 
     def upload_model(self, epoch, inner_step, batch_size):
@@ -244,6 +256,7 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(
                         f":memory: Saving model state locally for epoch {epoch}"
                     )
+                    self.model.config.inner_step = self.local_progress.inner_step
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
@@ -281,6 +294,13 @@ class Miner(BaseMinerNeuron):
                             tag=str(epoch),
                             tag_message=commit_message,
                         )
+
+                    # Cleanup old cache
+                    cleanup_old_cache(
+                        self,
+                        repo_id=self.config.neuron.hf_repo_id,
+                        current_revision=None,
+                    )
 
                     bt.logging.info(
                         f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.hf_repo_id}"
@@ -415,14 +435,6 @@ class Miner(BaseMinerNeuron):
 
     def _process_training_batch(self, dataset):
         """Process a single training batch"""
-        running_loss = getattr(self, "_running_loss", 0)
-        num_batches_processed = getattr(self, "_num_batches", 0)
-        total_samples_processed = getattr(self, "_total_samples", 0)
-
-        MICRO_BATCH_SIZE = self.config.neuron.local_batch_size_train
-        TARGET_SAMPLES = self.config.neuron.grad_accum_steps  # 512
-        LOGGING_INTERVAL = 5  # Log every 5 batches
-        NUM_MICRO_BATCHES = TARGET_SAMPLES // MICRO_BATCH_SIZE
 
         for inputs, labels in dataset:
             if not self.training_active.is_set():
@@ -434,44 +446,48 @@ class Miner(BaseMinerNeuron):
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=inputs, labels=labels)
-                scaled_loss = loss / NUM_MICRO_BATCHES
+                scaled_loss = loss / self.number_of_local_steps
+                self.local_progress.loss = loss.item()
 
             scaled_loss.backward()
 
-            running_loss += loss.detach().item()
-            num_batches_processed += 1
-            total_samples_processed += MICRO_BATCH_SIZE
+            self.local_progress.samples_accumulated += self.local_batch_size_train
+            self.local_progress.samples_accumulated += self.local_batch_size_train
 
-            if num_batches_processed % LOGGING_INTERVAL == 0:
-                average_loss = running_loss / num_batches_processed
+            if (
+                self.local_progress.samples_accumulated
+                % (self.logging_interval * self.local_batch_size_train)
+                == 0
+            ):
                 bt.logging.info(
-                    f":training: Inner Step: {self.inner_step_counter} | "
-                    f"Average Loss: {average_loss:.4f} | "
-                    f"Micro Batches: [{total_samples_processed}/{TARGET_SAMPLES}]"
+                    f":training: Outer Step: {self.local_progress.epoch} | "
+                    f"Inner Step: {self.local_progress.inner_step} | "
+                    f"Average Loss: {self.local_progress.loss:.4f} | "
+                    f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
                 )
 
-            if total_samples_processed >= TARGET_SAMPLES:
-                self.local_progress.samples_accumulated += total_samples_processed
+            if (
+                self.local_progress.samples_accumulated
+                >= self.local_batch_size_train_effective
+            ):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
-                self.inner_step_counter += 1
+                self.local_progress.inner_step += 1
 
                 # Periodic model upload
-                if self.inner_step_counter % 5 == 0:
+                if self.local_progress.inner_step % 5 == 0:
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
-                        inner_step=self.inner_step_counter,
-                        batch_size=total_samples_processed,
+                        inner_step=self.local_progress.inner_step,
+                        batch_size=self.local_progress.samples_accumulated,
                     )
 
-                running_loss = 0
-                num_batches_processed = 0
-                total_samples_processed = 0
+                # if self.local_progress.inner_step % 5:
+                #     self.loop = asyncio.new_event_loop()
+                #     self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1)))
 
-        self._running_loss = running_loss
-        self._num_batches = num_batches_processed
-        self._total_samples = total_samples_processed
+                self.local_progress.samples_accumulated = 0
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -496,7 +512,6 @@ class Miner(BaseMinerNeuron):
                 except Exception:
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
-                self.inner_step_counter = 0
                 bt.logging.debug("Reset inner step counter after AllReduce")
 
                 return synapse

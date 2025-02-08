@@ -72,6 +72,11 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
     self.model.config.block_list = []
+    self.local_progress.inner_step = (
+        self.model.config.inner_step
+        if "inner_step" in self.model.config.__dict__
+        else 0
+    )
 
     # Delete any historic model references in GlobalOptimManager
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
@@ -254,6 +259,7 @@ def load_state_from_peer(self, epoch=None):
             bt.logging.info(new_model_weights_sample)
 
             self.local_progress.epoch = self.global_progress.epoch
+            self.local_progress.inner_step = 0
             self.local_progress.samples_accumulated = 0
             bt.logging.info(f"New Model Tag: {self.global_progress.epoch}")
 
@@ -308,7 +314,7 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
             break
 
 
-def save_and_upload_state(self, epoch, results):
+def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
     """Unified function to save and upload both model and optimizer state"""
     batch_size = sum(
         [result for result in results[1]["gathered"].values() if result is not None]
@@ -322,6 +328,8 @@ def save_and_upload_state(self, epoch, results):
                 bt.logging.info(
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
+                if block is not None:
+                    self.model.config.last_allreduce_block = block
                 self.model.save_pretrained(tmp_folder)
                 # Save optimizer state
                 optimizer_state = {

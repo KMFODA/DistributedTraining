@@ -151,13 +151,6 @@ def add_args(cls, parser, prefix=None):
     )
 
     parser.add_argument(
-        "--neuron.grad_accum_steps",
-        type=int,
-        help="Amount of micro batches for gradient accumulation",
-        default=512,
-    )
-
-    parser.add_argument(
         "--neuron.model_name",
         type=str,
         help="The model to be trained",
@@ -197,6 +190,13 @@ def add_args(cls, parser, prefix=None):
         type=int,
         help="The hivemind global target_batch_size",
         default=35200,
+    )
+
+    parser.add_argument(
+        "--neuron.local_batch_size_train_effective",
+        type=int,
+        help="Amount of micro batches for gradient accumulation",
+        default=512,
     )
 
     parser.add_argument(

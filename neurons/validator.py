@@ -129,6 +129,8 @@ class Validator(BaseValidatorNeuron):
             samples_per_second=0.0,
             time=0.0,
             client_mode=False,
+            inner_step=0,
+            loss=0.0,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
@@ -208,10 +210,15 @@ class Validator(BaseValidatorNeuron):
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
 
-        # Init last_allreduce_block to current block
-        # TODO This can be done by pushing the block alongside the global model uplod on the validator side.
-        # TODO This way all new validators can now which block the all_reduce ended on and which block training restarted on.
-        self.last_allreduce_block = self.block
+        # Init last_allreduce_block to current block if on the master_uid
+        # else init last_allreduce from the HF model configs
+
+        if (self.uid == self.master_uid) or (
+            "last_allreduce_block" not in self.model.config.__dict__
+        ):
+            self.last_allreduce_block = self.block
+        else:
+            self.last_allreduce_block = self.model.config.last_allreduce_block
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):
@@ -253,8 +260,8 @@ class Validator(BaseValidatorNeuron):
             "emissions": self.metagraph.emission[self.uid],
         }
 
-    def upload_new_state(self, epoch: int, results: dict):
-        status = save_and_upload_state(self, epoch, results)
+    def upload_new_state(self, epoch: int, results: dict, block: int = None):
+        status = save_and_upload_state(self, epoch, results, block)
         return status
 
     async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
