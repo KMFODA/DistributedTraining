@@ -32,13 +32,12 @@ import bittensor as bt
 import hivemind
 import speedtest
 from bittensor.utils.btlogging import format
-from distributed_training.protocol import AllReduce
 from dotenv import load_dotenv
 from hivemind import utils
 from hivemind.utils.logging import use_hivemind_log_handler
-from loguru import logger as bt_logger
 
 import wandb
+from distributed_training.protocol import AllReduce
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -200,7 +199,7 @@ class BittensorLogHandler(logging.Handler):
             self.handleError(record)
 
 
-def logging_filter(record):
+def hive_log_filter(record):
     if (
         (record.name != "hivemind.dht.protocol")
         and (record.name != "hivemind.optim.progress_tracker")
@@ -234,6 +233,7 @@ def setup_logging(
             ":wait:": "⏳",
             ":clock:": "⏱️",
             ":signal:": "📶",
+            ":upload:": "🔼",
             ":broadcast:": "📡",
             ":sync:": "🔄",
             ":send:": "📤",
@@ -241,7 +241,7 @@ def setup_logging(
             ":pages:": "📑",
         }
     )
-
+    # Change formatting of bt.debug messages
     bt_level = logging.INFO
     if config and hasattr(config, "logging"):
         if config.logging.debug:
@@ -252,13 +252,64 @@ def setup_logging(
             bt_level = logging.INFO
 
     if bt_level > logging.DEBUG:
-        from bittensor.utils.btlogging.format import LOG_FORMATS, Fore, Style
+        from bittensor.utils.btlogging.format import (
+            LOG_FORMATS,
+            Fore,
+            Style,
+            log_level_color_prefix,
+        )
 
-        for level in LOG_FORMATS:
-            # Simplify bt formatting for logging.INFO
-            LOG_FORMATS[
-                level
-            ] = f"{Fore.BLUE}%(asctime)s{Fore.RESET} | {Style.BRIGHT}%(levelname)s{Style.RESET_ALL} | %(message)s"
+        for level, color in log_level_color_prefix.items():
+            LOG_FORMATS[level] = (
+                f"{Fore.BLUE}%(asctime)s{Fore.RESET} | "
+                f"{Style.BRIGHT}{color}%(levelname)s{Style.RESET_ALL} | "
+                f"%(message)s"
+            )
+
+    # Initialize bittensor logging
+    if config:
+        bt.logging(config=config)
+    else:
+        bt.logging()
+
+    # Disable third party loggers in bittensor's queue system
+    bt.logging.debug("Disabling third party loggers from bittensor queue...")
+    bt.logging.disable_third_party_loggers()
+
+    bt_level = logging.INFO
+    if config and hasattr(config, "logging"):
+        if config.logging.debug:
+            bt_level = logging.DEBUG
+        elif config.logging.trace:
+            bt_level = logging.TRACE
+        elif config.logging.info:
+            bt_level = logging.INFO
+
+    # if bt_level > logging.DEBUG:
+    #     from bittensor.utils.btlogging.format import LOG_FORMATS, Fore, Style
+
+    #     for level in LOG_FORMATS:
+    #         # Simplify bt formatting for logging.INFO
+    #         LOG_FORMATS[
+    #             level
+    #         ] = f"{Fore.BLUE}%(asctime)s{Fore.RESET} | {Style.BRIGHT}%(levelname)s{Style.RESET_ALL} | %(message)s"
+
+    # Setup bittensor logger
+    bt_logger = logging.getLogger("bittensor")
+    bt_logger.setLevel(bt_level)
+    bt_logger.propagate = False
+
+    use_hivemind_log_handler("nowhere")
+
+    # Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Setup BittensorLogHandler
+    bt_handler = BittensorLogHandler()
+    formatter = logging.Formatter("%(message)s")
+    bt_handler.setFormatter(formatter)
+    root_logger.addHandler(bt_handler)
 
     # Handle local file logging
     if os.path.exists(local_logfile):
@@ -266,62 +317,28 @@ def setup_logging(
         os.remove(local_logfile)
 
     # Setup hivemind logger
-    for logger_name in logging.root.manager.loggerDict:
-        # Set Hivemind logs
-        if logger_name == "hivemind" or logger_name.startswith("hivemind."):
-            logger = logging.getLogger("hivemind")
-            logger.handlers.clear()
-            logger.setLevel(logging.CRITICAL)
-            logger.addFilter(logging_filter)
-            logger.propagate = False
+    hivemind_logger = logging.getLogger("hivemind")
+    hivemind_logger.handlers.clear()
+    hivemind_logger.setLevel(logging.DEBUG)
+    hivemind_logger.propagate = False
 
-            file_handler = logging.FileHandler(local_logfile)
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.addFilter(logging_filter)
-            hivemind_formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            file_handler.setFormatter(hivemind_formatter)
-            logger.addHandler(file_handler)
-        # Reduce HuggingFace or Torch logs
-        if ("transformers" in logger_name) or ("torch" in logger_name):
-            logger = logging.getLogger(logger_name).setLevel(logging.ERROR)
-        # Set level for bittensor logs
-        if logger_name == "bittensor":
-            logger = logging.getLogger(logger_name).setLevel(bt_level)
+    file_handler = logging.FileHandler(local_logfile)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.addFilter(hive_log_filter)
+    hivemind_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    file_handler.setFormatter(hivemind_formatter)
+    hivemind_logger.addHandler(file_handler)
+    hivemind_logger.propagate = False
 
-    use_hivemind_log_handler("nowhere")
-
-    # Setup events logger if config is provided
-    if config and not config.neuron.dont_save_events:
-        formatter = logging.Formatter("%(message)s")
-
-        # Setup EVENT level
-        logging.addLevelName(EVENTS_LEVEL_NUM, "EVENT")
-        events_logger = logging.getLogger("event")
-        events_logger.handlers.clear()
-        events_logger.setLevel(logging.INFO)
-
-        def event(self, message, *args, **kws):
-            if self.isEnabledFor(EVENTS_LEVEL_NUM):
-                self._log(EVENTS_LEVEL_NUM, message, args, **kws)
-
-        logging.Logger.event = event
-
-        # Create events file handler
-        events_file = os.path.join(config.neuron.full_path, "events.log")
-        events_handler = RotatingFileHandler(
-            events_file,
-            maxBytes=config.neuron.events_retention_size,
-            backupCount=DEFAULT_LOG_BACKUP_COUNT,
-        )
-        events_handler.setFormatter(formatter)
-        events_handler.setLevel(logging.INFO)
-        events_logger.addHandler(events_handler)
-        events_logger.propagate = False
-
-        # Register as primary logger
-        bt.logging.register_primary_logger(events_logger.name)
+    # Get all existing loggers and ensure they don't propagate
+    for name, logger in logging.root.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger):
+            if name not in ["bittensor"]:
+                logger.propagate = False
+                if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
+                    logger.addHandler(file_handler)
 
 
 def get_bandwidth():

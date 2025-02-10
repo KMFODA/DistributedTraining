@@ -40,7 +40,7 @@ class ModelLoadingManager:
 
 
 def load_model_optimizer_gradient_averager(self, model_name, epoch):
-    bt.logging.info(
+    bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
     # Delete existing model
@@ -204,7 +204,7 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
             start=True,
         )
 
-    bt.logging.info(
+    bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
 
@@ -216,16 +216,16 @@ def load_state_from_peer(self, epoch=None):
             self.global_progress.epoch = get_global_epoch(self)
             epoch = self.global_progress.epoch
 
-        bt.logging.info("Model Weights Before Loading State")
+        bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
             [layer for layer in self.model.parameters()][-2][-10:].tolist()
         )
-        bt.logging.info(current_model_weights_sample)
+        bt.logging.debug(current_model_weights_sample)
 
-        bt.logging.info(f"Old Model Tag: {self.local_progress.epoch}")
+        bt.logging.debug(f"Old Model Tag: {self.local_progress.epoch}")
 
         if self.global_progress.epoch is not None:
-            bt.logging.info(
+            bt.logging.debug(
                 f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
             )
 
@@ -252,16 +252,16 @@ def load_state_from_peer(self, epoch=None):
 
             state_loaded = True
 
-            bt.logging.info("Model Weights After Loading State")
+            bt.logging.debug("Model Weights After Loading State")
             new_model_weights_sample = copy.copy(
                 [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
-            bt.logging.info(new_model_weights_sample)
+            bt.logging.debug(new_model_weights_sample)
 
             self.local_progress.epoch = self.global_progress.epoch
             self.local_progress.inner_step = 0
             self.local_progress.samples_accumulated = 0
-            bt.logging.info(f"New Model Tag: {self.global_progress.epoch}")
+            bt.logging.debug(f"New Model Tag: {self.global_progress.epoch}")
 
             # Clean up old cache
             try:
@@ -270,7 +270,7 @@ def load_state_from_peer(self, epoch=None):
                 bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 
         else:
-            bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
+            bt.logging.debug(f"Model With Tag: {epoch} Does Not Exist")
 
         return state_loaded
 

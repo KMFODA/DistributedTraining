@@ -197,7 +197,7 @@ class Miner(BaseMinerNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.hf_repo_id, self.local_progress.epoch
         )
-        cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id)
+        #cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id) # Todo this seems to be removing most recently downloaded cache folder, so when restarting you have to re-download model
 
         # Initialize thread pool for background uploads
         self.upload_executor = ThreadPoolExecutor(
@@ -260,7 +260,7 @@ class Miner(BaseMinerNeuron):
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
-                        f"Uploading model and optimizer states to repo: {self.config.neuron.hf_repo_id}"
+                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.hf_repo_id}"
                     )
                     commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
                     upload_folder(
@@ -310,7 +310,7 @@ class Miner(BaseMinerNeuron):
             except Exception as e:
                 attempt += 1
                 bt.logging.warning(
-                    f"Failed to upload state to HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}. Error: {str(e)}"
+                    f":error: Failed to upload state to HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}. Error: {str(e)}"
                 )
                 if attempt < self.model_upload_retry_limit:
                     time.sleep(self.model_upload_retry_delay)
@@ -460,7 +460,7 @@ class Miner(BaseMinerNeuron):
                 == 0
             ):
                 bt.logging.info(
-                    f":training: Outer Step: {self.local_progress.epoch} | "
+                    f":training:  Outer Step: {self.local_progress.epoch} | "
                     f"Inner Step: {self.local_progress.inner_step} | "
                     f"Average Loss: {self.local_progress.loss:.4f} | "
                     f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
