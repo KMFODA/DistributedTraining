@@ -312,7 +312,7 @@ class AveragingHandler:
                 time.sleep(1)
 
             if gradient_averaging_step.done():
-                bt.logging.success(
+                bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
                 initial_weights = self._get_weights_sample()
@@ -357,6 +357,6 @@ class AveragingHandler:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cleaned Up")
             if synapse.completion:
-                bt.logging.success("Averaging Round Finished Succesfully")
+                bt.logging.success("Averaging Round Finished Succesfully") # TODO Not printing for some reason
             self.state_averager.optimizer.zero_grad()
             return synapse
