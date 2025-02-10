@@ -169,6 +169,7 @@ class Validator(BaseValidatorNeuron):
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
             self.model,
+            self.inner_optimizer,
             self.grad_averager,
             self.state_averager,
         )
@@ -184,9 +185,10 @@ class Validator(BaseValidatorNeuron):
         """Initialize UID related components"""
         # Set UIDs
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.metagraph.hotkeys.index(
-            self.config.neuron.master_ss58_address,
-        )
+        self.master_uid = self.uid
+        # self.master_uid = self.metagraph.hotkeys.index(
+        #     self.config.neuron.master_ss58_address,
+        # )
 
         # Init UID mappings
         self.uid_metadata_tracker = {

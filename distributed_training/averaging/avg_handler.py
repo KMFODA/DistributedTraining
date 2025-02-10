@@ -3,13 +3,12 @@ import time
 from typing import Any, Dict, List, Tuple
 
 import bittensor as bt
-import distributed_training
 import numpy as np
 import torch
+
+import distributed_training
 from distributed_training.averaging.exceptions import AllReduceError, ModelStateError
 from distributed_training.protocol import AllReduce
-from distributed_training.utils.progress_tracker import get_global_epoch
-from distributed_training.utils.state_loader import load_state_from_peer
 
 
 class AveragingHandler:
@@ -18,11 +17,12 @@ class AveragingHandler:
     def __init__(
         self,
         model,
+        optimizer,
         grad_averager,
         state_averager,
-        model_loading_manager=None,
     ):
         self.model = model
+        self.inner_optimizer = optimizer
         self.grad_averager = grad_averager
         self.state_averager = state_averager
 
@@ -62,6 +62,8 @@ class AveragingHandler:
         results = {}
 
         try:
+            
+            
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
@@ -89,7 +91,7 @@ class AveragingHandler:
                 ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
             )
             start_time = time.perf_counter()
-            responses = await asyncio.gather(*query_tasks)
+            await asyncio.gather(*query_tasks)
             bt.logging.info("AllReduce Query Responses Received..")
 
             while (gradient_averaging_step.done() is False) and (
@@ -98,7 +100,7 @@ class AveragingHandler:
                 time.sleep(1)
 
             if gradient_averaging_step.done():
-                bt.logging.success(
+                bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
                 (
@@ -113,13 +115,24 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
-                bt.logging.info(":wait: Performing Outer Optimizer Step")
+                bt.logging.info("Performing Outer Optimizer Step..")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
-                self.state_averager.update_main_param_after_outer_step()
-                self.state_averager.optimizer.zero_grad()
-                bt.logging.success(
+
+                # Update state_avgs main params with inner optimizer params
+                opt_parameters = [
+                    param
+                    for group in self.inner_optimizer.param_groups
+                    for param in group["params"]
+                ]
+                for main_param, opt_param in zip(
+                    self.state_averager.main_parameters, opt_parameters
+                ):
+                    main_param.data.copy_(opt_param.data, non_blocking=True)
+
+                self.state_averager.optimizer.zero_grad()  # TODO Do we need to zero_grads on outer optimizer?
+                bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
 
@@ -138,13 +151,15 @@ class AveragingHandler:
                 all_reduce_success_status = False
 
         except Exception as e:
-            bt.logging.error(f"Error during AllReduce setup: {str(e)}")
+            bt.logging.error(f"Unexpected error during Averaging Process: {str(e)}")
             all_reduce_success_status = False
 
         finally:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
-                bt.logging.info(":white_heavy_check_mark: Gradient Step Cancelled")
+                bt.logging.info("Gradient Step Cleaned Up")
+            if all_reduce_success_status:
+                bt.logging.success("Averaging Round Finished Succesfully")
             self.state_averager.optimizer.zero_grad()
             return all_reduce_success_status, results
 
@@ -308,9 +323,20 @@ class AveragingHandler:
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
-                self.state_averager.update_main_param_after_outer_step()
-                self.state_averager.optimizer.zero_grad()
-                bt.logging.success(
+
+                # Update state_avg main params with the inner optimizer params
+                opt_parameters = [
+                    param
+                    for group in self.inner_optimizer.param_groups
+                    for param in group["params"]
+                ]
+                for main_param, opt_param in zip(
+                    self.state_averager.main_parameters, opt_parameters
+                ):
+                    main_param.data.copy_(opt_param.data, non_blocking=True)
+
+                self.state_averager.optimizer.zero_grad()  # TODO Do we need to zero_grads on outer optimizer?
+                bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
 
@@ -322,11 +348,15 @@ class AveragingHandler:
 
         except Exception as e:
             synapse.completion = False
-            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
+            raise AllReduceError(
+                f"Unexpected error during Averaging Process: {str(e)}"
+            ) from e
 
         finally:
             if gradient_averaging_step:
                 gradient_averaging_step.cancel()
-                bt.logging.info(":white_heavy_check_mark: Gradient Step Cancelled")
+                bt.logging.info("Gradient Step Cleaned Up")
+            if synapse.completion:
+                bt.logging.success("Averaging Round Finished Succesfully")
             self.state_averager.optimizer.zero_grad()
             return synapse

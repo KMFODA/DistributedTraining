@@ -1,7 +1,6 @@
 # With many thanks to Prime-Intellect for inspiration for this code
 
 import asyncio
-import logging
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 import bittensor as bt
@@ -12,7 +11,6 @@ from hivemind.averaging.allreduce import (
     AllReduceRunner,
     AveragingMode,
 )
-from hivemind.averaging.averager import DecentralizedAverager
 from hivemind.averaging.control import AveragingStage, StepControl
 from hivemind.averaging.group_info import GroupInfo
 from hivemind.averaging.load_balancing import load_balance_peers
@@ -119,7 +117,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
                     bt.logging.info(
-                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
+                        "part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
                     )
                     raise AllreduceException(
                         f"peer {peer_id_abreviated} sent {part_index} parts, but we expected "
@@ -179,18 +177,18 @@ class DTAllReduceRunner(AllReduceRunner):
                             asyncio.create_task(self._communicate_with_peer(peer_id))
                         )
 
-                bt.logging.info(f"Succesfully Communicated With All Peers")
+                bt.logging.info("Succesfully Communicated With All Peers")
 
                 async for (
                     averaged_tensor_delta
                 ) in self.tensor_part_container.iterate_output_tensors():
                     yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
 
-                bt.logging.info(f"Iterate Output Tensors Finished")
+                bt.logging.info("Iterate Output Tensors Finished")
 
                 self.finalize()
 
-                bt.logging.info(f"Finalize Finished")
+                bt.logging.info("Finalize Finished")
 
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()
@@ -281,15 +279,15 @@ class DTAverager(hivemind.DecentralizedAverager):
         if weight is None:
             weight = float(self.mode != AveragingMode.AUX)
         deadline = get_dht_time() + timeout if timeout is not None else float("inf")
-        assert (
-            isinstance(weight, (int, float)) and weight >= 0
-        ), f"Expected a positive int/float, got {type(weight)}"
-        assert not (
-            wait and require_trigger
-        ), "Non-asynchronous step cannot wait for trigger (use wait=False)"
-        assert (
-            scheduled_time < deadline
-        ), "Scheduled start time does not fit within timeout"
+        assert isinstance(weight, (int, float)) and weight >= 0, (
+            f"Expected a positive int/float, got {type(weight)}"
+        )
+        assert not (wait and require_trigger), (
+            "Non-asynchronous step cannot wait for trigger (use wait=False)"
+        )
+        assert scheduled_time < deadline, (
+            "Scheduled start time does not fit within timeout"
+        )
 
         user_data_for_gather = self.serializer.dumps(
             gather
@@ -504,40 +502,6 @@ class DTAverager(hivemind.DecentralizedAverager):
                 hivemind_logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
 
-    async def rpc_download_state_partial(
-        self, _request: averaging_pb2.DownloadRequest, _context: P2PContext
-    ) -> AsyncIterator[averaging_pb2.DownloadData]:
-        """
-        Get the up-to-date trainer state from a peer.
-        The state consists of two parts: (serialized_metadata, tensors)
-         - serialized_metadata is a small serialized bytestring meant to store scalars and hyperparameters
-         - tensors is a sequence of pytorch tensors that represent model parameters or optimizer statistics
-        """
-        hivemind_logger.info("rpc_download_state_partial")
-        if not self.allow_state_sharing:
-            return  # deny request and direct peer to the next prospective averager
-        metadata, tensors, infos = await self._get_current_state_from_host_process()
-        hivemind_logger.info(len(tensors))
-        if infos is None:
-            infos = [
-                CompressionInfo.from_tensor(tensor, key=i)
-                for i, tensor in enumerate(tensors)
-            ]
-        assert len(tensors) == len(infos)
-
-        # for tensor, info in zip([tensors[0]], infos):
-        for tensor, info in zip([tensors[0]], infos):
-            for part in split_for_streaming(
-                self.state_compression.compress(tensor, info, allow_inplace=False)
-            ):
-                if metadata is not None:
-                    yield averaging_pb2.DownloadData(
-                        tensor_part=part, metadata=metadata
-                    )
-                    metadata = None
-                else:
-                    yield averaging_pb2.DownloadData(tensor_part=part)
-            break
 
 
 class DTGradAverager(DTAverager):
@@ -605,9 +569,9 @@ class DTGradAverager(DTAverager):
         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
         :note: in the current implementation, each step_control can only be used in one step.
         """
-        assert (
-            kwargs.get("weight") is None
-        ), "setting weight in schedule_step is not supported"
+        assert kwargs.get("weight") is None, (
+            "setting weight in schedule_step is not supported"
+        )
         return super().step(
             scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs
         )
@@ -702,11 +666,3 @@ class DTStateAverager(TrainingStateAverager):
         super().__init__(
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
-
-    def update_main_param_after_outer_step(self):
-        """Update the main parameters with the inner optimizer step"""
-        opt_parameters = [
-            param for group in self.optimizer.param_groups for param in group["params"]
-        ]
-        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
-            main_param.data.copy_(opt_param.data, non_blocking=True)

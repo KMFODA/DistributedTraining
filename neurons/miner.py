@@ -217,6 +217,7 @@ class Miner(BaseMinerNeuron):
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
             self.model,
+            self.inner_optimizer,
             self.grad_averager,
             self.state_averager,
         )
