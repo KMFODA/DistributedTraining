@@ -345,6 +345,7 @@ class AveragingHandler:
                 synapse.completion = False
 
         except Exception as e:
+            bt.logging.error(f"Unexpected error during Averaging Process: {str(e)}")
             synapse.completion = False
             raise AllReduceError(
                 f"Unexpected error during Averaging Process: {str(e)}"
