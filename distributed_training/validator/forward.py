@@ -86,8 +86,6 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
-            self.miner_uids = np.array([n for n in range(self.metagraph.n)])
-            # Non-master validators participate in AllReduce to help spread the load and update local model
             (
                 all_reduce_success_status,
                 results,

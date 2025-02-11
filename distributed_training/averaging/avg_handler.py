@@ -131,7 +131,6 @@ class AveragingHandler:
                 ):
                     main_param.data.copy_(opt_param.data, non_blocking=True)
 
-                self.state_averager.optimizer.zero_grad()  # TODO Do we need to zero_grads on outer optimizer?
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
@@ -335,7 +334,6 @@ class AveragingHandler:
                 ):
                     main_param.data.copy_(opt_param.data, non_blocking=True)
 
-                self.state_averager.optimizer.zero_grad()  # TODO Do we need to zero_grads on outer optimizer?
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )

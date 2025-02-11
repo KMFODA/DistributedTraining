@@ -84,17 +84,6 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
-    # Load a new optimizer
-    param_dict = {pn: p for pn, p in self.model.named_parameters()}
-    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-    optim_groups = [
-        {"params": decay_params, "weight_decay": self.weight_decay},
-        {"params": nodecay_params, "weight_decay": 0.0},
-    ]
     # Try to load optimizer state if it exists
     try:
         optimizer_state = torch.load(
@@ -109,10 +98,10 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
 
         # Delete existing optimizer
         if hasattr(self, "opt"):
-            self.inner_optimizer.param_groups = optim_groups
+            self.inner_optimizer.param_groups = self.model.parameters()
         else:
             self.inner_optimizer = torch.optim.AdamW(
-                optim_groups,
+                self.model.parameters(),
                 lr=optimizer_state["learning_rate"],
                 betas=(0.9, 0.95),
                 eps=1e-8,
@@ -133,19 +122,13 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
         )
         # Initialize fresh optimizer
         self.inner_optimizer = torch.optim.AdamW(
-            optim_groups,
+            self.model.parameters(),
             lr=self.learning_rate_maximum,
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,
         )
 
-    del (
-        param_dict,
-        decay_params,
-        nodecay_params,
-        optim_groups,
-    )
     gc.collect()
     torch.cuda.empty_cache()
 

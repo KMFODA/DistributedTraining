@@ -160,7 +160,7 @@ class Validator(BaseValidatorNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.model_name, self.global_progress.epoch
         )
-        cleanup_old_cache(self)
+        # cleanup_old_cache(self) # TODO Is this necessary here?
 
         # Load state if needed
         if self.local_progress.epoch < self.global_progress.epoch:

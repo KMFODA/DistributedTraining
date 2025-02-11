@@ -197,7 +197,7 @@ class Miner(BaseMinerNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.hf_repo_id, self.local_progress.epoch
         )
-        #cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id) # Todo this seems to be removing most recently downloaded cache folder, so when restarting you have to re-download model
+        # cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id) # Todo this seems to be removing most recently downloaded cache folder, so when restarting you have to re-download model
 
         # Initialize thread pool for background uploads
         self.upload_executor = ThreadPoolExecutor(
@@ -377,13 +377,13 @@ class Miner(BaseMinerNeuron):
         self.training_active.clear()
         self.training_status = TrainingStatus.AVERAGING
 
-        bt.logging.info(":warning: Pausing continuous training for AllReduce query")
+        bt.logging.info(":warning:  Pausing continuous training for AllReduce query")
 
     def resume_training(self):
         """Resumes the continuous training loop"""
         self.training_active.set()
         self.training_status = TrainingStatus.RUNNING
-        bt.logging.info("Resuming continuous training")
+        bt.logging.info(":white_heavy_check_mark: Resuming continuous training..")
 
     async def fetch_training_data(self):
         """Async function to fetch training data"""
@@ -508,11 +508,12 @@ class Miner(BaseMinerNeuron):
                         synapse, self.local_progress
                     )
                     if not synapse.completion:
-                        self.global_progress.epoch = get_global_epoch(self)
-                        load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception:
+                    asyncio.sleep(10)  # TODO Wait here to ensure latest state + epoch is updated
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
+                
                 bt.logging.debug("Reset inner step counter after AllReduce")
 
                 return synapse
@@ -523,7 +524,7 @@ class Miner(BaseMinerNeuron):
         finally:
             # Resume training when done
             self.resume_training()
-            bt.logging.info("Resuming continuous training after all_reduce")
+            bt.logging.info("AllReduce Operation Finished")
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """
