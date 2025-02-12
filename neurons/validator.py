@@ -45,6 +45,7 @@ from distributed_training.utils.progress_tracker import (
     get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
+    FastModelLoader,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
@@ -155,6 +156,9 @@ class Validator(BaseValidatorNeuron):
         # Init learning rate and loss tracking
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
+        
+        # Initialize FastModelLoader
+        self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
         # Init Model, Optimizer & Gradient Averager & Clear Cache
         load_model_optimizer_gradient_averager(

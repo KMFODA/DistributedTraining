@@ -50,6 +50,7 @@ from distributed_training.utils.progress_tracker import (
 )
 from distributed_training.utils.state_loader import (
     ModelLoadingManager,
+    FastModelLoader,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
@@ -192,6 +193,9 @@ class Miner(BaseMinerNeuron):
         # Model loading settings
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
+        
+        # Initialize FastModelLoader
+        self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
         # Initialize model and its components
         load_model_optimizer_gradient_averager(

@@ -1,19 +1,23 @@
 import copy
 import gc
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
 from functools import partial
+from pathlib import Path
 
 import bittensor as bt
 import hivemind
 import psutil
 import torch
-from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
-from distributed_training.utils.progress_tracker import get_global_epoch
 from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
+
+from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
+from distributed_training.utils.progress_tracker import get_global_epoch
 
 
 class ModelLoadingManager:
@@ -39,25 +43,183 @@ class ModelLoadingManager:
                 self._last_loaded_epoch = epoch
 
 
-def load_model_optimizer_gradient_averager(self, model_name, epoch):
+class FastModelLoader:
+    def __init__(self, model_name: str, cache_dir: str = None):
+        """
+        Initialize the fast model loader with HF downloader integration.
+
+        Args:
+            model_name (str): The HuggingFace model name (e.g., 'organization/model-name')
+            cache_dir (str, optional): Directory to store downloaded files. Defaults to HF cache.
+        """
+        self.model_name = model_name
+        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
+        self._downloaded_files = {}  # Cache of downloaded files
+
+    def download_files(self, revision: str = None, files: list = None):
+        """
+        Download files using hfdownloader.
+
+        Args:
+            revision (str, optional): Git revision/epoch number
+            files (list, optional): List of specific files to download with patterns
+
+        Returns:
+            str: Path to downloaded files
+        """
+        # Generate cache key
+        cache_key = f"{revision}_{','.join(files) if files else 'default'}"
+
+        # Check if we already downloaded these files
+        if cache_key in self._downloaded_files:
+            return self._downloaded_files[cache_key]
+
+        model_path = os.path.join(self.cache_dir, self.model_name.replace("/", "_"))
+        os.makedirs(model_path, exist_ok=True)
+
+        cmd = [
+            "hfdownloader",
+            "-r",
+            self.model_name,
+            "download",
+            "-c",
+            "10",
+            "-y",
+        ]
+
+        if revision:
+            cmd.extend(["-b", revision])
+
+        # Add file patterns if specified, otherwise default to both model and optimizer
+        if files:
+            for file_pattern in files:
+                cmd.extend(["-f", f"{file_pattern}"])
+        else:
+            cmd.extend(
+                [
+                    "-f",
+                    "*.safetensors",
+                    "-f",
+                    "optimizer.pt",
+                    "--skip-verify",
+                ]
+            )
+
+        bt.logging.debug(f"Executing hfdownloader command: {' '.join(cmd)}")
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=model_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                env={
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                },  # Force Python unbuffered output
+            )
+
+            # Use select to handle both stdout and stderr
+            import select
+
+            outputs = [process.stdout, process.stderr]
+            while True:
+                # Wait for output on either stdout or stderr
+                readable, _, _ = select.select(outputs, [], [])
+
+                for output in readable:
+                    line = output.readline()
+                    if line:
+                        # Don't buffer the print
+                        bt.logging.info(line.rstrip(), flush=True)
+
+                # Check if process has finished
+                if process.poll() is not None:
+                    break
+
+            # Get any remaining output
+            remaining_stdout, remaining_stderr = process.communicate()
+            if remaining_stdout:
+                bt.logging.info(remaining_stdout.rstrip(), flush=True)
+            if remaining_stderr:
+                bt.logging.info(
+                    f"Error: {remaining_stderr.rstrip()}", file=sys.stderr, flush=True
+                )
+
+            if process.returncode != 0:
+                raise RuntimeError(
+                    f"hfdownloader failed with return code {process.returncode}"
+                )
+
+        except Exception as e:
+            bt.logging.error(f"Download failed! Error: {str(e)}")
+            raise RuntimeError(f"hfdownloader failed: {str(e)}")
+
+        return model_path
+
+    def load_model_and_optimizer(self, epoch: int = None):
+        """
+        Load both model and optimizer states in a single download operation.
+
+        Args:
+            epoch (int, optional): Epoch number for specific revision
+
+        Returns:
+            tuple: (model_state_dict, optimizer_state_dict)
+        """
+        revision = str(epoch) if epoch is not None else None
+
+        # Download both model and optimizer files in one go
+        model_path = self.download_files(revision=revision)
+
+        # Load model state
+        model_files = list(Path(model_path).rglob("*.safetensors"))
+        if not model_files:
+            raise FileNotFoundError(f"No model files found in {model_path}")
+
+        bt.logging.info(f"Loading model state from: {[f.name for f in model_files]}")
+
+        state_dict = {}
+        for model_file in model_files:
+            from safetensors.torch import load_file
+
+            state = load_file(model_file)
+            state_dict.update(state)
+
+        # Load optimizer state
+        optimizer_file = Path(model_path) / "optimizer.pt"
+        if not optimizer_file.exists():
+            raise FileNotFoundError(f"Optimizer state not found at {optimizer_file}")
+
+        bt.logging.info(f"Loading optimizer state from: {optimizer_file}")
+        optimizer_state = torch.load(str(optimizer_file), map_location="cpu")
+
+        return state_dict, optimizer_state
+
+
+def load_model_optimizer_gradient_averager(
+    self, model_name, epoch, use_fast_loader=False
+):
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
     # Delete existing model
     if hasattr(self, "model"):
-        if hasattr(self.model.model.transformer.wte, "weight"):
-            del self.model.model.transformer.wte.weight
-        if hasattr(self.model.model.transformer.wte, "norm"):
-            del self.model.model.transformer.wte.norm
-        if hasattr(self.model.model.transformer.wpe, "weight"):
-            del self.model.model.transformer.wpe.weight
-        if hasattr(self.model.model.transformer.wpe, "norm"):
-            del self.model.model.transformer.wpe.norm
-        if hasattr(self.model.model.transformer, "wte"):
-            del self.model.model.transformer.wte
-        if hasattr(self.model.model.transformer, "wpe"):
-            del self.model.model.transformer.wpe
         del self.model
+
+        transformer = self.model.model.transformer
+        for component in ["wte", "wpe"]:
+            if hasattr(transformer, component):
+                comp = getattr(transformer, component)
+                if hasattr(comp, "weight"):
+                    del comp.weight
+                if hasattr(comp, "norm"):
+                    del comp.norm
+                delattr(transformer, component)
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -78,60 +240,136 @@ def load_model_optimizer_gradient_averager(self, model_name, epoch):
         else 0
     )
 
-    # Delete any historic model references in GlobalOptimManager
+    # Delete any historic model references in GlobalOptimManager # TODO Is this needed anymore?
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
         self.inner_optimizer.mng.module_weight_config_triple = (
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
-    # Try to load optimizer state if it exists
-    try:
-        optimizer_state = torch.load(
-            hf_hub_download(
-                repo_id=model_name,
-                filename="optimizer.pt",
-                revision=str(epoch),
-            ),
-            weights_only=True,
-            map_location="cpu",
+    if use_fast_loader:
+        try:
+            # Load both model and optimizer states
+            model_state, optimizer_state = self.loader.load_model_and_optimizer(epoch=epoch)
+
+            # Create model instance and load state
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, state_dict=model_state, trust_remote_code=True
+            )
+
+            # Move model to device
+            self.model = self.model.to(self.device)
+            self.model.config.block_list = []
+
+            # Set inner step
+            self.local_progress.inner_step = (
+                self.model.config.inner_step
+                if "inner_step" in self.model.config.__dict__
+                else 0
+            )
+
+            # Handle optimizer initialization/loading
+            if hasattr(self, "opt"):
+                self.inner_optimizer.param_groups = self.model.parameters()
+            else:
+                self.inner_optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=optimizer_state.get("learning_rate", self.learning_rate_maximum),
+                    betas=(0.9, 0.95),
+                    eps=1e-8,
+                    weight_decay=0.1,
+                )
+
+            # Load optimizer state if available
+            if "optimizer_state_dict" in optimizer_state:
+                self.inner_optimizer.load_state_dict(
+                    optimizer_state["optimizer_state_dict"]
+                )
+
+            del optimizer_state
+            del model_state
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            bt.logging.info(
+                f"Successfully loaded model and optimizer using fast loader for epoch {epoch}"
+            )
+
+        except Exception as e:
+            bt.logging.error(
+                f"Fast loader failed: {str(e)}. Falling back to standard loading."
+            )
+            use_fast_loader = False
+
+    if not use_fast_loader:
+        # Standard loading process
+        self.model = (
+            AutoModelForCausalLM.from_pretrained(
+                model_name, revision=str(epoch), trust_remote_code=True
+            )
+            if epoch
+            else AutoModelForCausalLM.from_pretrained(
+                model_name, trust_remote_code=True
+            )
+        )
+        self.model = self.model.to(self.device)
+        self.model.config.block_list = []
+        self.local_progress.inner_step = (
+            self.model.config.inner_step
+            if "inner_step" in self.model.config.__dict__
+            else 0
         )
 
-        # Delete existing optimizer
-        if hasattr(self, "opt"):
-            self.inner_optimizer.param_groups = self.model.parameters()
-        else:
+        try:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=model_name,
+                    filename="optimizer.pt",
+                    revision=str(epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
+
+            if hasattr(self, "opt"):
+                self.inner_optimizer.param_groups = self.model.parameters()
+            else:
+                self.inner_optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=optimizer_state["learning_rate"],
+                    betas=(0.9, 0.95),
+                    eps=1e-8,
+                    weight_decay=0.1,
+                )
+
+            # Load optimizer state if available
+            if "optimizer_state_dict" in optimizer_state:
+                self.inner_optimizer.load_state_dict(
+                    optimizer_state["optimizer_state_dict"]
+                )
+
+            del optimizer_state
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
+
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
             self.inner_optimizer = torch.optim.AdamW(
                 self.model.parameters(),
-                lr=optimizer_state["learning_rate"],
+                lr=self.learning_rate_maximum,
                 betas=(0.9, 0.95),
                 eps=1e-8,
                 weight_decay=0.1,
             )
 
-        # self.inner_optimizer.load_state_dict(optimizer_state["optimizer_state_dict"])
-
-        del optimizer_state
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
-
-    except Exception as e:
-        bt.logging.warning(
-            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-        )
-        # Initialize fresh optimizer
-        self.inner_optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.learning_rate_maximum,
-            betas=(0.9, 0.95),
-            eps=1e-8,
-            weight_decay=0.1,
-        )
-
+    # Clean up
     gc.collect()
     torch.cuda.empty_cache()
 
+    # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
 
     # Delete existing gradient averager
