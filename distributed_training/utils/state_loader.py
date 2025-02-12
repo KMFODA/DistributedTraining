@@ -134,7 +134,7 @@ class FastModelLoader:
                     line = output.readline()
                     if line:
                         # Don't buffer the print
-                        bt.logging.info(line.rstrip(), flush=True)
+                        print(line.rstrip(), flush=True)
 
                 # Check if process has finished
                 if process.poll() is not None:
@@ -143,9 +143,9 @@ class FastModelLoader:
             # Get any remaining output
             remaining_stdout, remaining_stderr = process.communicate()
             if remaining_stdout:
-                bt.logging.info(remaining_stdout.rstrip(), flush=True)
+                print(remaining_stdout.rstrip(), flush=True)
             if remaining_stderr:
-                bt.logging.info(
+                print(
                     f"Error: {remaining_stderr.rstrip()}", file=sys.stderr, flush=True
                 )
 
@@ -222,23 +222,6 @@ def load_model_optimizer_gradient_averager(
 
         gc.collect()
         torch.cuda.empty_cache()
-
-    # Load a new model
-    self.model = (
-        AutoModelForCausalLM.from_pretrained(
-            model_name, revision=str(epoch), trust_remote_code=True
-        )
-        if epoch
-        else AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
-    )
-    # Move the model to the appropriate device
-    self.model = self.model.to(self.device)
-    self.model.config.block_list = []
-    self.local_progress.inner_step = (
-        self.model.config.inner_step
-        if "inner_step" in self.model.config.__dict__
-        else 0
-    )
 
     # Delete any historic model references in GlobalOptimManager # TODO Is this needed anymore?
     if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
