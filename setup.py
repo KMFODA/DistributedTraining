@@ -20,6 +20,7 @@
 import codecs
 import os
 import re
+import subprocess
 from io import open
 from os import path
 
@@ -41,6 +42,28 @@ def custom_command():
     )
     pip.main(["install", "bittensor==8.5.1"])
     pip.main(["install", "py-multihash==2.0.1"])
+
+    # Install Go and HFDownloader
+    try:
+        subprocess.run(["apt-get", "update"], check=True)
+        subprocess.run(["apt-get", "install", "-y", "golang"], check=True)
+        subprocess.run(
+            ["go", "install", "github.com/lxe/hfdownloader@latest"], check=True
+        )
+
+        # Add Go bin to PATH in venv activate script
+        if "VIRTUAL_ENV" in os.environ:
+            activate_script = os.path.join(os.environ["VIRTUAL_ENV"], "bin", "activate")
+            if os.path.exists(activate_script):
+                with open(activate_script, "a") as f:
+                    f.write('\nexport PATH="$HOME/go/bin:$PATH"\n')
+                # Also update current session's PATH
+                go_bin_path = os.path.expanduser("~/go/bin")
+                if go_bin_path not in os.environ["PATH"]:
+                    os.environ["PATH"] = f"{go_bin_path}:{os.environ['PATH']}"
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to install Go and HFDownloader: {str(e)}")
 
 
 class CustomInstallCommand(install):

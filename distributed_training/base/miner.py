@@ -58,19 +58,14 @@ class BaseMinerNeuron(BaseNeuron):
         )
 
         # Attach determiners which functions are called when servicing a request.
-        bt.logging.info(f"Attaching forward function to miner axon.")
+        bt.logging.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.is_alive,
             blacklist_fn=self.blacklist_is_alive,
             # priority_fn=self.priority,
         ).attach(
-            forward_fn=self.forward,
-            blacklist_fn=self.blacklist_train,
-            # priority_fn=self.priority,
-        ).attach(
             forward_fn=self.all_reduce,
             blacklist_fn=self.blacklist_all_reduce,
-            # priority_fn=self.priority,
         )
         bt.logging.info(f"Axon created: {self.axon}")
 
@@ -122,6 +117,9 @@ class BaseMinerNeuron(BaseNeuron):
         self.axon.start()
         bt.logging.info(f"Miner starting at block: {self.block}")
 
+        # Starting training thread
+        self.start_continuous_training()
+
         # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:
@@ -129,19 +127,19 @@ class BaseMinerNeuron(BaseNeuron):
                     self.block - self.metagraph.last_update[self.uid]
                     < self.config.neuron.epoch_length
                 ):
-                    if self.peer_id_logged_to_chain == False:
+                    if self.peer_id_logged_to_chain is False:
                         log_peerid_to_chain(self)
 
                     if not self.config.neuron.dont_wandb_log:
                         if self.event != {}:
                             self.event.update(self.get_miner_info())
                             try:
-                                self.event.update(get_bandwidth())
-                            except:
-                                bt.logging.info("Error getting bandwidth metrics")
+                                self.bandwidth = get_bandwidth()
+                                self.event.update(self.bandwidth)
+                            except Exception:
+                                bt.logging.debug("Error getting bandwidth metrics")
                             self.wandb.log(self.event)
                             self.event = {}
-
                     # Wait before checking again.
                     time.sleep(1)
 
@@ -159,7 +157,9 @@ class BaseMinerNeuron(BaseNeuron):
         except KeyboardInterrupt:
             self.should_exit = True
             self.axon.stop()
-            bt.logging.success("Miner killed by keyboard interrupt.")
+            bt.logging.success(
+                ":white_heavy_check_mark: Miner killed by keyboard interrupt."
+            )
             exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.
