@@ -305,9 +305,9 @@ def map_uid_to_peerid(self, uids):
                 self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
             )
             if metadata is not None:
-                commitment = metadata["info"]["fields"][0]
-                hex_data = commitment[list(commitment.keys())[0]][2:]
-                chain_str = bytes.fromhex(hex_data).decode()
+                commitment = metadata["info"]["fields"][0][0]
+                bytes_tuple = commitment[next(iter(commitment.keys()))][0]
+                chain_str = bytes(bytes_tuple).decode()
                 updated = (chain_str, metadata["block"])
             else:
                 updated = (None, None)
