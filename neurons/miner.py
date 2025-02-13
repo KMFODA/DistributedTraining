@@ -256,6 +256,10 @@ class Miner(BaseMinerNeuron):
 
         attempt = 0
         while attempt < self.model_upload_retry_limit:
+            # Check if training is paused (i.e. all_reduce is happening)
+            if not self.training_active.is_set():
+                bt.logging.info("Upload Cancelled Due To AllReduce Operation")
+                return False
             try:
                 with tempfile.TemporaryDirectory() as tmp_folder:
                     bt.logging.info(
@@ -500,6 +504,11 @@ class Miner(BaseMinerNeuron):
         """Handle incoming all_reduce requests by pausing continuous training"""
         try:
             async with self.training_lock:
+                # Cancel any ongoing upload
+                if self.current_upload_future and not self.current_upload_future.done():
+                    bt.logging.info("Cancelling Ongoing Model Upload For AllReduce Operation")
+                    self.current_upload_future.cancel()
+                    
                 # Ensure training is paused
                 self.pause_training()
 
