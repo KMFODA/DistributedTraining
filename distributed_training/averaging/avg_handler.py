@@ -63,7 +63,6 @@ class AveragingHandler:
 
         try:
             
-            
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 

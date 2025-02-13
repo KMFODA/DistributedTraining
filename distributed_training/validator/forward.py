@@ -16,7 +16,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import random
 import time
 
 import bittensor as bt
@@ -60,7 +59,7 @@ async def forward(self):
 
     if should_allreduce:
         self.event.update({"synapse_type": "all_reduce"})
-        all_reduce = True
+
         self.peerids_to_uids = {
             str(value["peer_id"]): key
             for key, value in self.uid_metadata_tracker.items()
@@ -86,6 +85,11 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
+            try: 
+                bandwidth = get_bandwidth()
+            except Exception:
+                bandwidth = None
+                bt.logging.debug("Failed Getting Bandwidth, Entering AllReduce Without")
             (
                 all_reduce_success_status,
                 results,
@@ -94,6 +98,7 @@ async def forward(self):
                 dendrite_pool=self.dendrite_pool,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
+                bandwidth=bandwidth
             )
             if all_reduce_success_status:
                 # Update scoring based on allreduce participation

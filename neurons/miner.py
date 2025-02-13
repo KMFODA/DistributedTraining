@@ -509,7 +509,7 @@ class Miner(BaseMinerNeuron):
                 try:
                     # Run allreduce with proper timeout
                     synapse = await self.avg_handler.run_miner_allreduce(
-                        synapse, self.local_progress
+                        synapse, self.local_progress, self.bandwidth
                     )
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")

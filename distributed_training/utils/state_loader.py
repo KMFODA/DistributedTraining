@@ -208,8 +208,7 @@ def load_model_optimizer_gradient_averager(
     )
     # Delete existing model
     if hasattr(self, "model"):
-        del self.model
-
+        # TODO Can we simplify this further? Maybe sticking to load_state?
         transformer = self.model.model.transformer
         for component in ["wte", "wpe"]:
             if hasattr(transformer, component):
@@ -219,6 +218,7 @@ def load_model_optimizer_gradient_averager(
                 if hasattr(comp, "norm"):
                     del comp.norm
                 delattr(transformer, component)
+        del self.model
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -265,7 +265,7 @@ def load_model_optimizer_gradient_averager(
             # Load optimizer state if available
             if "optimizer_state_dict" in optimizer_state:
                 self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
+                    optimizer_state["optimizer_state_dict"] # TODO This is currently failing because of the previous method of setting up weight decay optim_groups
                 )
 
             del optimizer_state
@@ -281,7 +281,7 @@ def load_model_optimizer_gradient_averager(
             bt.logging.error(
                 f"Fast loader failed: {str(e)}. Falling back to standard loading."
             )
-            use_fast_loader = False
+            use_fast_loader = False # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
         # Standard loading process
