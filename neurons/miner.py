@@ -492,10 +492,6 @@ class Miner(BaseMinerNeuron):
                         batch_size=self.local_progress.samples_accumulated,
                     )
 
-                if (self.local_progress.inner_step % 2) == 0:
-                    self.loop = asyncio.new_event_loop()
-                    self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1, timeout = 400)))
-
                 self.local_progress.samples_accumulated = 0
 
     async def all_reduce(
