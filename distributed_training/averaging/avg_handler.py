@@ -69,11 +69,12 @@ class AveragingHandler:
             if bandwidth is not None:
                 self.grad_averager.bandwidth = bandwidth["download"]
 
-            bt.logging.info("Starting Pseudo Gradient Averaging..")
+            bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
             # Start gradient averaging without waiting
             gradient_averaging_step = self.grad_averager.step(
                 gather=0,
                 wait=False,
+                timeout=timeout,
                 peerids_to_uids=peerids_to_uids,
             )
 
@@ -311,7 +312,7 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
-                bt.logging.info(":wait: Performing Outer Optimizer Step")
+                bt.logging.info("Performing Outer Optimizer Step")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
