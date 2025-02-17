@@ -306,7 +306,6 @@ class AveragingHandler:
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
-                self.grad_averager.notify_used_averaged_gradients()
 
                 initial_weights = self._get_weights_sample()
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
@@ -316,7 +315,6 @@ class AveragingHandler:
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
-
                 # Update state_avg main params with the inner optimizer params
                 self.state_averager.update_main_param_after_outer_step()
 

@@ -356,11 +356,17 @@ def load_model_optimizer_gradient_averager(
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
 
     # Delete existing gradient averager
-    if hasattr(self, "grad_averager"):
-        for i in self.grad_averager.main_parameters:
+    if hasattr(self, "state_averager"):
+        for i in self.state_averager.main_parameters:
             del i
         gc.collect()
         torch.cuda.empty_cache()
+
+        # Reset gradient buffers and parameters
+        self.state_averager.main_parameters = tuple(self.model.parameters())
+        param_groups, self.state_averager.main_parameters, self.state_averager.parameter_names = self.state_averager._check_params(self.outer_optimizer, tuple(self.model.parameters()), parameter_names=None)
+        self.state_averager._averaged_parameters = self.state_averager._make_averaged_parameters(self.state_averager.main_parameters)
+        self.state_averager.optimizer, self.state_averager.scheduler = self.state_averager._init_components(param_groups, self.outer_optimizer, scheduler_or_factory=None, initialize_optimizer = None)
 
     else:
         self.state_averager = DTStateAverager(
@@ -387,9 +393,9 @@ def load_model_optimizer_gradient_averager(
         torch.cuda.empty_cache()
 
         # Reset gradient buffers and parameters
-        self.grad_averager.parameters = tuple(self.model.parameters())
-
-        # self.grad_averager.reset_accumulated_grads_()
+        self.grad_averager.main_parameters = tuple(self.model.parameters())
+        self.grad_averager.offloaded_optimizer = self.state_averager.optimizer
+        self.grad_averager._averaged_tensors = tuple(grad for grad in self.grad_averager._grads_from_optimizer())
 
     else:
         # Load a new gradient averager

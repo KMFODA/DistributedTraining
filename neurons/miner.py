@@ -492,9 +492,9 @@ class Miner(BaseMinerNeuron):
                         batch_size=self.local_progress.samples_accumulated,
                     )
 
-                # if self.local_progress.inner_step % 5:
-                #     self.loop = asyncio.new_event_loop()
-                #     self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1)))
+                if (self.local_progress.inner_step % 2) == 0:
+                    self.loop = asyncio.new_event_loop()
+                    self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1, timeout = 400)))
 
                 self.local_progress.samples_accumulated = 0
 
@@ -518,12 +518,12 @@ class Miner(BaseMinerNeuron):
                 try:
                     # Run allreduce with proper timeout
                     synapse = await self.avg_handler.run_miner_allreduce(
-                        synapse, self.local_progress, self.bandwidth
+                        synapse, self.local_progress
                     )
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception:
-                    asyncio.sleep(10)  # TODO Wait here to ensure latest state + epoch is updated
+                    await asyncio.sleep(10)  # TODO Wait here to ensure latest state + epoch is updated
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
                 
