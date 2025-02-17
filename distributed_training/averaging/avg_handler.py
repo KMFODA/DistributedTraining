@@ -62,7 +62,6 @@ class AveragingHandler:
         results = {}
 
         try:
-            
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
@@ -102,6 +101,8 @@ class AveragingHandler:
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
+                self.grad_averager.notify_used_averaged_gradients()
+
                 (
                     gathered,
                     failed_peers,
@@ -120,15 +121,7 @@ class AveragingHandler:
                 )
 
                 # Update state_avgs main params with inner optimizer params
-                opt_parameters = [
-                    param
-                    for group in self.inner_optimizer.param_groups
-                    for param in group["params"]
-                ]
-                for main_param, opt_param in zip(
-                    self.state_averager.main_parameters, opt_parameters
-                ):
-                    main_param.data.copy_(opt_param.data, non_blocking=True)
+                self.state_averager.update_main_param_after_outer_step()  # This updates the main parameters
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
@@ -313,6 +306,8 @@ class AveragingHandler:
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
+                self.grad_averager.notify_used_averaged_gradients()
+
                 initial_weights = self._get_weights_sample()
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
@@ -323,15 +318,7 @@ class AveragingHandler:
                 )
 
                 # Update state_avg main params with the inner optimizer params
-                opt_parameters = [
-                    param
-                    for group in self.inner_optimizer.param_groups
-                    for param in group["params"]
-                ]
-                for main_param, opt_param in zip(
-                    self.state_averager.main_parameters, opt_parameters
-                ):
-                    main_param.data.copy_(opt_param.data, non_blocking=True)
+                self.state_averager.update_main_param_after_outer_step()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
@@ -355,6 +342,8 @@ class AveragingHandler:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cleaned Up")
             if synapse.completion:
-                bt.logging.success("Averaging Round Finished Succesfully") # TODO Not printing for some reason
+                bt.logging.success(
+                    "Averaging Round Finished Succesfully"
+                )  # TODO Not printing for some reason
             self.state_averager.optimizer.zero_grad()
             return synapse

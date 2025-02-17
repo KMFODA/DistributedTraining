@@ -666,3 +666,11 @@ class DTStateAverager(TrainingStateAverager):
         super().__init__(
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
+    
+    def update_main_param_after_outer_step(self):
+        """Update the main parameters with the inner optimizer step"""
+        opt_parameters = [
+            param for group in self.optimizer.param_groups for param in group["params"]
+        ]
+        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
+            main_param.data.copy_(opt_param.data, non_blocking=True)
