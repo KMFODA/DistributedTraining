@@ -199,7 +199,7 @@ class Miner(BaseMinerNeuron):
 
         # Initialize model and its components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.hf_repo_id, self.local_progress.epoch
+            self, self.config.neuron.hf_repo_id, self.global_progress.epoch
         )
         # cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id) # Todo this seems to be removing most recently downloaded cache folder, so when restarting you have to re-download model
 
@@ -208,15 +208,6 @@ class Miner(BaseMinerNeuron):
             max_workers=1, thread_name_prefix="model_upload"
         )
         self.current_upload_future = None
-
-        # Load state if
-        if (self.local_progress.epoch is None) or (
-            self.local_progress.epoch != self.global_progress.epoch
-        ):
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
-            self.start_background_upload(
-                epoch=self.global_progress.epoch, inner_step=0, batch_size=0
-            )
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(

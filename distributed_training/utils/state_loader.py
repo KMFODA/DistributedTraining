@@ -265,7 +265,7 @@ def load_model_optimizer_gradient_averager(
             # Load optimizer state if available
             if "optimizer_state_dict" in optimizer_state:
                 self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"] # TODO This is currently failing because of the previous method of setting up weight decay optim_groups
+                    optimizer_state["optimizer_state_dict"]
                 )
 
             del optimizer_state

@@ -189,10 +189,9 @@ class Validator(BaseValidatorNeuron):
         """Initialize UID related components"""
         # Set UIDs
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.master_uid = self.uid #TODO Change back
-        # self.master_uid = self.metagraph.hotkeys.index(
-        #     self.config.neuron.master_ss58_address,
-        # )
+        self.master_uid = self.metagraph.hotkeys.index(
+            self.config.neuron.master_ss58_address,
+        )
 
         # Init UID mappings
         self.uid_metadata_tracker = {

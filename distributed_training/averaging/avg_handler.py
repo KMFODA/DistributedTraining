@@ -343,6 +343,6 @@ class AveragingHandler:
             if synapse.completion:
                 bt.logging.success(
                     "Averaging Round Finished Succesfully"
-                )  # TODO Not printing for some reason
+                )
             self.state_averager.optimizer.zero_grad()
             return synapse
