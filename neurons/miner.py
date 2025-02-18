@@ -199,15 +199,24 @@ class Miner(BaseMinerNeuron):
 
         # Initialize model and its components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.hf_repo_id, self.global_progress.epoch
+            self, self.config.neuron.hf_repo_id, self.local_progress.epoch
         )
-        # cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id) # Todo this seems to be removing most recently downloaded cache folder, so when restarting you have to re-download model
+        cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id)
 
         # Initialize thread pool for background uploads
         self.upload_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="model_upload"
         )
         self.current_upload_future = None
+        
+        # Load state if
+        if (self.local_progress.epoch is None) or (
+            self.local_progress.epoch != self.global_progress.epoch
+        ):
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
+            self.start_background_upload(
+                epoch=self.global_progress.epoch, inner_step=0, batch_size=0
+            )
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -375,7 +384,6 @@ class Miner(BaseMinerNeuron):
         """Pauses the continuous training loop"""
         self.training_active.clear()
         self.training_status = TrainingStatus.AVERAGING
-
         bt.logging.info(":warning:  Pausing continuous training for AllReduce query")
 
     def resume_training(self):
@@ -410,7 +418,7 @@ class Miner(BaseMinerNeuron):
 
     def _training_worker(self):
         """Worker function that runs in the ThreadPoolExecutor"""
-        # Set the event loop for this thread
+
         asyncio.set_event_loop(self.training_loop)
 
         while not self.stop_event.is_set():
@@ -418,7 +426,6 @@ class Miner(BaseMinerNeuron):
                 # Wait if training is paused
                 self.training_active.wait()
 
-                # Fetch data using the training thread's event loop
                 bt.logging.info(":pages: Fetching fineweb-edu pages")
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
@@ -476,12 +483,15 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.inner_step += 1
 
                 # Periodic model upload
-                if self.local_progress.inner_step % 5 == 0:
-                    self.start_background_upload(
-                        epoch=self.local_progress.epoch,
-                        inner_step=self.local_progress.inner_step,
-                        batch_size=self.local_progress.samples_accumulated,
-                    )
+                # if self.local_progress.inner_step % 5 == 0:
+                #     self.start_background_upload(
+                #         epoch=self.local_progress.epoch,
+                #         inner_step=self.local_progress.inner_step,
+                #         batch_size=self.local_progress.samples_accumulated,
+                #     )
+                # if (self.local_progress.inner_step % 2) == 0:
+                #     self.loop = asyncio.new_event_loop()
+                #     self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1, timeout = 400)))
 
                 self.local_progress.samples_accumulated = 0
 
@@ -503,16 +513,17 @@ class Miner(BaseMinerNeuron):
                 await asyncio.sleep(2)
 
                 try:
+                    bandwidth = get_bandwidth()
                     # Run allreduce with proper timeout
                     synapse = await self.avg_handler.run_miner_allreduce(
-                        synapse, self.local_progress
+                        synapse, self.local_progress, bandwidth
                     )
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception:
                     await asyncio.sleep(10)  # TODO Wait here to ensure latest state + epoch is updated
-                    self.global_progress.epoch = get_global_epoch(self)
-                    load_state_from_peer(self, epoch=self.global_progress.epoch)
+                    # self.global_progress.epoch = get_global_epoch(self)
+                    # load_state_from_peer(self, epoch=self.global_progress.epoch)
                 
                 bt.logging.debug("Reset inner step counter after AllReduce")
 

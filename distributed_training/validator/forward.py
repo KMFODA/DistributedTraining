@@ -89,11 +89,11 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
-            try:
-                bandwidth = get_bandwidth()
-            except Exception:
-                bandwidth = None
-                bt.logging.debug("Failed Getting Bandwidth, Entering AllReduce Without")
+            # try:
+            #     bandwidth = get_bandwidth()
+            # except Exception:
+            #     bandwidth = None
+            #     bt.logging.debug("Failed Getting Bandwidth, Entering AllReduce Without")
             (
                 all_reduce_success_status,
                 results,
@@ -102,7 +102,7 @@ async def forward(self):
                 dendrite_pool=self.dendrite_pool,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
-                bandwidth=bandwidth,
+                # bandwidth=bandwidth,
             )
             
             if all_reduce_success_status:

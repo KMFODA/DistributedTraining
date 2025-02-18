@@ -24,9 +24,9 @@ os.environ["NEST_ASYNCIO"] = "0"
 import math
 import threading
 
-import bitsandbytes
 import bittensor as bt
-from bitsandbytes.cextension import lib
+from transformers import AutoTokenizer
+
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -49,8 +49,6 @@ from distributed_training.utils.state_loader import (
 )
 from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 from distributed_training.validator import forward
-
-from transformers import AutoTokenizer
 
 
 class Validator(BaseValidatorNeuron):
@@ -146,7 +144,7 @@ class Validator(BaseValidatorNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.model_name, self.global_progress.epoch
         )
-        # cleanup_old_cache(self) # TODO Is this necessary here?
+        cleanup_old_cache(self)
 
         # Load state if needed
         if self.local_progress.epoch < self.global_progress.epoch:
