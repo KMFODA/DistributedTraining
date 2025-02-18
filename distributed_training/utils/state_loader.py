@@ -19,7 +19,14 @@ from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
 from hivemind.utils.asyncio import aiter_with_timeout
 from hivemind.utils.streaming import combine_from_streaming
-from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
+from huggingface_hub import (
+    create_tag,
+    hf_hub_download,
+    list_repo_refs,
+    scan_cache_dir,
+    upload_folder,
+)
+from huggingface_hub.utils import HfHubHTTPError
 from transformers import AutoModelForCausalLM
 
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
@@ -216,26 +223,10 @@ def load_model_optimizer_gradient_averager(
     )
     # Delete existing model
     if hasattr(self, "model"):
-        # TODO Can we simplify this further? Maybe sticking to load_state?
-        transformer = self.model.model.transformer
-        for component in ["wte", "wpe"]:
-            if hasattr(transformer, component):
-                comp = getattr(transformer, component)
-                if hasattr(comp, "weight"):
-                    del comp.weight
-                if hasattr(comp, "norm"):
-                    del comp.norm
-                delattr(transformer, component)
         del self.model
 
         gc.collect()
         torch.cuda.empty_cache()
-
-    # Delete any historic model references in GlobalOptimManager # TODO Is this needed anymore?
-    if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
-        self.inner_optimizer.mng.module_weight_config_triple = (
-            self.inner_optimizer.mng.module_weight_config_triple[-2:]
-        )
 
     if use_fast_loader:
         try:
@@ -517,6 +508,7 @@ def load_state_from_peer(self, epoch=None):
         bt.logging.error(f"Error loading state: {str(e)}")
         return False
 
+
 # TODO Remove this if score_bandwidth is deprecated
 async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
     metadata = None
@@ -593,10 +585,52 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
                     cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
-# TODO Re-introduce this?
+
 def upload_new_state(self, epoch: int, results: dict, block: int = None):
-    status = save_and_upload_state(self, epoch, results, block)
-    return status
+    attempt = 0
+    while attempt < self.model_upload_retry_limit:
+        try:
+            bt.logging.info(
+                f"Pushing new model and optimizer state to HF Hub with tag {self.local_progress.epoch}"
+            )
+
+            # Save and upload both model and optimizer state
+            upload_success = save_and_upload_state(
+                self, epoch=epoch, results=results, block=block
+            )
+
+            if upload_success:
+                # Verify the upload
+                updated_refs = list_repo_refs(
+                    self.config.neuron.model_name,
+                    repo_type="model",
+                )
+                new_tag = max([int(tag.name) for tag in updated_refs.tags])
+                bt.logging.info(f"Successfully pushed new model with tag {new_tag}")
+                # Wait to allow out of sync miners to download new model state
+                time.sleep(self.load_state_timeout)
+                break
+
+        except HfHubHTTPError as e:
+            attempt += 1
+            bt.logging.info(f"{e}. Loading State from Peer.")
+            state_loaded = load_state_from_peer(self, epoch=self.global_progress.epoch)
+            if state_loaded:
+                break
+        except Exception:
+            attempt += 1
+            bt.logging.warning(
+                f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
+            )
+            if attempt < self.model_upload_retry_limit:
+                time.sleep(self.model_upload_retry_delay)
+            else:
+                bt.logging.error(
+                    "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
+                )
+                raise
+    return upload_success
+
 
 def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
     """Unified function to save and upload both model and optimizer state"""

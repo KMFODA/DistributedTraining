@@ -28,7 +28,10 @@ from distributed_training.utils.progress_tracker import (
     get_global_epoch,
     update_global_tracker_state,
 )
-from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.state_loader import (
+    load_state_from_peer,
+    upload_new_state,
+)
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
 from distributed_training.validator.reward import score_uid
 
@@ -101,7 +104,15 @@ async def forward(self):
                 miner_uids=self.miner_uids,
                 bandwidth=bandwidth,
             )
+            
             if all_reduce_success_status:
+                
+                if self.uid == self.master_uid:
+                    # Upload new global state to HF
+                    upload_new_state(
+                        self, self.local_progress.epoch, results, self.current_block
+                    )
+
                 # Update scoring based on allreduce participation
                 (
                     self.allreduce_scores,
