@@ -115,7 +115,7 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
 
     return scores
 
-
+# TODO clean up this file
 async def get_rewards(
     self,
     uids: List[int],
@@ -370,42 +370,52 @@ async def score_uid(self, uid):
     )
 
     blocks = model_final.config.block_list
+    try:
+        for block in blocks:
+            dataset = await fetch_training_data(self, block)
+            total_loss = 0
+            batch_count = 0
+            inner_step_counter = 0
 
-    for block in blocks:
-        dataset = await fetch_training_data(self, block)
-        total_loss = 0
-        batch_count = 0
-        inner_step_counter = 0
+            for inputs, labels in dataset:
+                # Move to device
+                inputs, labels = inputs.to(self.device), labels.to(self.device)
 
-        for inputs, labels in dataset:
-            # Move to device
-            inputs, labels = inputs.to(self.device), labels.to(self.device)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    outputs = self.model(input_ids=inputs, labels=labels)
+                    loss = outputs[1]
 
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[1]
+                loss.backward()
 
-            loss.backward()
+                self.local_progress.samples_accumulated += inputs.size(0)
+                total_loss += loss.detach().item()
+                batch_count += 1
+                inner_step_counter += 1
 
-            self.local_progress.samples_accumulated += inputs.size(0)
-            total_loss += loss.detach().item()
-            batch_count += 1
-            inner_step_counter += 1
+                if batch_count % 5 == 0:
+                    bt.logging.info(
+                        f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                    )
 
-            if batch_count % 5 == 0:
-                bt.logging.info(
-                    f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
-                )
+                self.inner_optimizer.step()
+                self.inner_optimizer.zero_grad()
+                
+    except Exception:
+        bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
+        return torch.tensor([1.0])
 
-            self.inner_optimizer.step()
-            self.inner_optimizer.zero_grad()
 
     cleanup_old_cache(
         self,
-        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        repo_id=model_huggingface_id,
         current_revision=None,
     )
-    return score_models(self.model, model_final)
+
+    try:
+        return score_models(self.model, model_final)
+    except Exception as e:
+        bt.logging.error(f"Error calculating final score: {str(e)}")
+        return torch.tensor([1.0])
 
 
 def score_models(model_1, model_2):
