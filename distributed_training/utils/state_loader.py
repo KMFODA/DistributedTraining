@@ -591,7 +591,7 @@ def upload_new_state(self, epoch: int, results: dict, block: int = None):
     while attempt < self.model_upload_retry_limit:
         try:
             bt.logging.info(
-                f"Pushing new model and optimizer state to HF Hub with tag {self.local_progress.epoch}"
+                f"Pushing new model and optimizer state to HF Hub with tag {epoch}"
             )
 
             # Save and upload both model and optimizer state
@@ -635,10 +635,10 @@ def upload_new_state(self, epoch: int, results: dict, block: int = None):
 def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
     """Unified function to save and upload both model and optimizer state"""
     batch_size = sum(
-        [result for result in results[1]["gathered"].values() if result is not None]
+        [result for result in results["gathered"].values() if result is not None]
     )
-    participating_peers = results[1]["participating_peers"]
-    failed_peers = results[1]["failed_peers"]
+    participating_peers = results["participating_peers"]
+    failed_peers = results["failed_peers"]
     attempt = 0
     while attempt < self.model_upload_retry_limit:
         try:
