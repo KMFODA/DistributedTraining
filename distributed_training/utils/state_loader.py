@@ -8,16 +8,24 @@ import threading
 import time
 from functools import partial
 from pathlib import Path
+from typing import Optional
 
 import bittensor as bt
 import hivemind
 import psutil
 import torch
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
 from huggingface_hub import create_tag, hf_hub_download, scan_cache_dir, upload_folder
 from transformers import AutoModelForCausalLM
 
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import get_global_epoch
+
+hivemind_logger = get_logger(__name__)
 
 
 class ModelLoadingManager:
@@ -232,7 +240,9 @@ def load_model_optimizer_gradient_averager(
     if use_fast_loader:
         try:
             # Load both model and optimizer states
-            model_state, optimizer_state = self.loader.load_model_and_optimizer(epoch=epoch)
+            model_state, optimizer_state = self.loader.load_model_and_optimizer(
+                epoch=epoch
+            )
 
             # Create model instance and load state
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -281,7 +291,7 @@ def load_model_optimizer_gradient_averager(
             bt.logging.error(
                 f"Fast loader failed: {str(e)}. Falling back to standard loading."
             )
-            use_fast_loader = False # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
+            use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
         # Standard loading process
@@ -364,9 +374,26 @@ def load_model_optimizer_gradient_averager(
 
         # Reset gradient buffers and parameters
         self.state_averager.main_parameters = tuple(self.model.parameters())
-        param_groups, self.state_averager.main_parameters, self.state_averager.parameter_names = self.state_averager._check_params(self.outer_optimizer, tuple(self.model.parameters()), parameter_names=None)
-        self.state_averager._averaged_parameters = self.state_averager._make_averaged_parameters(self.state_averager.main_parameters)
-        self.state_averager.optimizer, self.state_averager.scheduler = self.state_averager._init_components(param_groups, self.outer_optimizer, scheduler_or_factory=None, initialize_optimizer = None)
+        (
+            param_groups,
+            self.state_averager.main_parameters,
+            self.state_averager.parameter_names,
+        ) = self.state_averager._check_params(
+            self.outer_optimizer, tuple(self.model.parameters()), parameter_names=None
+        )
+        self.state_averager._averaged_parameters = (
+            self.state_averager._make_averaged_parameters(
+                self.state_averager.main_parameters
+            )
+        )
+        self.state_averager.optimizer, self.state_averager.scheduler = (
+            self.state_averager._init_components(
+                param_groups,
+                self.outer_optimizer,
+                scheduler_or_factory=None,
+                initialize_optimizer=None,
+            )
+        )
 
     else:
         self.state_averager = DTStateAverager(
@@ -395,7 +422,9 @@ def load_model_optimizer_gradient_averager(
         # Reset gradient buffers and parameters
         self.grad_averager.main_parameters = tuple(self.model.parameters())
         self.grad_averager.offloaded_optimizer = self.state_averager.optimizer
-        self.grad_averager._averaged_tensors = tuple(grad for grad in self.grad_averager._grads_from_optimizer())
+        self.grad_averager._averaged_tensors = tuple(
+            grad for grad in self.grad_averager._grads_from_optimizer()
+        )
 
     else:
         # Load a new gradient averager
@@ -488,6 +517,47 @@ def load_state_from_peer(self, epoch=None):
         bt.logging.error(f"Error loading state: {str(e)}")
         return False
 
+# TODO Remove this if score_bandwidth is deprecated
+async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
+    metadata = None
+    hivemind_logger.info(f"Downloading parameters from peer {peer}")
+    try:
+        stub = self.grad_averager.get_stub(
+            self._p2p,
+            peer,
+            namespace=self.grad_averager.matchmaking_kwargs["prefix"],
+        )
+        stream = await stub.rpc_download_state_partial(averaging_pb2.DownloadRequest())
+        current_tensor_parts, tensors = [], []
+
+        # TODO merge this with hivemind.compression.deserialize_tensor_stream
+        async for message in aiter_with_timeout(stream, timeout=timeout):
+            if message.metadata:
+                metadata = self.grad_averager.serializer.loads(message.metadata)
+            if message.tensor_part.dtype and current_tensor_parts:
+                # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
+                tensors.append(
+                    deserialize_torch_tensor(
+                        combine_from_streaming(current_tensor_parts)
+                    )
+                )
+                current_tensor_parts = []
+            current_tensor_parts.append(message.tensor_part)
+        if current_tensor_parts:
+            tensors.append(
+                deserialize_torch_tensor(combine_from_streaming(current_tensor_parts))
+            )
+
+        if not metadata:
+            hivemind_logger.exception(f"Peer {peer} did not send its state")
+            return
+
+        hivemind_logger.info(f"Finished downloading state from {peer}")
+        return metadata, tensors
+    except Exception as e:
+        hivemind_logger.exception(f"Failed to download state from {peer} - {repr(e)}")
+        return None, None
+
 
 def cleanup_old_cache(self, repo_id=None, current_revision=None):
     """Helper method to clean up old cache files"""
@@ -523,6 +593,10 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
                     cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
+# TODO Re-introduce this?
+def upload_new_state(self, epoch: int, results: dict, block: int = None):
+    status = save_and_upload_state(self, epoch, results, block)
+    return status
 
 def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
     """Unified function to save and upload both model and optimizer state"""

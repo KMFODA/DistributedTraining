@@ -21,6 +21,7 @@ import time
 import bittensor as bt
 import numpy as np
 import torch
+
 from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
@@ -77,7 +78,7 @@ async def forward(self):
                     self,
                     dendrite=self.dendrite,
                     k=sample_size,
-                    epoch=self.local_progress.epoch if all_reduce else None,
+                    epoch=self.local_progress.epoch,
                 )
 
         self.miner_uids = np.array([n for n in range(self.metagraph.n)])
@@ -85,7 +86,7 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
-            try: 
+            try:
                 bandwidth = get_bandwidth()
             except Exception:
                 bandwidth = None
@@ -98,7 +99,7 @@ async def forward(self):
                 dendrite_pool=self.dendrite_pool,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
-                bandwidth=bandwidth
+                bandwidth=bandwidth,
             )
             if all_reduce_success_status:
                 # Update scoring based on allreduce participation
@@ -129,7 +130,6 @@ async def forward(self):
         # TODO Re-introduce bandwidth scoring
     else:
         # If running HF validation round, only call one UID each step
-        all_reduce = False
         self.event.update({"synapse_type": "train"})
 
         self.miner_uids = await get_hf_validation_uid(

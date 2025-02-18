@@ -19,7 +19,6 @@
 
 import os
 import time
-from typing import Optional
 
 os.environ["NEST_ASYNCIO"] = "0"
 import math
@@ -27,7 +26,6 @@ import threading
 
 import bitsandbytes
 import bittensor as bt
-from bitarray import bitarray
 from bitsandbytes.cextension import lib
 from distributed_training.averaging.avg_handler import AveragingHandler
 from distributed_training.base.validator import BaseValidatorNeuron
@@ -42,33 +40,17 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
-    get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
     FastModelLoader,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
-    save_and_upload_state,
 )
 from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 from distributed_training.validator import forward
-from hivemind.compression import deserialize_torch_tensor
-from hivemind.proto import averaging_pb2
-from hivemind.utils import get_logger
-from hivemind.utils.asyncio import aiter_with_timeout
-from hivemind.utils.streaming import combine_from_streaming
+
 from transformers import AutoTokenizer
-
-# Add lamb to bnb str2optimizer8bit_blockwise
-bitsandbytes.functional.str2optimizer8bit_blockwise
-bitsandbytes.functional.str2optimizer8bit_blockwise["lamb"] = (
-    lib.cadam_8bit_blockwise_grad_fp32,
-    lib.cadam_8bit_blockwise_grad_fp16,
-    lib.cadam_8bit_blockwise_grad_bf16,
-)
-
-hivemind_logger = get_logger(__name__)
 
 
 class Validator(BaseValidatorNeuron):
@@ -264,56 +246,6 @@ class Validator(BaseValidatorNeuron):
             "dividends": self.metagraph.dividends[self.uid],
             "emissions": self.metagraph.emission[self.uid],
         }
-
-    def upload_new_state(self, epoch: int, results: dict, block: int = None):
-        status = save_and_upload_state(self, epoch, results, block)
-        return status
-
-    async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
-        metadata = None
-        hivemind_logger.info(f"Downloading parameters from peer {peer}")
-        try:
-            stub = self.grad_averager.get_stub(
-                self._p2p,
-                peer,
-                namespace=self.grad_averager.matchmaking_kwargs["prefix"],
-            )
-            stream = await stub.rpc_download_state_partial(
-                averaging_pb2.DownloadRequest()
-            )
-            current_tensor_parts, tensors = [], []
-
-            # TODO merge this with hivemind.compression.deserialize_tensor_stream
-            async for message in aiter_with_timeout(stream, timeout=timeout):
-                if message.metadata:
-                    metadata = self.grad_averager.serializer.loads(message.metadata)
-                if message.tensor_part.dtype and current_tensor_parts:
-                    # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
-                    tensors.append(
-                        deserialize_torch_tensor(
-                            combine_from_streaming(current_tensor_parts)
-                        )
-                    )
-                    current_tensor_parts = []
-                current_tensor_parts.append(message.tensor_part)
-            if current_tensor_parts:
-                tensors.append(
-                    deserialize_torch_tensor(
-                        combine_from_streaming(current_tensor_parts)
-                    )
-                )
-
-            if not metadata:
-                hivemind_logger.exception(f"Peer {peer} did not send its state")
-                return
-
-            hivemind_logger.info(f"Finished downloading state from {peer}")
-            return metadata, tensors
-        except Exception as e:
-            hivemind_logger.exception(
-                f"Failed to download state from {peer} - {repr(e)}"
-            )
-            return None, None
 
     async def forward(self):
         return await forward(self)
