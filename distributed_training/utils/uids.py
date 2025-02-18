@@ -11,6 +11,7 @@ import numpy as np
 from bittensor.core.chain_data import decode_account_id
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
+from huggingface_hub import list_repo_commits
 
 
 async def check_uid(dendrite, axon, uid, epoch=None):
@@ -137,15 +138,23 @@ async def get_random_uids(
 
 async def get_hf_validation_uid(self, outer_step: int = None):
     uids = []
-    self.uid_metadata_tracker = dict(
+    self.uid_tracker = dict(
         sorted(
-            self.uid_metadata_tracker.items(),
-            key=lambda item: item[1]["last_updated_score"],
+            self.uid_tracker.items(),
+            key=lambda item: item[1]["train_similarity_score_last_updated"],
         )
     )
 
-    for uid in self.uid_metadata_tracker.keys():
-        if self.uid_metadata_tracker[uid]["model_huggingface_id"] is not None:
+    for uid in self.uid_tracker.keys():
+        if (self.uid_tracker[uid]["model_huggingface_id"] is not None) and (
+            (self.uid_tracker[uid]["last_commit"] is None)
+            or (
+                list_repo_commits(
+                    self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
+                )[0]
+                != self.uid_tracker[uid]["last_commit"]
+            )
+        ):
             uids.append(uid)
             return uids
         else:
@@ -356,91 +365,73 @@ def map_uid_to_peerid(self):
                 bt.logging.info(
                     f"Invalid commitment for UID {uid}: model_huggingface_id not in commitment metadata"
                 )
-            if concatenated["peer_id"] != self.uid_metadata_tracker[uid]["peer_id"]:
+            if concatenated["peer_id"] != self.uid_tracker[uid]["peer_id"]:
                 uid_peerid_metadata = [
                     metadata["peer_id"]
-                    for key, metadata in self.uid_metadata_tracker.items()
+                    for key, metadata in self.uid_tracker.items()
                     if key != uid
                 ]
                 if concatenated["peer_id"] not in uid_peerid_metadata:
-                    self.uid_metadata_tracker[uid]["peer_id"] = concatenated["peer_id"]
-                    self.uid_metadata_tracker[uid][
-                        "last_updated_block"
-                    ] = last_updated_block
+                    self.uid_tracker[uid]["peer_id"] = concatenated["peer_id"]
+                    self.uid_tracker[uid]["last_updated_block"] = last_updated_block
                 else:
                     uid_list = [
                         uid
-                        for uid, metadata in self.uid_metadata_tracker.items()
+                        for uid, metadata in self.uid_tracker.items()
                         if metadata["peer_id"] == concatenated["peer_id"]
                     ]
                     for uid_i in uid_list:
                         if (
-                            self.uid_metadata_tracker[uid_i]["last_updated_block"]
-                            is not None
+                            self.uid_tracker[uid_i]["last_updated_block"] is not None
                         ) and (
-                            self.uid_metadata_tracker[uid_i]["last_updated_block"]
+                            self.uid_tracker[uid_i]["last_updated_block"]
                             > last_updated_block
                         ):
-                            self.uid_metadata_tracker[uid_i][
-                                "last_updated_block"
-                            ] = None
-                            self.uid_metadata_tracker[uid_i][
-                                "model_huggingface_id"
-                            ] = None
-                            self.uid_metadata_tracker[uid_i]["peer_id"] = None
+                            self.uid_tracker[uid_i]["last_updated_block"] = None
+                            self.uid_tracker[uid_i]["model_huggingface_id"] = None
+                            self.uid_tracker[uid_i]["peer_id"] = None
                         else:
-                            self.uid_metadata_tracker[uid]["last_updated_block"] = None
-                            self.uid_metadata_tracker[uid][
-                                "model_huggingface_id"
-                            ] = None
-                            self.uid_metadata_tracker[uid]["peer_id"] = None
+                            self.uid_tracker[uid]["last_updated_block"] = None
+                            self.uid_tracker[uid]["model_huggingface_id"] = None
+                            self.uid_tracker[uid]["peer_id"] = None
             if (
                 concatenated["model_huggingface_id"]
-                != self.uid_metadata_tracker[uid]["model_huggingface_id"]
+                != self.uid_tracker[uid]["model_huggingface_id"]
             ):
-                self.uid_metadata_tracker[uid]["model_huggingface_id"] = concatenated[
+                self.uid_tracker[uid]["model_huggingface_id"] = concatenated[
                     "model_huggingface_id"
                 ]
                 uid_peerid_metadata = [
                     metadata["model_huggingface_id"]
-                    for key, metadata in self.uid_metadata_tracker.items()
+                    for key, metadata in self.uid_tracker.items()
                     if key != uid
                 ]
                 if concatenated["model_huggingface_id"] not in uid_peerid_metadata:
-                    self.uid_metadata_tracker[uid][
+                    self.uid_tracker[uid]["model_huggingface_id"] = concatenated[
                         "model_huggingface_id"
-                    ] = concatenated["model_huggingface_id"]
-                    self.uid_metadata_tracker[uid][
-                        "last_updated_block"
-                    ] = last_updated_block
+                    ]
+                    self.uid_tracker[uid]["last_updated_block"] = last_updated_block
                 else:
                     uid_list = [
                         uid
-                        for uid, metadata in self.uid_metadata_tracker.items()
+                        for uid, metadata in self.uid_tracker.items()
                         if metadata["model_huggingface_id"]
                         == concatenated["model_huggingface_id"]
                     ]
                     for uid_i in uid_list:
                         if (
-                            self.uid_metadata_tracker[uid_i]["last_updated_block"]
-                            is not None
+                            self.uid_tracker[uid_i]["last_updated_block"] is not None
                         ) and (
-                            self.uid_metadata_tracker[uid_i]["last_updated_block"]
+                            self.uid_tracker[uid_i]["last_updated_block"]
                             > last_updated_block
                         ):
-                            self.uid_metadata_tracker[uid_i][
-                                "last_updated_block"
-                            ] = None
-                            self.uid_metadata_tracker[uid_i][
-                                "model_huggingface_id"
-                            ] = None
-                            self.uid_metadata_tracker[uid_i]["peer_id"] = None
+                            self.uid_tracker[uid_i]["last_updated_block"] = None
+                            self.uid_tracker[uid_i]["model_huggingface_id"] = None
+                            self.uid_tracker[uid_i]["peer_id"] = None
                         else:
-                            self.uid_metadata_tracker[uid]["last_updated_block"] = None
-                            self.uid_metadata_tracker[uid][
-                                "model_huggingface_id"
-                            ] = None
-                            self.uid_metadata_tracker[uid]["peer_id"] = None
+                            self.uid_tracker[uid]["last_updated_block"] = None
+                            self.uid_tracker[uid]["model_huggingface_id"] = None
+                            self.uid_tracker[uid]["peer_id"] = None
 
             bt.logging.info(f"Retrieved commitment for UID {uid}")
 

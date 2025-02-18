@@ -328,6 +328,7 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
+                self.uid_tracker[uid] = 0
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -337,6 +338,19 @@ class BaseValidatorNeuron(BaseNeuron):
             min_len = min(len(self.hotkeys), len(self.scores))
             new_moving_average[:min_len] = self.scores[:min_len]
             self.scores = new_moving_average
+            self.uid_tracker[uid] = {
+                "peer_id": None,
+                "model_huggingface_id": None,
+                "last_updated_block": None,
+                "last_commit": None,
+                "train_similarity_score_last_updated": 0,
+                "train_similarity_score": 0,
+                "train_validation_count": 0,
+                "train_number_of_blocks": 0,
+                "train_duration": 0,
+                "all_reduce_successes": 0,
+                "all_reduce_counts": 0,
+            }
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
@@ -406,6 +420,7 @@ class BaseValidatorNeuron(BaseNeuron):
             scores=self.scores,
             hotkeys=self.hotkeys,
             failed_is_alive_counter=self.failed_is_alive_counter,
+            uid_tracker=self.uid_tracker,
         )
 
     def load_state(self):
@@ -428,6 +443,8 @@ class BaseValidatorNeuron(BaseNeuron):
                 self.failed_is_alive_counter = state[
                     "failed_is_alive_counter"
                 ].flatten()[0]
+            if "uid_tracker" in state:
+                self.uid_tracker = state["uid_tracker"]
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(

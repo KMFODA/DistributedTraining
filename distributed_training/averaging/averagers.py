@@ -279,15 +279,15 @@ class DTAverager(hivemind.DecentralizedAverager):
         if weight is None:
             weight = float(self.mode != AveragingMode.AUX)
         deadline = get_dht_time() + timeout if timeout is not None else float("inf")
-        assert isinstance(weight, (int, float)) and weight >= 0, (
-            f"Expected a positive int/float, got {type(weight)}"
-        )
-        assert not (wait and require_trigger), (
-            "Non-asynchronous step cannot wait for trigger (use wait=False)"
-        )
-        assert scheduled_time < deadline, (
-            "Scheduled start time does not fit within timeout"
-        )
+        assert (
+            isinstance(weight, (int, float)) and weight >= 0
+        ), f"Expected a positive int/float, got {type(weight)}"
+        assert not (
+            wait and require_trigger
+        ), "Non-asynchronous step cannot wait for trigger (use wait=False)"
+        assert (
+            scheduled_time < deadline
+        ), "Scheduled start time does not fit within timeout"
 
         user_data_for_gather = self.serializer.dumps(
             gather
@@ -503,7 +503,6 @@ class DTAverager(hivemind.DecentralizedAverager):
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
 
 
-
 class DTGradAverager(DTAverager):
     """ "
     DTGradAverager is meant to be used in pair with DTStateAverager. Specifically it takes as input the offloaded optimizer of DTStateAverager, and
@@ -569,9 +568,9 @@ class DTGradAverager(DTAverager):
         :returns: step_control - a handle that can be passed into GradientAverager.step to use the pre-scheduled group
         :note: in the current implementation, each step_control can only be used in one step.
         """
-        assert kwargs.get("weight") is None, (
-            "setting weight in schedule_step is not supported"
-        )
+        assert (
+            kwargs.get("weight") is None
+        ), "setting weight in schedule_step is not supported"
         return super().step(
             scheduled_time=scheduled_time, wait=False, require_trigger=True, **kwargs
         )
@@ -666,7 +665,7 @@ class DTStateAverager(TrainingStateAverager):
         super().__init__(
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
-    
+
     def update_main_param_after_outer_step(self):
         """Update the main parameters with the inner optimizer step"""
         opt_parameters = [

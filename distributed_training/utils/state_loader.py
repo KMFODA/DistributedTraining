@@ -377,13 +377,14 @@ def load_model_optimizer_gradient_averager(
                 self.state_averager.main_parameters
             )
         )
-        self.state_averager.optimizer, self.state_averager.scheduler = (
-            self.state_averager._init_components(
-                param_groups,
-                self.outer_optimizer,
-                scheduler_or_factory=None,
-                initialize_optimizer=None,
-            )
+        (
+            self.state_averager.optimizer,
+            self.state_averager.scheduler,
+        ) = self.state_averager._init_components(
+            param_groups,
+            self.outer_optimizer,
+            scheduler_or_factory=None,
+            initialize_optimizer=None,
         )
 
     else:

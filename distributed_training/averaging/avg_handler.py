@@ -341,8 +341,6 @@ class AveragingHandler:
                 gradient_averaging_step.cancel()
                 bt.logging.info("Gradient Step Cleaned Up")
             if synapse.completion:
-                bt.logging.success(
-                    "Averaging Round Finished Succesfully"
-                )
+                bt.logging.success("Averaging Round Finished Succesfully")
             self.state_averager.optimizer.zero_grad()
             return synapse

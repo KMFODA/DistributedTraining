@@ -136,7 +136,7 @@ class Validator(BaseValidatorNeuron):
         # Init learning rate and loss tracking
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
-        
+
         # Initialize FastModelLoader
         self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
@@ -172,18 +172,6 @@ class Validator(BaseValidatorNeuron):
         self.master_uid = self.metagraph.hotkeys.index(
             self.config.neuron.master_ss58_address,
         )
-
-        # Init UID mappings
-        self.uid_metadata_tracker = {
-            uid: {
-                "peer_id": None,
-                "model_huggingface_id": None,
-                "last_updated_block": None,
-                "score": None,
-                "last_updated_score": 0,
-            }
-            for uid in self.metagraph.uids.tolist()
-        }
 
         # Init UID to PeerID mapping
         self.stop_event = threading.Event()

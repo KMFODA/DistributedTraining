@@ -193,7 +193,7 @@ class Miner(BaseMinerNeuron):
         # Model loading settings
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
-        
+
         # Initialize FastModelLoader
         self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
@@ -208,7 +208,7 @@ class Miner(BaseMinerNeuron):
             max_workers=1, thread_name_prefix="model_upload"
         )
         self.current_upload_future = None
-        
+
         # Load state if
         if (self.local_progress.epoch is None) or (
             self.local_progress.epoch != self.global_progress.epoch
@@ -503,9 +503,11 @@ class Miner(BaseMinerNeuron):
             async with self.training_lock:
                 # Cancel any ongoing upload
                 if self.current_upload_future and not self.current_upload_future.done():
-                    bt.logging.info("Cancelling Ongoing Model Upload For AllReduce Operation")
+                    bt.logging.info(
+                        "Cancelling Ongoing Model Upload For AllReduce Operation"
+                    )
                     self.current_upload_future.cancel()
-                    
+
                 # Ensure training is paused
                 self.pause_training()
 
@@ -521,10 +523,10 @@ class Miner(BaseMinerNeuron):
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception:
-                    await asyncio.sleep(10)  # TODO Wait here to ensure latest state + epoch is updated
-                    # self.global_progress.epoch = get_global_epoch(self)
-                    # load_state_from_peer(self, epoch=self.global_progress.epoch)
-                
+                    await asyncio.sleep(10)
+                    self.global_progress.epoch = get_global_epoch(self)
+                    load_state_from_peer(self, epoch=self.global_progress.epoch)
+
                 bt.logging.debug("Reset inner step counter after AllReduce")
 
                 return synapse

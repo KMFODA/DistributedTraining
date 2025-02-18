@@ -445,4 +445,3 @@ def init_dht(self):
                     retries += 1
                     time.sleep(5)
                     bt.logging.error("Retrying...")
-

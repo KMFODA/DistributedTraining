@@ -65,8 +65,7 @@ async def forward(self):
         self.event.update({"synapse_type": "all_reduce"})
 
         self.peerids_to_uids = {
-            str(value["peer_id"]): key
-            for key, value in self.uid_metadata_tracker.items()
+            str(value["peer_id"]): key for key, value in self.uid_tracker.items()
         }
         if self.uid == self.master_uid:
             # Master validator coordinates AllReduce and queries miners
@@ -104,9 +103,8 @@ async def forward(self):
                 miner_uids=self.miner_uids,
                 # bandwidth=bandwidth,
             )
-            
+
             if all_reduce_success_status:
-                
                 if self.uid == self.master_uid:
                     # Upload new global state to HF
                     upload_new_state(
@@ -129,6 +127,13 @@ async def forward(self):
                 # Update state after successful allreduce
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
+
+                for uid in self.uid_tracker.keys():
+                    self.uid_tracker[uid][
+                        "all_reduce_successes"
+                    ] = self.allreduce_scores[uid]
+                    self.uid_tracker[uid]["all_reduce_counts"] += 1
+
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")
 
@@ -138,7 +143,6 @@ async def forward(self):
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             return
 
-        # TODO Re-introduce bandwidth scoring
     else:
         # If running HF validation round, only call one UID each step
         self.event.update({"synapse_type": "train"})
@@ -156,9 +160,32 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         uid = self.miner_uids[0]
-        rewards = await score_uid(self, uid)
-        self.uid_metadata_tracker[uid]["score"] = rewards
-        self.uid_metadata_tracker[uid]["last_updated_score"] = time.time()
+
+        scores, latest_commit, time_delta, blocks = await score_uid(self, uid)
+
+        self.uid_tracker[uid]["last_commit"] = latest_commit
+        self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
+        self.uid_tracker[uid]["train_similarity_score"] += scores
+        self.uid_tracker[uid]["train_validation_count"] += 1
+        self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
+        self.uid_tracker[uid]["train_duration"] += time_delta
+
+        rewards = 0.5 * (
+            (
+                self.uid_tracker[uid]["train_similarity_score"]
+                * self.uid_tracker[uid]["train_number_of_blocks"]
+            )
+            / self.uid_tracker[uid]["train_validation_count"]
+        )
+        if self.uid_tracker[uid]["all_reduce_counts"] != 0:
+            rewards = rewards + (
+                0.5
+                * (
+                    self.uid_tracker[uid]["all_reduce_successes"]
+                    / self.uid_tracker[uid]["all_reduce_counts"]
+                )
+            )
+        rewards = torch.tensor([rewards])
 
     self.event.update(
         {

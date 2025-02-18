@@ -115,203 +115,6 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
 
     return scores
 
-# TODO clean up this file
-async def get_rewards(
-    self,
-    uids: List[int],
-    responses: list,
-    all_reduce: bool,
-) -> torch.FloatTensor:
-    """
-    Returns a tensor of rewards for the given query and responses.
-
-    Args:
-    - uids (List[int]): A list of uids that were queried.
-    - responses (List): A list of all the responses from the queried uids.
-    - all_reduce (bool): A boolean representing wether the all_reduce synapse was called.
-    - responses (List[float]): A list of responses from the miners.
-
-    Returns:
-    - torch.FloatTensor: A tensor of rewards for the given query and responses.
-    """
-    # Score an AllReduce response
-    if all_reduce:
-        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
-        # the scoring burden across all validators
-        self.miner_uids = await get_random_uids(
-            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
-        )
-        self.event.update({"uids": self.miner_uids})
-        bt.logging.info(f"UIDs:  {self.miner_uids}")
-
-        # Set up the scores tensor
-        scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        # Update UID to PeerID mapping
-        map_uid_to_peerid(self, uids)
-
-        # Update PeerIDs list
-        update_run_peerid_list(self)
-
-        blacklist_scores = await score_blacklist(self, self.miner_uids)
-        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-        self.event.update(
-            {
-                f"rewards.blacklist.uid{uid}": blacklist_score
-                for uid, blacklist_score in zip(uids, blacklist_scores)
-            }
-        )
-        scores *= blacklist_scores
-
-        # This is done via the all_reduce instead
-        # # Score miners bandwidth
-        # bandwidth_scores = await score_bandwidth(
-        #     self,
-        #     self.miner_uids,
-        # )
-        # bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-        # self.event.update(
-        #     {
-        #         f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-        #         for uid, bandwidth_score in zip(
-        #             self.miner_uids.tolist(), bandwidth_scores
-        #         )
-        #     }
-        # )
-        # scores *= bandwidth_scores
-
-    # Score an empty responses
-    elif (responses == [[]]) or (
-        [
-            response.gradient_sums
-            for response in responses[0]
-            if (response.dendrite.status_code == 200)
-            and (response.gradient_sums is not None)
-        ]
-        == []
-    ):
-        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
-
-    # Score a non-empty Train response
-    else:
-        scores = torch.FloatTensor(
-            [
-                (
-                    1
-                    if response.dendrite.status_code == 200 and response.loss != 0.0
-                    else 0
-                )
-                for _, response in zip(uids, responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Timeout Scores: {scores}")
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        if (self.uid == self.master_uid) and (
-            self.local_progress.samples_accumulated == 0
-        ):
-            indices = random.sample(range(len(uids)), self.config.neuron.sample_size)
-            uids = np.array([uids[i] for i in indices])
-            responses = [[responses[0][i] for i in indices]]
-            self.miner_uids = uids
-
-        # Update UID to PeerID mapping
-        map_uid_to_peerid(self, uids)
-
-        # Update PeerIDs list
-        update_run_peerid_list(self)
-
-        blacklist_scores = await score_blacklist(self, uids)
-        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-        self.event.update(
-            {
-                f"rewards.blacklist.uid{uid}": blacklist_score
-                for uid, blacklist_score in zip(uids, blacklist_scores)
-            }
-        )
-
-        # Re-calculate gradients and score the difference between local gradients and the miner's gradients
-        gradient_scores = torch.FloatTensor(
-            [
-                (
-                    score_gradients(self, response, uids[index])
-                    if (response.dendrite.status_code == 200)
-                    and (response.gradient_sums is not None)
-                    else 0
-                )
-                for index, response in enumerate(responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Gradient Scores: {gradient_scores}")
-        self.event.update(
-            {
-                f"rewards.gradient.uid{uid}": gradient_score
-                for uid, gradient_score in zip(uids, gradient_scores)
-            }
-        )
-
-        # Score miners based off the size of the data they have trained on this step
-        steps_scores = torch.FloatTensor(
-            [
-                (
-                    len(set(response.dataset_indices))
-                    if (
-                        (response.dendrite.status_code == 200)
-                        and (response.dataset_indices is not None)
-                        and (type(response.dataset_indices) is list)
-                    )
-                    else 0
-                )
-                for index, response in enumerate(responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Steps Scores: {steps_scores}")
-        self.event.update(
-            {
-                f"rewards.steps.uid{uid}": steps_score
-                for uid, steps_score in zip(uids, steps_scores)
-            }
-        )
-        steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
-
-        # Score miners based off wether they where succesfull or not in the all_reduce round
-        if hasattr(self, "all_reduce_scores"):
-            all_reduce_scores = torch.FloatTensor(
-                [
-                    (
-                        1
-                        if str(uid) in self.all_reduce_scores
-                        and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
-                        else 0
-                    )
-                    for uid in uids.tolist()
-                ]
-            ).to(self.device)
-            bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
-
-            self.event.update(
-                {
-                    f"rewards.all_reduce.uid{uid}": all_reduce_score
-                    for uid, all_reduce_score in zip(uids, all_reduce_scores)
-                }
-            )
-
-            # Final balanced score calculation with all_reduce
-            scores = blacklist_scores * (
-                (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
-            )
-
-        else:
-            # Final balanced score calculation without all_reduce
-            scores = blacklist_scores * (gradient_scores * steps_scores)
-
-    return scores
-
 
 async def fetch_training_data(self, block):
     """Async function to fetch training data"""
@@ -337,36 +140,34 @@ async def fetch_training_data(self, block):
         raise
 
 
-async def score_uid(self, uid):
+async def score_uid(self, uid: int):
     """Score a single UID"""
 
-    if self.uid_metadata_tracker[uid]["model_huggingface_id"] is None:
+    if self.uid_tracker[uid]["model_huggingface_id"] is None:
         return 0
 
     cleanup_old_cache(
         self,
-        repo_id=self.uid_metadata_tracker[uid]["model_huggingface_id"],
+        repo_id=self.uid_tracker[uid]["model_huggingface_id"],
         current_revision=None,
     )
 
-    commits = (
-        list_repo_commits(
-            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
-        )[0].commit_id,
-        list_repo_commits(
-            self.uid_metadata_tracker[uid]["model_huggingface_id"], repo_type="model"
-        )[1].commit_id,
-    )
-    model_huggingface_id = self.uid_metadata_tracker[uid]["model_huggingface_id"]
+    commits = list_repo_commits(
+        self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
+    )[:2]
+    latest_commit = commits[0].commit_id
+    time_delta = (commits[0].created_at - commits[1].created_at).seconds
+
+    model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
 
     self.model = AutoModelForCausalLM.from_pretrained(
-        model_huggingface_id, revision=commits[0], trust_remote_code=True
+        model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
     )
     # Move the model to the appropriate device
     self.model = self.model.to(self.device)
 
     model_final = AutoModelForCausalLM.from_pretrained(
-        model_huggingface_id, revision=commits[1], trust_remote_code=True
+        model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
     )
 
     blocks = model_final.config.block_list
@@ -399,11 +200,10 @@ async def score_uid(self, uid):
 
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
-                
+
     except Exception:
         bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
         return torch.tensor([1.0])
-
 
     cleanup_old_cache(
         self,
@@ -412,13 +212,16 @@ async def score_uid(self, uid):
     )
 
     try:
-        return score_models(self.model, model_final)
+        rewards = score_models(self.model, model_final)
     except Exception as e:
         bt.logging.error(f"Error calculating final score: {str(e)}")
-        return torch.tensor([1.0])
+        rewards = 1.0
+
+    return rewards, latest_commit, time_delta, blocks
 
 
 def score_models(model_1, model_2):
+    """Calculate the cosine similarity score between two model sates"""
     score = 0
     index = 0
 
@@ -430,5 +233,5 @@ def score_models(model_1, model_2):
         )
         index += 1
 
-    average_score = torch.tensor([score / index])
+    average_score = score / index
     return average_score
