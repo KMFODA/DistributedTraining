@@ -88,11 +88,6 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
-            # try:
-            #     bandwidth = get_bandwidth()
-            # except Exception:
-            #     bandwidth = None
-            #     bt.logging.debug("Failed Getting Bandwidth, Entering AllReduce Without")
             (
                 all_reduce_success_status,
                 results,
@@ -161,31 +156,7 @@ async def forward(self):
 
         uid = self.miner_uids[0]
 
-        scores, latest_commit, time_delta, blocks = await score_uid(self, uid)
-
-        self.uid_tracker[uid]["last_commit"] = latest_commit
-        self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
-        self.uid_tracker[uid]["train_similarity_score"] += scores
-        self.uid_tracker[uid]["train_validation_count"] += 1
-        self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
-        self.uid_tracker[uid]["train_duration"] += time_delta
-
-        rewards = 0.5 * (
-            (
-                self.uid_tracker[uid]["train_similarity_score"]
-                * self.uid_tracker[uid]["train_number_of_blocks"]
-            )
-            / self.uid_tracker[uid]["train_validation_count"]
-        )
-        if self.uid_tracker[uid]["all_reduce_counts"] != 0:
-            rewards = rewards + (
-                0.5
-                * (
-                    self.uid_tracker[uid]["all_reduce_successes"]
-                    / self.uid_tracker[uid]["all_reduce_counts"]
-                )
-            )
-        rewards = torch.tensor([rewards])
+        rewards = await score_uid(self, uid)
 
     self.event.update(
         {

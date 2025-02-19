@@ -482,23 +482,13 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
 
-                # Periodic model upload
-                # if self.local_progress.inner_step % 5 == 0:
-                #     self.start_background_upload(
-                #         epoch=self.local_progress.epoch,
-                #         inner_step=self.local_progress.inner_step,
-                #         batch_size=self.local_progress.samples_accumulated,
-                #     )
-                # if (self.local_progress.inner_step % 2) == 0:
-                #     self.loop = asyncio.new_event_loop()
-                #     self.loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1, timeout = 400)))
-
                 self.local_progress.samples_accumulated = 0
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
     ) -> distributed_training.protocol.AllReduce:
         """Handle incoming all_reduce requests by pausing continuous training"""
+        bt.logging.info("Received All Reduce Call")
         try:
             async with self.training_lock:
                 # Cancel any ongoing upload
@@ -508,21 +498,20 @@ class Miner(BaseMinerNeuron):
                     )
                     self.current_upload_future.cancel()
 
-                # Ensure training is paused
+                # # Ensure training is paused
                 self.pause_training()
 
-                # Wait for running training process to finish
-                await asyncio.sleep(2)
-
                 try:
-                    bandwidth = get_bandwidth()
                     # Run allreduce with proper timeout
                     synapse = await self.avg_handler.run_miner_allreduce(
-                        synapse, self.local_progress, bandwidth
+                        synapse,
+                        self.local_progress,
+                        # bandwidth
                     )
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
-                except Exception:
+                except Exception as e:
+                    bt.logging.info(f"All Reduce Failed with error {e}")
                     await asyncio.sleep(10)
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)

@@ -444,7 +444,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     "failed_is_alive_counter"
                 ].flatten()[0]
             if "uid_tracker" in state:
-                self.uid_tracker = state["uid_tracker"]
+                self.uid_tracker = state["uid_tracker"].flatten()[0]
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(
