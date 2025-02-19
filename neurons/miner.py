@@ -511,7 +511,7 @@ class Miner(BaseMinerNeuron):
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception as e:
-                    bt.logging.info(f"All Reduce Failed with error {e}")
+                    bt.logging.info(f"All Reduce Failed with error: {e}")
                     await asyncio.sleep(10)
                     self.global_progress.epoch = get_global_epoch(self)
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
