@@ -30,9 +30,18 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import bittensor as bt
-import distributed_training
-import numpy as np
 import torch
+from huggingface_hub import (
+    create_repo,
+    create_tag,
+    delete_tag,
+    list_repo_refs,
+    repo_exists,
+    upload_folder,
+)
+from transformers import AutoTokenizer
+
+import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron
 from distributed_training.data.dataset import DatasetLoader
@@ -50,7 +59,6 @@ from distributed_training.utils.progress_tracker import (
     get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
-    ModelLoadingManager,
     FastModelLoader,
     cleanup_old_cache,
     load_model_optimizer_gradient_averager,
@@ -503,6 +511,16 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
+
+                # Periodic model upload
+                if self.local_progress.inner_step % 5 == 0:
+                    self.start_background_upload(
+                        epoch=self.local_progress.epoch,
+                        inner_step=self.local_progress.inner_step,
+                        batch_size=self.local_progress.samples_accumulated,
+                    )
+                if (self.local_progress.inner_step % 2) == 0:
+                    self.loop = asyncio.new_event_loop()
 
                 self.local_progress.samples_accumulated = 0
 

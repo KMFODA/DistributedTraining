@@ -426,7 +426,7 @@ def load_model_optimizer_gradient_averager(
             offloaded_optimizer=self.state_averager.optimizer,
             prefix=f"{self.config.neuron.run_id}_grad_averager",
             compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),  # TODO Not sure this is necessary when we have the above
+            state_compression=hivemind.Uniform8BitQuantization(),
             min_group_size=self.config.neuron.min_group_size,
             min_matchmaking_time=30.0,
             request_timeout=10.0,

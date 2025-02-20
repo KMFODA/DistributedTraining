@@ -47,6 +47,7 @@ class AveragingHandler:
         dendrite_pool,
         peerids_to_uids,
         miner_uids,
+        master,
         bandwidth=None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -72,31 +73,33 @@ class AveragingHandler:
             bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
             # Start gradient averaging without waiting
             gradient_averaging_step = self.grad_averager.step(
-                gather=0,
-                wait=False,
                 timeout=timeout,
+                wait=False,
+                gather=0,
                 peerids_to_uids=peerids_to_uids,
             )
 
-            # Send AllReduce query to pause miner training and perform global sync
-            query_tasks.append(
-                dendrite_pool.async_forward(
-                    miner_uids,
-                    [AllReduce(completion=False) for _ in miner_uids],
-                    timeout=timeout,
+            if master:
+                # Send AllReduce query to pause miner training and perform global sync
+                query_tasks.append(
+                    dendrite_pool.async_forward(
+                        miner_uids,
+                        [AllReduce(completion=False) for _ in miner_uids],
+                        timeout=timeout,
+                    )
                 )
-            )
-            bt.logging.info(
-                ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
-            )
+                bt.logging.info(
+                    ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
+                )
+                await asyncio.gather(*query_tasks)
+                bt.logging.info("AllReduce Query Responses Received..")
+            
             start_time = time.perf_counter()
-            await asyncio.gather(*query_tasks)
-            bt.logging.info("AllReduce Query Responses Received..")
 
             while (gradient_averaging_step.done() is False) and (
                 (time.perf_counter() - start_time) <= (timeout)
             ):
-                time.sleep(1)
+                await asyncio.sleep(1)
 
             if gradient_averaging_step.done():
                 bt.logging.info(
@@ -301,12 +304,13 @@ class AveragingHandler:
             while (gradient_averaging_step.done() is False) and (
                 (time.perf_counter() - start_time) <= (synapse.timeout)
             ):
-                time.sleep(1)
+                await asyncio.sleep(1)
 
             if gradient_averaging_step.done():
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
+                self.grad_averager.notify_used_averaged_gradients()
 
                 initial_weights = self._get_weights_sample()
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
