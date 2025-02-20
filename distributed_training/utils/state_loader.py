@@ -384,7 +384,7 @@ def load_model_optimizer_gradient_averager(
             param_groups,
             self.outer_optimizer,
             scheduler_or_factory=None,
-            initialize_optimizer=None,
+            initialize_optimizer=True,
         )
 
     else:

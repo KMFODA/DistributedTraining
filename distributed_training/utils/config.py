@@ -158,7 +158,7 @@ def add_args(cls, parser, prefix=None):
     )
 
     parser.add_argument(
-        "--neuron.hf_repo_id",
+        "--neuron.miner_hf_repo_id",
         type=str,
         help="The model to be trained",
         default=None,

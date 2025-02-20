@@ -17,6 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 import asyncio
 import os
+import gc
 import queue
 import random
 import tempfile
@@ -64,6 +65,8 @@ from huggingface_hub import (
     delete_tag,
 )
 from transformers import AutoTokenizer
+from hivemind.averaging.averager import compute_schema_hash
+from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -195,13 +198,13 @@ class Miner(BaseMinerNeuron):
         self.model_upload_retry_delay = 6
 
         # Initialize FastModelLoader
-        self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
+        self.loader = FastModelLoader(self.config.neuron.miner_hf_repo_id)
 
         # Initialize model and its components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.hf_repo_id, self.local_progress.epoch
+            self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch
         )
-        cleanup_old_cache(self, repo_id=self.config.neuron.hf_repo_id)
+        cleanup_old_cache(self, repo_id=self.config.neuron.miner_hf_repo_id)
 
         # Initialize thread pool for background uploads
         self.upload_executor = ThreadPoolExecutor(
@@ -209,14 +212,33 @@ class Miner(BaseMinerNeuron):
         )
         self.current_upload_future = None
 
-        # Load state if
-        if (self.local_progress.epoch is None) or (
-            self.local_progress.epoch != self.global_progress.epoch
+        # Load global model if local model is out of sync
+        global_model = AutoModelForCausalLM.from_pretrained(
+            self.config.neuron.model_name,
+            revision=str(self.global_progress.epoch),
+            trust_remote_code=True,
+        )
+        if self.config.neuron.model_name == self.config.neuron.miner_hf_repo_id:
+            bt.logging.warning("SAME")
+        if (
+            (self.local_progress.epoch is None)
+            or (self.local_progress.epoch != self.global_progress.epoch)
+            or (
+                compute_schema_hash(global_model.parameters())
+                != compute_schema_hash(self.model.parameters())
+            )
         ):
+            del global_model
+            gc.collect()
+            torch.cuda.empty_cache()
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             self.start_background_upload(
                 epoch=self.global_progress.epoch, inner_step=0, batch_size=0
             )
+        else:
+            del global_model
+            gc.collect()
+            torch.cuda.empty_cache()
 
         # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
@@ -240,15 +262,15 @@ class Miner(BaseMinerNeuron):
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
 
-        if not repo_exists(self.config.neuron.hf_repo_id, repo_type="model"):
+        if not repo_exists(self.config.neuron.miner_hf_repo_id, repo_type="model"):
             try:
                 create_repo(
-                    self.config.neuron.hf_repo_id,
+                    self.config.neuron.miner_hf_repo_id,
                     repo_type="model",
                     private=False,
                 )
                 bt.logging.info(
-                    f"Created new repository: {self.config.neuron.hf_repo_id}"
+                    f"Created new repository: {self.config.neuron.miner_hf_repo_id}"
                 )
             except Exception as e:
                 bt.logging.error(f"Failed to create repository: {str(e)}")
@@ -269,12 +291,12 @@ class Miner(BaseMinerNeuron):
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
-                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.hf_repo_id}"
+                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.miner_hf_repo_id}"
                     )
                     commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
                     upload_folder(
                         folder_path=tmp_folder,
-                        repo_id=self.config.neuron.hf_repo_id,
+                        repo_id=self.config.neuron.miner_hf_repo_id,
                         repo_type="model",
                         commit_message=commit_message,
                     )
@@ -285,12 +307,12 @@ class Miner(BaseMinerNeuron):
                     if epoch in [int(tag.name) for tag in refs.tags]:
                         # Update tag for this version
                         delete_tag(
-                            self.config.neuron.hf_repo_id,
+                            self.config.neuron.miner_hf_repo_id,
                             repo_type="model",
                             tag=str(epoch),
                         )
                         create_tag(
-                            self.config.neuron.hf_repo_id,
+                            self.config.neuron.miner_hf_repo_id,
                             repo_type="model",
                             tag=str(epoch),
                             tag_message=commit_message,
@@ -298,7 +320,7 @@ class Miner(BaseMinerNeuron):
                     else:
                         # Create new tag for this version
                         create_tag(
-                            self.config.neuron.hf_repo_id,
+                            self.config.neuron.miner_hf_repo_id,
                             repo_type="model",
                             tag=str(epoch),
                             tag_message=commit_message,
@@ -307,12 +329,12 @@ class Miner(BaseMinerNeuron):
                     # Cleanup old cache
                     cleanup_old_cache(
                         self,
-                        repo_id=self.config.neuron.hf_repo_id,
+                        repo_id=self.config.neuron.miner_hf_repo_id,
                         current_revision=None,
                     )
 
                     bt.logging.info(
-                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.hf_repo_id}"
+                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
                     )
                     return True
 
