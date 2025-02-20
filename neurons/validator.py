@@ -183,9 +183,7 @@ class Validator(BaseValidatorNeuron):
         # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
 
-        # Init last_allreduce_block to current block if on the master_uid
-        # else init last_allreduce from the HF model configs
-
+        # Init last_allreduce_block to current block if on the master_uid else init last_allreduce from the HF model configs
         if (self.uid == self.master_uid) or (
             "last_allreduce_block" not in self.model.config.__dict__
         ):

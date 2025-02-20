@@ -16,8 +16,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import time
-
 import bittensor as bt
 import numpy as np
 import torch
@@ -54,8 +52,11 @@ async def forward(self):
         load_state_from_peer(self, epoch=self.global_progress.epoch)
 
     # Evaluate wether to run an AllReduce or validate HF miner states
-    blocks_since_allreduce = self.block - self.last_allreduce_block
+    blocks_since_allreduce = self.current_block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    bt.logging.info(
+        f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {should_allreduce}"
+    )
 
     responses = [[]]
     self.miner_uids = []
@@ -96,10 +97,14 @@ async def forward(self):
                 dendrite_pool=self.dendrite_pool,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
+                master=self.uid == self.master_uid,
                 # bandwidth=bandwidth,
             )
 
             if all_reduce_success_status:
+                # Reset allreduce block tracker
+                self.last_allreduce_block = self.current_block
+
                 if self.uid == self.master_uid:
                     # Upload new global state to HF
                     upload_new_state(
@@ -124,9 +129,9 @@ async def forward(self):
                 self.local_progress.samples_accumulated = 0
 
                 for uid in self.uid_tracker.keys():
-                    self.uid_tracker[uid][
-                        "all_reduce_successes"
-                    ] = self.allreduce_scores[uid]
+                    self.uid_tracker[uid]["all_reduce_successes"] = (
+                        self.allreduce_scores[uid]
+                    )
                     self.uid_tracker[uid]["all_reduce_counts"] += 1
 
             else:
