@@ -308,7 +308,6 @@ class Miner(BaseMinerNeuron):
                         repo_type="model",
                         commit_message=commit_message,
                     )
-
                     refs = list_repo_refs(
                         self.config.neuron.miner_hf_repo_id, repo_type="model"
                     )
@@ -318,8 +317,9 @@ class Miner(BaseMinerNeuron):
                             delete_tag(
                                 self.config.neuron.miner_hf_repo_id,
                                 repo_type="model",
-                                tag=str(epoch),
+                                tag=tag.name,
                             )
+                            time.sleep(1)
                     # Create new tag for this version
                     create_tag(
                         self.config.neuron.miner_hf_repo_id,
