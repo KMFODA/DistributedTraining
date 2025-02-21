@@ -93,7 +93,7 @@ class AveragingHandler:
                 )
                 await asyncio.gather(*query_tasks)
                 bt.logging.info("AllReduce Query Responses Received..")
-            
+
             start_time = time.perf_counter()
 
             while (gradient_averaging_step.done() is False) and (

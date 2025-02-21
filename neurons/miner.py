@@ -108,19 +108,21 @@ class Miner(BaseMinerNeuron):
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
         setup_logging(config=self.config)
-        
+
         # Core setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         init_dht(self)
-        
+
         # Progress tracking
         self._init_progress_tracking()
-        
+
         # Wandb setup
         if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
-        
+            self.wandb = load_wandb(
+                self, self.config, self.wallet, "miner", str(self.dht.peer_id)
+            )
+
         # Training components
         self._init_training_components()
 
@@ -140,26 +142,30 @@ class Miner(BaseMinerNeuron):
         self.local_progress.epoch = get_local_epoch(self)
 
         if self.global_progress.epoch is None:
-            bt.logging.error("Model Tag Is None. Make Sure You Are Using The Correct Model Name")
+            bt.logging.error(
+                "Model Tag Is None. Make Sure You Are Using The Correct Model Name"
+            )
 
     def _init_training_components(self):
         # Event tracking
         self.event = {}
         self.stop_event = threading.Event()
-        
+
         # Training control
         self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
-        
+
         # Queue and executor
         self.training_queue = queue.Queue()
-        self.training_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="training_worker")
-        
+        self.training_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="training_worker"
+        )
+
         # Async components
         self.training_loop = asyncio.new_event_loop()
         self.training_lock = asyncio.Lock()
-        
+
         # Status tracking
         self.training_status = TrainingStatus.STOPPED
         self.training_error = None
@@ -182,7 +188,7 @@ class Miner(BaseMinerNeuron):
         self.allreduce_timeout = 360
         self.num_inner_steps = 500
         self.offload_optimizer = True
-        
+
         # Upload settings
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
@@ -190,15 +196,19 @@ class Miner(BaseMinerNeuron):
     def _load_model(self):
         # Initialize loader
         self.loader = FastModelLoader(self.config.neuron.miner_hf_repo_id)
-        
+
         # Load model and components
-        load_model_optimizer_gradient_averager(self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch)
+        load_model_optimizer_gradient_averager(
+            self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch
+        )
         cleanup_old_cache(self, repo_id=self.config.neuron.miner_hf_repo_id)
-        
+
         # Setup upload executor
-        self.upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model_upload")
+        self.upload_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="model_upload"
+        )
         self.current_upload_future = None
-        
+
         # Sync and initialize handlers
         self._sync_with_global_model()
         self.avg_handler = AveragingHandler(
@@ -210,7 +220,9 @@ class Miner(BaseMinerNeuron):
 
     def _setup_training_params(self):
         self.local_batch_size_train = self.config.neuron.local_batch_size_train
-        self.local_batch_size_train_effective = self.config.neuron.local_batch_size_train_effective
+        self.local_batch_size_train_effective = (
+            self.config.neuron.local_batch_size_train_effective
+        )
         self.logging_interval = 5
         self.number_of_local_steps = (
             self.config.neuron.local_batch_size_train_effective
@@ -228,8 +240,12 @@ class Miner(BaseMinerNeuron):
             revision=str(self.global_progress.epoch),
             trust_remote_code=True,
         )
-        
-        needs_sync = (
+
+        if self.config.neuron.model_name == self.config.neuron.miner_hf_repo_id:
+            bt.logging.warning(
+                "Your local miner_hf_repo_id set to the global model_name. This will harm your incentive. Set miner_hf_repo_id to a unique huggingface repo id."
+            )
+        should_sync_model = (
             (self.local_progress.epoch is None)
             or (self.local_progress.epoch != self.global_progress.epoch)
             or (
@@ -237,8 +253,8 @@ class Miner(BaseMinerNeuron):
                 != compute_schema_hash(self.model.parameters())
             )
         )
-        
-        if needs_sync:
+
+        if should_sync_model:
             del global_model
             gc.collect()
             torch.cuda.empty_cache()
@@ -250,8 +266,7 @@ class Miner(BaseMinerNeuron):
             del global_model
             gc.collect()
             torch.cuda.empty_cache()
-            
-    
+
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
 
@@ -295,29 +310,23 @@ class Miner(BaseMinerNeuron):
                     )
 
                     refs = list_repo_refs(
-                        self.config.neuron.model_name, repo_type="model"
+                        self.config.neuron.miner_hf_repo_id, repo_type="model"
                     )
-                    if epoch in [int(tag.name) for tag in refs.tags]:
-                        # Update tag for this version
-                        delete_tag(
-                            self.config.neuron.miner_hf_repo_id,
-                            repo_type="model",
-                            tag=str(epoch),
-                        )
-                        create_tag(
-                            self.config.neuron.miner_hf_repo_id,
-                            repo_type="model",
-                            tag=str(epoch),
-                            tag_message=commit_message,
-                        )
-                    else:
-                        # Create new tag for this version
-                        create_tag(
-                            self.config.neuron.miner_hf_repo_id,
-                            repo_type="model",
-                            tag=str(epoch),
-                            tag_message=commit_message,
-                        )
+                    for tag in refs.tags:
+                        if int(tag.name) >= epoch:
+                            # Update tag for this version
+                            delete_tag(
+                                self.config.neuron.miner_hf_repo_id,
+                                repo_type="model",
+                                tag=str(epoch),
+                            )
+                    # Create new tag for this version
+                    create_tag(
+                        self.config.neuron.miner_hf_repo_id,
+                        repo_type="model",
+                        tag=str(epoch),
+                        tag_message=commit_message,
+                    )
 
                     # Cleanup old cache
                     cleanup_old_cache(

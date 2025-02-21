@@ -129,9 +129,9 @@ async def forward(self):
                 self.local_progress.samples_accumulated = 0
 
                 for uid in self.uid_tracker.keys():
-                    self.uid_tracker[uid]["all_reduce_successes"] = (
-                        self.allreduce_scores[uid]
-                    )
+                    self.uid_tracker[uid][
+                        "all_reduce_successes"
+                    ] = self.allreduce_scores[uid]
                     self.uid_tracker[uid]["all_reduce_counts"] += 1
 
             else:

@@ -219,6 +219,7 @@ class FastModelLoader:
 
         return state_dict, optimizer_state
 
+
 def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
     try:
         if revision and revision != "None":
@@ -228,17 +229,28 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
         return True
     except (RepositoryNotFoundError, EntryNotFoundError):
         return False
-    
+
+
 def load_model_optimizer_gradient_averager(
     self, model_name, epoch, use_fast_loader=False
 ):
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
+    fall_back_model_name = self.config.neuron.model_name
+
     # Delete existing model
     if hasattr(self, "model"):
+        transformer = self.model.model.transformer
+        for component in ["wte", "wpe"]:
+            if hasattr(transformer, component):
+                comp = getattr(transformer, component)
+                if hasattr(comp, "weight"):
+                    del comp.weight
+                if hasattr(comp, "norm"):
+                    del comp.norm
+                delattr(transformer, component)
         del self.model
-
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -254,44 +266,6 @@ def load_model_optimizer_gradient_averager(
                 model_name, state_dict=model_state, trust_remote_code=True
             )
 
-            # Move model to device
-            self.model = self.model.to(self.device)
-            self.model.config.block_list = []
-
-            # Set inner step
-            self.local_progress.inner_step = (
-                self.model.config.inner_step
-                if "inner_step" in self.model.config.__dict__
-                else 0
-            )
-
-            # Handle optimizer initialization/loading
-            if hasattr(self, "opt"):
-                self.inner_optimizer.param_groups = self.model.parameters()
-            else:
-                self.inner_optimizer = torch.optim.AdamW(
-                    self.model.parameters(),
-                    lr=optimizer_state.get("learning_rate", self.learning_rate_maximum),
-                    betas=(0.9, 0.95),
-                    eps=1e-8,
-                    weight_decay=0.1,
-                )
-
-            # Load optimizer state if available
-            if "optimizer_state_dict" in optimizer_state:
-                self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
-                )
-
-            del optimizer_state
-            del model_state
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            bt.logging.info(
-                f"Successfully loaded model and optimizer using fast loader for epoch {epoch}"
-            )
-
         except Exception as e:
             bt.logging.error(
                 f"Fast loader failed: {str(e)}. Falling back to standard loading."
@@ -299,7 +273,6 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-
         if check_model_exists(model_name, revision=str(epoch)):
             try:
                 self.model = (
@@ -311,80 +284,90 @@ def load_model_optimizer_gradient_averager(
                         model_name, trust_remote_code=True
                     )
                 )
-                bt.logging.info(f"Successfully loaded model from {model_name} with revision {epoch}")
-                
+                bt.logging.info(
+                    f"Successfully loaded model from {model_name} with revision {epoch}"
+                )
+
             except Exception as e:
-                bt.logging.warning(f"Failed to load model despite repo existing: {str(e)}")
-                
+                bt.logging.warning(
+                    f"Failed to load model despite repo existing: {str(e)}"
+                )
+
                 bt.logging.info("Fallback to loading from global repo")
                 self.model = (
-                        AutoModelForCausalLM.from_pretrained(
-                            self.config.neuron.model_name, revision=str(epoch), trust_remote_code=True
-                        )
-                        if epoch
-                        else AutoModelForCausalLM.from_pretrained(
-                            self.config.neuron.model_name, trust_remote_code=True
-                        )
+                    AutoModelForCausalLM.from_pretrained(
+                        fall_back_model_name,
+                        revision=str(epoch),
+                        trust_remote_code=True,
                     )
+                    if epoch
+                    else AutoModelForCausalLM.from_pretrained(
+                        fall_back_model_name, trust_remote_code=True
+                    )
+                )
                 bt.logging.info("Successfully loaded global model")
-       
-        self.model = self.model.to(self.device)
-        self.model.config.block_list = []
-        self.local_progress.inner_step = (
-            self.model.config.inner_step
-            if "inner_step" in self.model.config.__dict__
-            else 0
+
+    # Move model to device
+    self.model = self.model.to(self.device)
+    self.model.config.block_list = []
+    self.local_progress.inner_step = (
+        self.model.config.inner_step
+        if "inner_step" in self.model.config.__dict__
+        else 0
+    )
+
+    # Delete any historic model references in GlobalOptimManager
+    if (
+        hasattr(self, "inner_optimizer")
+        and hasattr(self.inner_optimizer, "mng")
+        and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+    ):
+        self.inner_optimizer.mng.module_weight_config_triple = (
+            self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
-        try:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=model_name,
-                    filename="optimizer.pt",
-                    revision=str(epoch),
-                ),
-                weights_only=True,
-                map_location="cpu",
+    self.inner_optimizer = torch.optim.AdamW(
+        self.model.parameters(),
+        lr=self.learning_rate_maximum,
+        betas=(0.9, 0.95),
+        eps=1e-8,
+        weight_decay=0.1,
+    )
+
+    optimizer_state = None
+    try:
+        optimizer_state = torch.load(
+            hf_hub_download(
+                repo_id=model_name,
+                filename="inner_optimizer.pt",
+                revision=str(epoch),
+            ),
+            weights_only=True,
+            map_location="cpu",
+        )
+
+        # Load optimizer state if available
+        if "optimizer_state_dict" in optimizer_state:
+            self.inner_optimizer.load_state_dict(
+                optimizer_state["optimizer_state_dict"]
             )
 
-            if hasattr(self, "opt"):
-                self.inner_optimizer.param_groups = self.model.parameters()
-            else:
-                self.inner_optimizer = torch.optim.AdamW(
-                    self.model.parameters(),
-                    lr=optimizer_state["learning_rate"],
-                    betas=(0.9, 0.95),
-                    eps=1e-8,
-                    weight_decay=0.1,
-                )
+        if "learning_rate" in optimizer_state:
+            self.inner_optimizer.lr = optimizer_state["learning_rate"]
 
-            # Load optimizer state if available
-            if "optimizer_state_dict" in optimizer_state:
-                self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
-                )
+        del optimizer_state
+        gc.collect()
+        torch.cuda.empty_cache()
 
-            del optimizer_state
-            gc.collect()
-            torch.cuda.empty_cache()
+        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
 
-            bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-            self.inner_optimizer = torch.optim.AdamW(
-                self.model.parameters(),
-                lr=self.learning_rate_maximum,
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                weight_decay=0.1,
-            )
-
-    # Clean up
-    gc.collect()
-    torch.cuda.empty_cache()
+    except Exception as e:
+        bt.logging.warning(
+            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+        )
+        del optimizer_state
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
@@ -393,8 +376,6 @@ def load_model_optimizer_gradient_averager(
     if hasattr(self, "state_averager"):
         for i in self.state_averager.main_parameters:
             del i
-        gc.collect()
-        torch.cuda.empty_cache()
 
         # Reset gradient buffers and parameters
         self.state_averager.main_parameters = tuple(self.model.parameters())
@@ -419,6 +400,10 @@ def load_model_optimizer_gradient_averager(
             scheduler_or_factory=None,
             initialize_optimizer=True,
         )
+
+        del param_groups
+        gc.collect()
+        torch.cuda.empty_cache()
 
     else:
         self.state_averager = DTStateAverager(
@@ -689,7 +674,9 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                     "learning_rate": self.learning_rate_maximum,
                     "epoch": epoch,
                 }
-                torch.save(optimizer_state, os.path.join(tmp_folder, "optimizer.pt"))
+                torch.save(
+                    optimizer_state, os.path.join(tmp_folder, "outer_optimizer.pt")
+                )
 
                 bt.logging.info(
                     f"Uploading model and optimizer states to repo: {self.config.neuron.model_name}"
