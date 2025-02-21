@@ -38,7 +38,7 @@ def get_global_epoch(self):
 
 def get_local_epoch(self):
     try:
-        refs = list_repo_refs(self.config.neuron.hf_repo_id, repo_type="model")
+        refs = list_repo_refs(self.config.neuron.miner_hf_repo_id, repo_type="model")
         global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         return global_epoch
     except Exception as e:

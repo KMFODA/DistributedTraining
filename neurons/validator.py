@@ -54,55 +54,41 @@ from distributed_training.validator import forward
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
-
-        # Initialize class variables
-        self.train_timeout = 120
-        self.allreduce_timeout = 540
-        self.load_state_timeout = 180
-        self.model_upload_retry_limit = 3
-        self.model_upload_retry_delay = 10
-        self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
-        self.warmup_steps = 62  # 306 / 5
-        self.learning_rate_maximum = 0.0025
-        self.weight_decay = 0.1
-        self.num_inner_steps = 500
-        self.offload_optimizer = True
-        self.failed_is_alive_counter_threshold = 10
-
-        # Update wandb project
-        if self.neuron_type == "MinerNeuron":
-            self.config.neuron.wandb_project = (
-                self.config.neuron.wandb_project + "_miners"
-            )
-        elif self.neuron_type == "ValidatorNeuron":
-            self.config.neuron.wandb_project = (
-                self.config.neuron.wandb_project + "_validators"
-            )
-
-        # Initialize components
+        self._update_wandb_project()
         self._init_basic_components()
         self._init_model_components()
         self._init_network_components()
         self._init_uid_components()
 
+    def _update_wandb_project(self):
+        suffix = "_validators" if self.neuron_type == "ValidatorNeuron" else "_miners"
+        self.config.neuron.wandb_project += suffix
+
     def _init_basic_components(self):
         """Initialize basic validator components"""
-
-        # Init logging
         setup_logging(config=self.config)
 
         bt.logging.debug("load_state()")
         self.load_state()
 
-        # Init Dendrite Pool
+        # Core setup
+        self.device = self.config.neuron.device
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         self.dendrite_pool = AsyncDendritePool(
             wallet=self.wallet, metagraph=self.metagraph
         )
-
-        # Init DHT
         init_dht(self)
 
-        # Init progress tracking
+        # Progress tracking
+        self._init_progress_tracking()
+
+        # Wandb setup
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb = load_wandb(
+                self, self.config, self.wallet, "validator", str(self.dht.peer_id)
+            )
+
+    def _init_progress_tracking(self):
         self.local_progress = LocalTrainingProgress(
             peer_id=self.dht.peer_id.to_bytes(),
             epoch=0,
@@ -117,40 +103,53 @@ class Validator(BaseValidatorNeuron):
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = self.global_progress.epoch
 
-        # Init Wandb
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(
-                self, self.config, self.wallet, "validator", str(self.dht.peer_id)
+        if self.global_progress.epoch is None:
+            bt.logging.error(
+                "Model Tag Is None. Make Sure You Are Using The Correct Model Name"
             )
 
-        # Init Device
-        self.device = self.config.neuron.device
-
     def _init_model_components(self):
-        """Initialize model and training components"""
-        # Init Tokenizer
-        model_name = "distilgpt2"
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        """Initialize model-related components including tokenizer and optimizer settings."""
+        self._setup_model_params()
+        self._init_tokenizer()
+        self._setup_model_state()
+
+    def _setup_model_params(self):
+        # Timeouts
+        self.train_timeout = 120
+        self.allreduce_timeout = 540
+        self.load_state_timeout = 180
+
+        # Core parameters
+        self.learning_rate_maximum = 0.0025
+        self.weight_decay = 0.1
+        self.num_inner_steps = 500
+        self.offload_optimizer = True
+        self.model_upload_retry_limit = 3
+        self.model_upload_retry_delay = 10
+
+        # Validator-specific training parameters
+        self.maximum_steps = 306 * 4  # 10_000_000_000/(32000*1024)
+        self.warmup_steps = 62  # 306 / 5
+        self.failed_is_alive_counter_threshold = 10
+
+    def _init_tokenizer(self):
+        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Init learning rate and loss tracking
+    def _setup_model_state(self):
         self.learning_rate = self.get_learning_rate()
         self.average_loss = None
-
-        # Initialize FastModelLoader
         self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
-        # Init Model, Optimizer & Gradient Averager & Clear Cache
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.model_name, self.global_progress.epoch
         )
         cleanup_old_cache(self)
 
-        # Load state if needed
         if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
 
-        # Initialize AveragingHandler for allreduce
         self.avg_handler = AveragingHandler(
             self.model,
             self.inner_optimizer,
@@ -160,30 +159,26 @@ class Validator(BaseValidatorNeuron):
 
     def _init_network_components(self):
         """Initialize network and P2P components"""
-
-        # Log PeerID to chain
         bt.logging.info("Logging PeerID to chain")
         log_peerid_to_chain(self)
 
     def _init_uid_components(self):
-        """Initialize UID related components"""
-        # Set UIDs
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+        self._setup_uids()
+        self._init_peer_mapping()
+        self._setup_allreduce_block()
+
+    def _setup_uids(self):
         self.master_uid = self.metagraph.hotkeys.index(
             self.config.neuron.master_ss58_address,
         )
-
-        # Init UID to PeerID mapping
-        self.stop_event = threading.Event()
-        map_uid_to_peerid(self)
-
-        # Update PeerID list
-        update_run_peerid_list(self)
-
-        # Init UID is_alive counter
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
 
-        # Init last_allreduce_block to current block if on the master_uid else init last_allreduce from the HF model configs
+    def _init_peer_mapping(self):
+        self.stop_event = threading.Event()
+        map_uid_to_peerid(self)
+        update_run_peerid_list(self)
+
+    def _setup_allreduce_block(self):
         if (self.uid == self.master_uid) or (
             "last_allreduce_block" not in self.model.config.__dict__
         ):

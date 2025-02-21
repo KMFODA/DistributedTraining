@@ -96,35 +96,35 @@ class TrainingStatus(Enum):
 class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
-
-        # Update wandb project
-        if self.neuron_type == "MinerNeuron":
-            self.config.neuron.wandb_project = (
-                self.config.neuron.wandb_project + "_miners"
-            )
-        elif self.neuron_type == "ValidatorNeuron":
-            self.config.neuron.wandb_project = (
-                self.config.neuron.wandb_project + "_validators"
-            )
-
+        self._update_wandb_project()
         self._init_basic_components()
         self._init_model_components()
         self._init_network_components()
 
+    def _update_wandb_project(self):
+        suffix = "_miners" if self.neuron_type == "MinerNeuron" else "_validators"
+        self.config.neuron.wandb_project += suffix
+
     def _init_basic_components(self):
         """Initialize basic miner components and configurations."""
-
-        # Init Logging
         setup_logging(config=self.config)
-
-        # Device and ID setup
+        
+        # Core setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-
-        # DHT initialization
         init_dht(self)
+        
+        # Progress tracking
+        self._init_progress_tracking()
+        
+        # Wandb setup
+        if not self.config.neuron.dont_wandb_log:
+            self.wandb = load_wandb(self, self.config, self.wallet, "miner", str(self.dht.peer_id))
+        
+        # Training components
+        self._init_training_components()
 
-        # Progress tracking initialization
+    def _init_progress_tracking(self):
         self.local_progress = LocalTrainingProgress(
             peer_id=self.dht.peer_id.to_bytes(),
             epoch=0,
@@ -139,103 +139,106 @@ class Miner(BaseMinerNeuron):
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = get_local_epoch(self)
 
-        # Wandb initialization if enabled
-        if not self.config.neuron.dont_wandb_log:
-            self.wandb = load_wandb(
-                self, self.config, self.wallet, "miner", str(self.dht.peer_id)
-            )
-
         if self.global_progress.epoch is None:
-            bt.logging.error(
-                "Model Tag Is None. Make Sure You Are Using The Correct Model Name"
-            )
+            bt.logging.error("Model Tag Is None. Make Sure You Are Using The Correct Model Name")
 
+    def _init_training_components(self):
         # Event tracking
         self.event = {}
         self.stop_event = threading.Event()
-
-        # Thread safe subtensor block variables
-        self._block_lock = threading.Lock()
-        self._last_block = None
-        self._last_block_time = 0
-        self._block_cache_duration = 5  # Cache block number for 5 seconds
-
+        
         # Training control
         self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
-
-        # Add these new components
+        
+        # Queue and executor
         self.training_queue = queue.Queue()
-        self.training_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="training_worker"
-        )
-
-        # Create a separate loop for training operations
+        self.training_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="training_worker")
+        
+        # Async components
         self.training_loop = asyncio.new_event_loop()
         self.training_lock = asyncio.Lock()
-
-        # Training status tracking
+        
+        # Status tracking
         self.training_status = TrainingStatus.STOPPED
         self.training_error = None
-        self.training_thread = None
-
-    def _init_network_components(self):
-        """Initialize network and P2P components"""
-
-        # Log PeerID to chain
-        bt.logging.info("Logging PeerID to chain")
-        log_peerid_to_chain(self)
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
-        # Tokenizer setup
-        model_name = "distilgpt2"
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+        self._init_tokenizer()
+        self._setup_model_params()
+        self._load_model()
+        self._setup_training_params()
+
+    def _init_tokenizer(self):
+        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Optimizer configurations
+    def _setup_model_params(self):
+        # Optimizer settings
         self.learning_rate_maximum = 6e-4
         self.weight_decay = 0.1
         self.allreduce_timeout = 360
         self.num_inner_steps = 500
-        self.offload_optimizer = True  # DiLoCo Optimizer requires optimizer offloading
-
-        # Model loading settings
+        self.offload_optimizer = True
+        
+        # Upload settings
         self.model_upload_retry_limit = 3
         self.model_upload_retry_delay = 6
 
-        # Initialize FastModelLoader
+    def _load_model(self):
+        # Initialize loader
         self.loader = FastModelLoader(self.config.neuron.miner_hf_repo_id)
-
-        # Initialize model and its components
-        load_model_optimizer_gradient_averager(
-            self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch
-        )
+        
+        # Load model and components
+        load_model_optimizer_gradient_averager(self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch)
         cleanup_old_cache(self, repo_id=self.config.neuron.miner_hf_repo_id)
-
-        # Initialize thread pool for background uploads
-        self.upload_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="model_upload"
-        )
+        
+        # Setup upload executor
+        self.upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model_upload")
         self.current_upload_future = None
+        
+        # Sync and initialize handlers
+        self._sync_with_global_model()
+        self.avg_handler = AveragingHandler(
+            self.model,
+            self.inner_optimizer,
+            self.grad_averager,
+            self.state_averager,
+        )
 
-        # Load global model if local model is out of sync
+    def _setup_training_params(self):
+        self.local_batch_size_train = self.config.neuron.local_batch_size_train
+        self.local_batch_size_train_effective = self.config.neuron.local_batch_size_train_effective
+        self.logging_interval = 5
+        self.number_of_local_steps = (
+            self.config.neuron.local_batch_size_train_effective
+            // self.config.neuron.local_batch_size_train
+        )
+
+    def _init_network_components(self):
+        """Initialize network and P2P components"""
+        bt.logging.info("Logging PeerID to chain")
+        log_peerid_to_chain(self)
+
+    def _sync_with_global_model(self):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.model_name,
             revision=str(self.global_progress.epoch),
             trust_remote_code=True,
         )
-        if self.config.neuron.model_name == self.config.neuron.miner_hf_repo_id:
-            bt.logging.warning("SAME")
-        if (
+        
+        needs_sync = (
             (self.local_progress.epoch is None)
             or (self.local_progress.epoch != self.global_progress.epoch)
             or (
                 compute_schema_hash(global_model.parameters())
                 != compute_schema_hash(self.model.parameters())
             )
-        ):
+        )
+        
+        if needs_sync:
             del global_model
             gc.collect()
             torch.cuda.empty_cache()
@@ -247,26 +250,8 @@ class Miner(BaseMinerNeuron):
             del global_model
             gc.collect()
             torch.cuda.empty_cache()
-
-        # Initialize AveragingHandler for allreduce
-        self.avg_handler = AveragingHandler(
-            self.model,
-            self.inner_optimizer,
-            self.grad_averager,
-            self.state_averager,
-        )
-
-        # Init training parameters
-        self.local_batch_size_train = self.config.neuron.local_batch_size_train
-        self.local_batch_size_train_effective = (
-            self.config.neuron.local_batch_size_train_effective
-        )
-        self.logging_interval = 5
-        self.number_of_local_steps = (
-            self.config.neuron.local_batch_size_train_effective
-            // self.config.neuron.local_batch_size_train
-        )
-
+            
+    
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
 

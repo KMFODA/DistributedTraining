@@ -23,10 +23,15 @@ from huggingface_hub import (
     create_tag,
     hf_hub_download,
     list_repo_refs,
+    list_repo_files,
     scan_cache_dir,
     upload_folder,
 )
-from huggingface_hub.utils import HfHubHTTPError
+from huggingface_hub.utils import (
+    HfHubHTTPError,
+    RepositoryNotFoundError,
+    EntryNotFoundError,
+)
 from transformers import AutoModelForCausalLM
 
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
@@ -214,7 +219,16 @@ class FastModelLoader:
 
         return state_dict, optimizer_state
 
-
+def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
+    try:
+        if revision and revision != "None":
+            list_repo_files(repo_id, revision=revision)
+        else:
+            list_repo_files(repo_id)
+        return True
+    except (RepositoryNotFoundError, EntryNotFoundError):
+        return False
+    
 def load_model_optimizer_gradient_averager(
     self, model_name, epoch, use_fast_loader=False
 ):
@@ -285,16 +299,35 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-        # Standard loading process
-        self.model = (
-            AutoModelForCausalLM.from_pretrained(
-                model_name, revision=str(epoch), trust_remote_code=True
-            )
-            if epoch
-            else AutoModelForCausalLM.from_pretrained(
-                model_name, trust_remote_code=True
-            )
-        )
+
+        if check_model_exists(model_name, revision=str(epoch)):
+            try:
+                self.model = (
+                    AutoModelForCausalLM.from_pretrained(
+                        model_name, revision=str(epoch), trust_remote_code=True
+                    )
+                    if epoch
+                    else AutoModelForCausalLM.from_pretrained(
+                        model_name, trust_remote_code=True
+                    )
+                )
+                bt.logging.info(f"Successfully loaded model from {model_name} with revision {epoch}")
+                
+            except Exception as e:
+                bt.logging.warning(f"Failed to load model despite repo existing: {str(e)}")
+                
+                bt.logging.info("Fallback to loading from global repo")
+                self.model = (
+                        AutoModelForCausalLM.from_pretrained(
+                            self.config.neuron.model_name, revision=str(epoch), trust_remote_code=True
+                        )
+                        if epoch
+                        else AutoModelForCausalLM.from_pretrained(
+                            self.config.neuron.model_name, trust_remote_code=True
+                        )
+                    )
+                bt.logging.info("Successfully loaded global model")
+       
         self.model = self.model.to(self.device)
         self.model.config.block_list = []
         self.local_progress.inner_step = (
