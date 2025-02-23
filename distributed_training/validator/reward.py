@@ -262,7 +262,7 @@ def get_normalised_score(self, uid):
         ),
         dim=0,
     )
-    score = scores[uid]
+    score = torch.tensor([scores[uid]])
 
     return score
 
