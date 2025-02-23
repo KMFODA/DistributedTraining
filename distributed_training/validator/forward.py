@@ -24,7 +24,6 @@ from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
-    update_global_tracker_state,
 )
 from distributed_training.utils.state_loader import (
     load_state_from_peer,
@@ -44,7 +43,7 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    update_global_tracker_state(self)
+    self.global_progress.epoch = get_global_epoch(self)
     if self.local_progress.epoch != self.global_progress.epoch:
         bt.logging.info(
             f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
@@ -104,6 +103,7 @@ async def forward(self):
             if all_reduce_success_status:
                 # Reset allreduce block tracker
                 self.last_allreduce_block = self.current_block
+                self.local_progress.epoch += 1
 
                 if self.uid == self.master_uid:
                     # Upload new global state to HF

@@ -27,7 +27,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from distributed_training.data.dataset import DatasetLoader
-from distributed_training.utils.state_loader import cleanup_old_cache
+from distributed_training.utils.state_loader import (
+    cleanup_old_cache,
+    check_model_exists,
+)
 from distributed_training.utils.uids import (
     get_random_uids,
     map_uid_to_peerid,
@@ -144,80 +147,124 @@ async def score_uid(self, uid: int):
     """Score a single UID"""
 
     if self.uid_tracker[uid]["model_huggingface_id"] is None:
-        return 0
+        scores = 0
 
-    cleanup_old_cache(
-        self,
-        repo_id=self.uid_tracker[uid]["model_huggingface_id"],
-        current_revision=None,
+    elif not check_model_exists(self.uid_tracker[uid]["model_huggingface_id"]):
+        scores = 0
+
+    else:
+        cleanup_old_cache(
+            self,
+            repo_id=self.uid_tracker[uid]["model_huggingface_id"],
+            current_revision=None,
+        )
+
+        commits = list_repo_commits(
+            self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
+        )[:2]
+        latest_commit = commits[0].commit_id
+        time_delta = (commits[0].created_at - commits[1].created_at).seconds
+
+        model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
+        )
+        # Move the model to the appropriate device
+        self.model = self.model.to(self.device)
+
+        model_final = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        )
+
+        blocks = model_final.config.block_list
+        try:
+            for block in blocks:
+                dataset = await fetch_training_data(self, block)
+                total_loss = 0
+                batch_count = 0
+                inner_step_counter = 0
+
+                for inputs, labels in dataset:
+                    # Move to device
+                    inputs, labels = inputs.to(self.device), labels.to(self.device)
+
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        outputs = self.model(input_ids=inputs, labels=labels)
+                        loss = outputs[1]
+
+                    loss.backward()
+
+                    self.local_progress.samples_accumulated += inputs.size(0)
+                    total_loss += loss.detach().item()
+                    batch_count += 1
+                    inner_step_counter += 1
+
+                    if batch_count % 5 == 0:
+                        bt.logging.info(
+                            f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                        )
+
+                    self.inner_optimizer.step()
+                    self.inner_optimizer.zero_grad()
+                break
+        except Exception:
+            bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
+            return torch.tensor([1.0])
+
+        cleanup_old_cache(
+            self,
+            repo_id=model_huggingface_id,
+            current_revision=None,
+        )
+
+        try:
+            scores = score_models(self.model, model_final)
+        except Exception as e:
+            bt.logging.error(f"Error calculating final score: {str(e)}")
+            scores = 1.0
+
+        self.uid_tracker[uid]["last_commit"] = latest_commit
+        self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
+        self.uid_tracker[uid]["train_duration"] += time_delta
+
+    self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
+    self.uid_tracker[uid]["train_similarity_score"] += scores
+    self.uid_tracker[uid]["train_validation_count"] += 1
+
+    rewards = get_normalised_score(self, uid)
+
+    bt.logging.info(f"UID {uid} Train Score: {rewards}")
+
+    return rewards
+
+
+def get_normalised_score(self, uid):
+    self.uid_tracker[uid]["train_score"] = (
+        self.uid_tracker[uid]["train_similarity_score"]
+        * self.uid_tracker[uid]["train_number_of_blocks"]
+    ) / self.uid_tracker[uid]["train_validation_count"]
+
+    if self.uid_tracker[uid]["all_reduce_counts"] != 0:
+        self.uid_tracker[uid]["all_reduce_score"] = (
+            self.uid_tracker[uid]["all_reduce_successes"]
+            / self.uid_tracker[uid]["all_reduce_counts"]
+        )
+
+    self.uid_tracker[uid]["total_score"] = (
+        0.5 * self.uid_tracker[uid]["train_score"]
+    ) + (0.5 * self.uid_tracker[uid]["all_reduce_score"])
+
+    # Normalise all total_scores after updating uid specific total_score
+    scores = torch.nn.functional.normalize(
+        torch.tensor(
+            [self.uid_tracker[uid]["total_score"] for uid in self.uid_tracker.keys()]
+        ),
+        dim=0,
     )
+    score = scores[uid]
 
-    commits = list_repo_commits(
-        self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
-    )[:2]
-    latest_commit = commits[0].commit_id
-    time_delta = (commits[0].created_at - commits[1].created_at).seconds
-
-    model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
-
-    self.model = AutoModelForCausalLM.from_pretrained(
-        model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
-    )
-    # Move the model to the appropriate device
-    self.model = self.model.to(self.device)
-
-    model_final = AutoModelForCausalLM.from_pretrained(
-        model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
-    )
-
-    blocks = model_final.config.block_list
-    try:
-        for block in blocks:
-            dataset = await fetch_training_data(self, block)
-            total_loss = 0
-            batch_count = 0
-            inner_step_counter = 0
-
-            for inputs, labels in dataset:
-                # Move to device
-                inputs, labels = inputs.to(self.device), labels.to(self.device)
-
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    outputs = self.model(input_ids=inputs, labels=labels)
-                    loss = outputs[1]
-
-                loss.backward()
-
-                self.local_progress.samples_accumulated += inputs.size(0)
-                total_loss += loss.detach().item()
-                batch_count += 1
-                inner_step_counter += 1
-
-                if batch_count % 5 == 0:
-                    bt.logging.info(
-                        f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
-                    )
-
-                self.inner_optimizer.step()
-                self.inner_optimizer.zero_grad()
-
-    except Exception:
-        bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
-        return torch.tensor([1.0])
-
-    cleanup_old_cache(
-        self,
-        repo_id=model_huggingface_id,
-        current_revision=None,
-    )
-
-    try:
-        rewards = score_models(self.model, model_final)
-    except Exception as e:
-        bt.logging.error(f"Error calculating final score: {str(e)}")
-        rewards = 1.0
-
-    return rewards, latest_commit, time_delta, blocks
+    return score
 
 
 def score_models(model_1, model_2):

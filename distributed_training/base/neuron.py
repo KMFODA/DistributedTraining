@@ -99,6 +99,7 @@ class BaseNeuron(ABC):
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
         )
         self.step = 0
+
         self.uid_tracker = {
             uid: {
                 "peer_id": None,
@@ -110,8 +111,11 @@ class BaseNeuron(ABC):
                 "train_validation_count": 0,
                 "train_number_of_blocks": 0,
                 "train_duration": 0,
+                "train_score": 0,
                 "all_reduce_successes": 0,
                 "all_reduce_counts": 0,
+                "all_reduce_score": 0,
+                "total_score": 0,
             }
             for uid in self.metagraph.uids.tolist()
         }

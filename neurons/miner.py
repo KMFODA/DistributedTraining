@@ -245,6 +245,8 @@ class Miner(BaseMinerNeuron):
             bt.logging.warning(
                 "Your local miner_hf_repo_id set to the global model_name. This will harm your incentive. Set miner_hf_repo_id to a unique huggingface repo id."
             )
+
+        self.model.to("cpu")
         should_sync_model = (
             (self.local_progress.epoch is None)
             or (self.local_progress.epoch != self.global_progress.epoch)
@@ -253,6 +255,7 @@ class Miner(BaseMinerNeuron):
                 != compute_schema_hash(self.model.parameters())
             )
         )
+        self.model.to(self.device)
 
         if should_sync_model:
             del global_model

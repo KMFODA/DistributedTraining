@@ -263,8 +263,8 @@ class AveragingHandler:
                 scores[str_uid] = 0.0
                 status_dict[str_uid] = "NON_PARTICIPATING"
 
-        # Create rewards tesnor
-        rewards = torch.tesnor([reward for reward in scores.values()])
+        # Create rewards tensor
+        rewards = torch.tensor([reward for reward in scores.values()])
 
         # Log participation and scoring details
         bt.logging.info(f"Failed UIDs: {failed_uids}")
