@@ -16,8 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 import asyncio
-import os
 import gc
+import os
 import queue
 import random
 import tempfile
@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import bittensor as bt
 import torch
+from hivemind.averaging.averager import compute_schema_hash
 from huggingface_hub import (
     create_repo,
     create_tag,
@@ -39,7 +40,7 @@ from huggingface_hub import (
     repo_exists,
     upload_folder,
 )
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
@@ -64,17 +65,6 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-from huggingface_hub import (
-    create_repo,
-    create_tag,
-    repo_exists,
-    upload_folder,
-    list_repo_refs,
-    delete_tag,
-)
-from transformers import AutoTokenizer
-from hivemind.averaging.averager import compute_schema_hash
-from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -341,10 +331,10 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(
                         f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
                     )
-                    
+
                     # Reset block_list
                     self.model.config.block_list = []
-        
+
                     return True
 
             except Exception as e:
@@ -486,9 +476,9 @@ class Miner(BaseMinerNeuron):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=inputs, labels=labels)
                 scaled_loss = loss / self.number_of_local_steps
-            
+
             scaled_loss.backward()
-            
+
             self.local_progress.loss = loss.item()
 
             self.local_progress.samples_accumulated += self.local_batch_size_train
@@ -515,7 +505,10 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.inner_step += 1
 
                 # Periodic model upload
-                if self.local_progress.inner_step % 5 == 0:
+                if (
+                    len(self.model.config.block_list)
+                    >= self.config.neuron.target_n_blocks
+                ):
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
                         inner_step=self.local_progress.inner_step,
