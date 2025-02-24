@@ -377,6 +377,15 @@ def load_model_optimizer_gradient_averager(
         for i in self.state_averager.main_parameters:
             del i
 
+        for i in self.state_averager._averaged_parameters:
+            del i
+
+        for i in self.state_averager.optimizer.param_groups[0]:
+            del i
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
         # Reset gradient buffers and parameters
         self.state_averager.main_parameters = tuple(self.model.parameters())
         (
@@ -404,7 +413,6 @@ def load_model_optimizer_gradient_averager(
         del param_groups
         gc.collect()
         torch.cuda.empty_cache()
-
     else:
         self.state_averager = DTStateAverager(
             dht=self.dht,

@@ -77,7 +77,7 @@ def log_peerid_to_chain(self):
     try:
         metadata = {
             "peer_id": self.dht.peer_id.to_base58(),
-            "model_huggingface_id": self.config.neuron.hf_repo_id,
+            "model_huggingface_id": self.config.neuron.miner_hf_repo_id,
         }
         self.subtensor.commit(self.wallet, self.config.netuid, str(metadata))
         self.peer_id_logged_to_chain = True

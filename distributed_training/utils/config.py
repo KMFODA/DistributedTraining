@@ -191,7 +191,7 @@ def add_args(cls, parser, prefix=None):
         help="The hivemind global target_batch_size",
         default=35200,
     )
-    
+
     parser.add_argument(
         "--neuron.target_n_blocks",
         type=int,

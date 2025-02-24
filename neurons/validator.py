@@ -157,7 +157,7 @@ class Validator(BaseValidatorNeuron):
             self.grad_averager,
             self.state_averager,
         )
-    
+
     def _setup_training_params(self):
         self.local_batch_size_train = self.config.neuron.local_batch_size_train
         self.local_batch_size_train_effective = (
