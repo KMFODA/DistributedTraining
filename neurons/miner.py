@@ -339,8 +339,12 @@ class Miner(BaseMinerNeuron):
                     )
 
                     bt.logging.info(
-                        f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
+                        f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
                     )
+                    
+                    # Reset block_list
+                    self.model.config.block_list = []
+        
                     return True
 
             except Exception as e:
