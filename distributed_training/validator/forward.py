@@ -16,6 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
+
 import bittensor as bt
 import numpy as np
 import torch
@@ -83,6 +85,15 @@ async def forward(self):
                     epoch=self.local_progress.epoch,
                 )
 
+        else:
+            # For non-master validators
+            bt.logging.info(
+                f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
+            )
+            await asyncio.sleep(self.all_reduce_timeout + 30)
+            self.miner_uids = []
+            return responses
+
         self.miner_uids = np.array([n for n in range(self.metagraph.n)])
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -129,9 +140,9 @@ async def forward(self):
                 self.local_progress.samples_accumulated = 0
 
                 for uid in self.uid_tracker.keys():
-                    self.uid_tracker[uid][
-                        "all_reduce_successes"
-                    ] = self.allreduce_scores[uid]
+                    self.uid_tracker[uid]["all_reduce_successes"] = (
+                        self.allreduce_scores[uid]
+                    )
                     self.uid_tracker[uid]["all_reduce_counts"] += 1
 
             else:
