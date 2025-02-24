@@ -113,6 +113,7 @@ class Validator(BaseValidatorNeuron):
         self._setup_model_params()
         self._init_tokenizer()
         self._setup_model_state()
+        self._setup_training_params()
 
     def _setup_model_params(self):
         # Timeouts
@@ -155,6 +156,17 @@ class Validator(BaseValidatorNeuron):
             self.inner_optimizer,
             self.grad_averager,
             self.state_averager,
+        )
+    
+    def _setup_training_params(self):
+        self.local_batch_size_train = self.config.neuron.local_batch_size_train
+        self.local_batch_size_train_effective = (
+            self.config.neuron.local_batch_size_train_effective
+        )
+        self.logging_interval = 5
+        self.number_of_local_steps = (
+            self.config.neuron.local_batch_size_train_effective
+            // self.config.neuron.local_batch_size_train
         )
 
     def _init_network_components(self):

@@ -431,8 +431,6 @@ class Miner(BaseMinerNeuron):
                 tokenizer=self.tokenizer,
             )
 
-            self.model.config.block_list.append(self.current_block)
-
             return dataset
         except Exception as e:
             bt.logging.error(f"Error fetching training data: {str(e)}")
@@ -448,10 +446,23 @@ class Miner(BaseMinerNeuron):
                 # Wait if training is paused
                 self.training_active.wait()
 
+                # Periodic model upload
+                if (
+                    len(self.model.config.block_list)
+                    >= self.config.neuron.target_n_blocks
+                ):
+                    self.start_background_upload(
+                        epoch=self.local_progress.epoch,
+                        inner_step=self.local_progress.inner_step,
+                        batch_size=self.local_progress.samples_accumulated,
+                    )
+
                 bt.logging.info(":pages: Fetching fineweb-edu pages")
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
+                self.model.config.block_list.append(self.current_block)
+
                 self._process_training_batch(dataset)
 
             except Exception as e:
@@ -503,19 +514,6 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
-
-                # Periodic model upload
-                if (
-                    len(self.model.config.block_list)
-                    >= self.config.neuron.target_n_blocks
-                ):
-                    self.start_background_upload(
-                        epoch=self.local_progress.epoch,
-                        inner_step=self.local_progress.inner_step,
-                        batch_size=self.local_progress.samples_accumulated,
-                    )
-                if (self.local_progress.inner_step % 2) == 0:
-                    self.loop = asyncio.new_event_loop()
 
                 self.local_progress.samples_accumulated = 0
 
