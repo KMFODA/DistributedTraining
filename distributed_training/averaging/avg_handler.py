@@ -282,6 +282,7 @@ class AveragingHandler:
         self,
         synapse,
         local_progress,
+        start_time,
         bandwidth=None,
     ) -> distributed_training.protocol.AllReduce:
         """Process allreduce specifically for miner."""
@@ -299,10 +300,9 @@ class AveragingHandler:
                 wait=False,
                 gather=local_progress.samples_accumulated,
             )
-            start_time = time.perf_counter()
 
             while (gradient_averaging_step.done() is False) and (
-                (time.perf_counter() - start_time) <= (synapse.timeout)
+                (time.perf_counter() - start_time) <= (synapse.timeout - 20)
             ):
                 await asyncio.sleep(1)
 

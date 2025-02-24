@@ -341,10 +341,10 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(
                         f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
                     )
-                    
+
                     # Reset block_list
                     self.model.config.block_list = []
-        
+
                     return True
 
             except Exception as e:
@@ -486,9 +486,9 @@ class Miner(BaseMinerNeuron):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=inputs, labels=labels)
                 scaled_loss = loss / self.number_of_local_steps
-            
+
             scaled_loss.backward()
-            
+
             self.local_progress.loss = loss.item()
 
             self.local_progress.samples_accumulated += self.local_batch_size_train
@@ -531,6 +531,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         """Handle incoming all_reduce requests by pausing continuous training"""
         bt.logging.info("Received All Reduce Call")
+        start_time = time.perf_counter()
         try:
             async with self.training_lock:
                 # Cancel any ongoing upload
@@ -548,27 +549,47 @@ class Miner(BaseMinerNeuron):
                     synapse = await self.avg_handler.run_miner_allreduce(
                         synapse,
                         self.local_progress,
+                        start_time
                         # bandwidth
                     )
                     if not synapse.completion:
                         raise AllReduceError("AllReduce Failed, Loading Latest State")
                 except Exception as e:
                     bt.logging.info(f"All Reduce Failed with error: {e}")
-                    await asyncio.sleep(10)
-                    self.global_progress.epoch = get_global_epoch(self)
-                    load_state_from_peer(self, epoch=self.global_progress.epoch)
-
-                bt.logging.debug("Reset inner step counter after AllReduce")
-
-                return synapse
+                    synapse.completion = False
 
         except Exception as e:
+            synapse.completion = False
             raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
+            # Reset inner_step
+            self.local_progress.inner_step = 0
+            # Update epoch if all_reduce was succsefull
+            if synapse.completion is True:
+                self.local_progress.epoch += 1
+                bt.logging.info("AllReduce Operation Finished Succesfully")
+            bt.logging.info(synapse.timeout)
+            bt.logging.info(self.upload_state_duration)
+            bt.logging.info(time.perf_counter() - start_time)
+
+            # Wait for the master validator to upload new global model
+            while (time.perf_counter() - start_time) <= (
+                synapse.timeout + self.upload_state_duration
+            ):
+                time.sleep(1)
+            # Check if master validator has failed to all_reduce
+            self.global_progress.epoch = get_global_epoch(self)
+            if self.local_progress.epoch != self.global_progress.epoch:
+                bt.logging.info(
+                    f"Global Epoch Wasn't Updated After All Reduce. Resetting To Current Global Epoch: {self.global_progress.epoch}"
+                )
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
+
             # Resume training when done
             self.resume_training()
-            bt.logging.info("AllReduce Operation Finished")
+
+            return synapse
 
     async def blacklist_base(self, synapse) -> typing.Tuple[bool, str]:
         """

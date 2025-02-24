@@ -183,7 +183,7 @@ async def score_uid(self, uid: int):
             for block in blocks:
                 bt.logging.info(":pages: Fetching fineweb-edu pages")
                 dataset = await fetch_training_data(self, block, uid)
-                
+
                 samples_accumulated = 0
                 inner_step = 0
 
@@ -194,18 +194,22 @@ async def score_uid(self, uid: int):
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         _, loss = self.model(input_ids=inputs, labels=labels)
                         scaled_loss = loss / self.number_of_local_steps
-                    
+
                     scaled_loss.backward()
-                    
+
                     samples_accumulated += self.local_batch_size_train
-                    
-                    if samples_accumulated % (self.logging_interval * self.local_batch_size_train) == 0:
+
+                    if (
+                        samples_accumulated
+                        % (self.logging_interval * self.local_batch_size_train)
+                        == 0
+                    ):
                         bt.logging.info(
                             f":training: Inner Step: {inner_step} | "
                             f"Average Loss: {loss.item():.4f} | "
                             f"Micro Batches: [{samples_accumulated}/{self.local_batch_size_train_effective}]"
                         )
-                   
+
                     # Check if we've accumulated enough samples for a step
                     if samples_accumulated >= self.local_batch_size_train_effective:
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
