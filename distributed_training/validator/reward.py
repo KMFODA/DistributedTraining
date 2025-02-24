@@ -35,11 +35,7 @@ from distributed_training.utils.state_loader import (
     check_model_exists,
     cleanup_old_cache,
 )
-from distributed_training.utils.uids import (
-    get_random_uids,
-    map_uid_to_peerid,
-    update_run_peerid_list,
-)
+from distributed_training.utils.progress_tracker import get_local_epoch
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -147,11 +143,19 @@ async def fetch_training_data(self, block, miner_uid):
 
 async def score_uid(self, uid: int):
     """Score a single UID"""
+    target_blocks = self.config.neuron.target_n_blocks
+    latest_commit = None
+    blocks = []
+    time_delta = 0
 
     if self.uid_tracker[uid]["model_huggingface_id"] is None:
+        bt.logging.info(f"Score 0 for UID {uid}: HuggingFace Repo Id is None")
         scores = 0
 
     elif not check_model_exists(self.uid_tracker[uid]["model_huggingface_id"]):
+        bt.logging.info(
+            f"Score 0 for UID {uid}: HuggingFace Repo Id {self.uid_tracker[uid]['model_huggingface_id']} Doesn't Exist"
+        )
         scores = 0
 
     else:
@@ -179,49 +183,74 @@ async def score_uid(self, uid: int):
             model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
         )
 
-        blocks = model_final.config.block_list
-        try:
-            for block in blocks:
-                bt.logging.info(":pages: Fetching fineweb-edu pages")
-                dataset = await fetch_training_data(self, block, uid)
+        self.local_progress.samples_accumulated = 0
+        self.local_progress.inner_step = (
+            self.model.config.inner_step
+            if "inner_step" in self.model.config.__dict__
+            else 0
+        )
+        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
 
-                samples_accumulated = 0
-                inner_step = 0
+        if self.local_progress.epoch != self.global_progress.epoch:
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Local Epoch {self.local_progress.epoch} != Global Epoch {self.global_progress.epoch}"
+            )
+            scores = 0
+        if ("block_list" in self.model.config.__dict__) and (
+            len(self.model.config.block_list) > target_blocks
+        ):
+            scores = 0
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
+            )
 
-                for inputs, labels in dataset:
-                    # Move to device
-                    inputs, labels = inputs.to(self.device), labels.to(self.device)
+        if scores != 0:
+            blocks = model_final.config.block_list
+            try:
+                for block in blocks:
+                    bt.logging.info(":pages: Fetching fineweb-edu pages")
+                    dataset = await fetch_training_data(self, block, uid)
 
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        _, loss = self.model(input_ids=inputs, labels=labels)
-                        scaled_loss = loss / self.number_of_local_steps
+                    for inputs, labels in dataset:
+                        # Move to device
+                        inputs, labels = inputs.to(self.device), labels.to(self.device)
 
-                    scaled_loss.backward()
+                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                            _, loss = self.model(input_ids=inputs, labels=labels)
+                            scaled_loss = loss / self.number_of_local_steps
 
-                    samples_accumulated += self.local_batch_size_train
+                        scaled_loss.backward()
 
-                    if (
-                        samples_accumulated
-                        % (self.logging_interval * self.local_batch_size_train)
-                        == 0
-                    ):
-                        bt.logging.info(
-                            f":training: Inner Step: {inner_step} | "
-                            f"Average Loss: {loss.item():.4f} | "
-                            f"Micro Batches: [{samples_accumulated}/{self.local_batch_size_train_effective}]"
+                        self.local_progress.samples_accumulated += (
+                            self.local_batch_size_train
                         )
 
-                    # Check if we've accumulated enough samples for a step
-                    if samples_accumulated >= self.local_batch_size_train_effective:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                        self.inner_optimizer.step()
-                        self.inner_optimizer.zero_grad()
-                        inner_step += 1
-                        samples_accumulated = 0
+                        if (
+                            self.local_progress.samples_accumulated
+                            % (self.logging_interval * self.local_batch_size_train)
+                            == 0
+                        ):
+                            bt.logging.info(
+                                f":training:  Outer Step: {self.local_progress.epoch} | "
+                                f"Inner Step: {self.local_progress.inner_step} | "
+                                f"Average Loss: {self.local_progress.loss:.4f} | "
+                                f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
+                            )
 
-        except Exception:
-            bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
-            return torch.tensor([1.0])
+                        # Check if we've accumulated enough samples for a step
+                        if (
+                            self.local_progress.samples_accumulated
+                            >= self.local_batch_size_train_effective
+                        ):
+                            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                            self.inner_optimizer.step()
+                            self.inner_optimizer.zero_grad()
+                            inner_step += 1
+                            self.local_progress.samples_accumulated = 0
+
+            except Exception:
+                bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
+                return torch.tensor([1.0])
 
         cleanup_old_cache(
             self,
@@ -242,29 +271,31 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["train_similarity_score"] += scores
     self.uid_tracker[uid]["train_validation_count"] += 1
 
-    rewards = get_normalised_score(self, uid)
+    rewards = get_normalised_score(self, uid, target_blocks)
     bt.logging.info(f"UID {uid} Train Score: {rewards}")
 
     return rewards
 
 
-def get_normalised_score(self, uid):
-    miner_uid = self.uid_tracker[uid]
-    target_blocks = self.config.neuron.target_n_block
+def get_normalised_score(self, uid, target_blocks):
+    miner_uid_tracker = self.uid_tracker[uid]
 
-    train_score = (
-        miner_uid["train_similarity_score"]
-        * min(miner_uid["train_number_of_blocks"], target_blocks)
-    ) / miner_uid["train_duration"]
-    miner_uid["train_score"] = train_score
+    if miner_uid_tracker["train_duration"] != 0:
+        train_score = (
+            miner_uid_tracker["train_similarity_score"]
+            * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
+        ) / miner_uid_tracker["train_duration"]
+        miner_uid_tracker["train_score"] = train_score
 
-    if miner_uid["all_reduce_counts"] != 0:
-        miner_uid["all_reduce_score"] = (
-            miner_uid["all_reduce_successes"] / miner_uid["all_reduce_counts"]
+    if miner_uid_tracker["all_reduce_counts"] != 0:
+        miner_uid_tracker["all_reduce_score"] = (
+            miner_uid_tracker["all_reduce_successes"]
+            / miner_uid_tracker["all_reduce_counts"]
         )
 
-    miner_uid["total_score"] = (
-        0.5 * miner_uid["train_score"] + 0.5 * miner_uid["all_reduce_score"]
+    miner_uid_tracker["total_score"] = (
+        0.5 * miner_uid_tracker["train_score"]
+        + 0.5 * miner_uid_tracker["all_reduce_score"]
     )
 
     # Normalise all total_scores after updating uid specific total_score

@@ -12,6 +12,7 @@ from bittensor.core.chain_data import decode_account_id
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
 from huggingface_hub import list_repo_commits
+from distributed_training.utils.state_loader import check_model_exists
 
 
 async def check_uid(dendrite, axon, uid, epoch=None):
@@ -146,13 +147,17 @@ async def get_hf_validation_uid(self, outer_step: int = None):
     )
 
     for uid in self.uid_tracker.keys():
-        if (self.uid_tracker[uid]["model_huggingface_id"] is not None) and (
-            (self.uid_tracker[uid]["last_commit"] is None)
-            or (
-                list_repo_commits(
-                    self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
-                )[0]
-                != self.uid_tracker[uid]["last_commit"]
+        if (
+            (self.uid_tracker[uid]["model_huggingface_id"] is not None)
+            and (check_model_exists(self.uid_tracker[uid]["model_huggingface_id"]))
+            and (
+                (self.uid_tracker[uid]["last_commit"] is None)
+                or (
+                    list_repo_commits(
+                        self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
+                    )[0]
+                    != self.uid_tracker[uid]["last_commit"]
+                )
             )
         ):
             uids.append(uid)
@@ -348,6 +353,7 @@ def map_uid_to_peerid(self):
 
     for key, value in result:
         try:
+            # breakpoint()
             hotkey, metadata = decode_metadata(key, value.value)
             if hotkey not in hotkey_to_uid:
                 continue

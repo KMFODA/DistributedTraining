@@ -16,7 +16,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import asyncio
+import time
 
 import bittensor as bt
 import numpy as np
@@ -88,9 +88,9 @@ async def forward(self):
         else:
             # For non-master validators
             bt.logging.info(
-                f"Waiting {self.all_reduce_timeout + 30} seconds whilst master UID completes all reduce."
+                f"Waiting {self.all_reduce_timeout + self.upload_state_duration} seconds whilst master UID completes all reduce."
             )
-            await asyncio.sleep(self.all_reduce_timeout + 30)
+            time.sleep(self.all_reduce_timeout + self.upload_state_duration)
             self.miner_uids = []
             return responses
 
@@ -157,7 +157,7 @@ async def forward(self):
     else:
         # If running HF validation round, only call one UID each step
         self.event.update({"synapse_type": "train"})
-
+        # breakpoint()
         self.miner_uids = await get_hf_validation_uid(
             self,
         )
