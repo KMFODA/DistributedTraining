@@ -429,8 +429,9 @@ class Miner(BaseMinerNeuron):
             pages = await DatasetLoader.next_pages(
                 offset=self.current_block,
                 n_pages=5,
-                seed=self.uid if not self.config.random else random.randint(0, 1000),
+                seed=self.uid,
             )
+            random.seed(self.uid)
             random.shuffle(pages)
 
             dataset = await DatasetLoader.create(

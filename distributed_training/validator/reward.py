@@ -119,15 +119,16 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
     return scores
 
 
-async def fetch_training_data(self, block):
+async def fetch_training_data(self, block, miner_uid):
     """Async function to fetch training data"""
 
     try:
         pages = await DatasetLoader.next_pages(
             offset=block,
             n_pages=5,
-            seed=self.uid if not self.config.random else random.randint(0, 1000),
+            seed=miner_uid,
         )
+        random.seed(miner_uid)
         random.shuffle(pages)
 
         dataset = await DatasetLoader.create(
@@ -180,7 +181,7 @@ async def score_uid(self, uid: int):
         blocks = model_final.config.block_list
         try:
             for block in blocks:
-                dataset = await fetch_training_data(self, block)
+                dataset = await fetch_training_data(self, block, uid)
                 total_loss = 0
                 batch_count = 0
                 inner_step_counter = 0
@@ -207,7 +208,7 @@ async def score_uid(self, uid: int):
 
                     self.inner_optimizer.step()
                     self.inner_optimizer.zero_grad()
-                break
+
         except Exception:
             bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
             return torch.tensor([1.0])
