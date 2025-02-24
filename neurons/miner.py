@@ -16,8 +16,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 import asyncio
-import os
 import gc
+import os
 import queue
 import random
 import tempfile
@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import bittensor as bt
 import torch
+from hivemind.averaging.averager import compute_schema_hash
 from huggingface_hub import (
     create_repo,
     create_tag,
@@ -39,7 +40,7 @@ from huggingface_hub import (
     repo_exists,
     upload_folder,
 )
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
@@ -64,17 +65,6 @@ from distributed_training.utils.state_loader import (
     load_model_optimizer_gradient_averager,
     load_state_from_peer,
 )
-from huggingface_hub import (
-    create_repo,
-    create_tag,
-    repo_exists,
-    upload_folder,
-    list_repo_refs,
-    delete_tag,
-)
-from transformers import AutoTokenizer
-from hivemind.averaging.averager import compute_schema_hash
-from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -441,8 +431,6 @@ class Miner(BaseMinerNeuron):
                 tokenizer=self.tokenizer,
             )
 
-            self.model.config.block_list.append(self.current_block)
-
             return dataset
         except Exception as e:
             bt.logging.error(f"Error fetching training data: {str(e)}")
@@ -458,10 +446,23 @@ class Miner(BaseMinerNeuron):
                 # Wait if training is paused
                 self.training_active.wait()
 
+                # Periodic model upload
+                if (
+                    len(self.model.config.block_list)
+                    >= self.config.neuron.target_n_blocks
+                ):
+                    self.start_background_upload(
+                        epoch=self.local_progress.epoch,
+                        inner_step=self.local_progress.inner_step,
+                        batch_size=self.local_progress.samples_accumulated,
+                    )
+
                 bt.logging.info(":pages: Fetching fineweb-edu pages")
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
+                self.model.config.block_list.append(self.current_block)
+
                 self._process_training_batch(dataset)
 
             except Exception as e:
@@ -513,16 +514,6 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
-
-                # Periodic model upload
-                if self.local_progress.inner_step % 5 == 0:
-                    self.start_background_upload(
-                        epoch=self.local_progress.epoch,
-                        inner_step=self.local_progress.inner_step,
-                        batch_size=self.local_progress.samples_accumulated,
-                    )
-                if (self.local_progress.inner_step % 2) == 0:
-                    self.loop = asyncio.new_event_loop()
 
                 self.local_progress.samples_accumulated = 0
 

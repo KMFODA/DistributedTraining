@@ -26,19 +26,20 @@ import bittensor as bt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from hivemind.p2p import PeerID
+from huggingface_hub import list_repo_commits
+from transformers import AutoModelForCausalLM
+
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.state_loader import (
-    cleanup_old_cache,
     check_model_exists,
+    cleanup_old_cache,
 )
 from distributed_training.utils.uids import (
     get_random_uids,
     map_uid_to_peerid,
     update_run_peerid_list,
 )
-from hivemind.p2p import PeerID
-from huggingface_hub import list_repo_commits
-from transformers import AutoModelForCausalLM
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -248,35 +249,33 @@ async def score_uid(self, uid: int):
 
 
 def get_normalised_score(self, uid):
-    self.uid_tracker[uid]["train_score"] = (
-        self.uid_tracker[uid]["train_similarity_score"]
-        * self.uid_tracker[uid]["train_number_of_blocks"]
-    ) / self.uid_tracker[uid]["train_validation_count"]
+    miner_uid = self.uid_tracker[uid]
+    target_blocks = self.config.neuron.target_n_block
 
-    if self.uid_tracker[uid]["all_reduce_counts"] != 0:
-        self.uid_tracker[uid]["all_reduce_score"] = (
-            self.uid_tracker[uid]["all_reduce_successes"]
-            / self.uid_tracker[uid]["all_reduce_counts"]
+    train_score = (
+        miner_uid["train_similarity_score"]
+        * min(miner_uid["train_number_of_blocks"], target_blocks)
+    ) / miner_uid["train_duration"]
+    miner_uid["train_score"] = train_score
+
+    if miner_uid["all_reduce_counts"] != 0:
+        miner_uid["all_reduce_score"] = (
+            miner_uid["all_reduce_successes"] / miner_uid["all_reduce_counts"]
         )
 
-    self.uid_tracker[uid]["total_score"] = (
-        0.5 * self.uid_tracker[uid]["train_score"]
-    ) + (0.5 * self.uid_tracker[uid]["all_reduce_score"])
+    miner_uid["total_score"] = (
+        0.5 * miner_uid["train_score"] + 0.5 * miner_uid["all_reduce_score"]
+    )
 
     # Normalise all total_scores after updating uid specific total_score
-    scores = torch.nn.functional.normalize(
-        torch.tensor(
-            [self.uid_tracker[uid]["total_score"] for uid in self.uid_tracker.keys()]
-        ),
-        dim=0,
-    )
-    score = torch.tensor([scores[uid]])
+    all_scores = [self.uid_tracker[u]["total_score"] for u in self.uid_tracker]
+    scores = torch.nn.functional.normalize(torch.tensor(all_scores), dim=0)
 
-    return score
+    return torch.tensor([scores[uid]])
 
 
 def score_models(model_1, model_2):
-    """Calculate the cosine similarity score between two model sates"""
+    """Calculate the cosine similarity score between two model states"""
     score = 0
     index = 0
 
