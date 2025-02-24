@@ -486,11 +486,11 @@ class Miner(BaseMinerNeuron):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(input_ids=inputs, labels=labels)
                 scaled_loss = loss / self.number_of_local_steps
-                self.local_progress.loss = loss.item()
-
+            
             scaled_loss.backward()
+            
+            self.local_progress.loss = loss.item()
 
-            self.local_progress.samples_accumulated += self.local_batch_size_train
             self.local_progress.samples_accumulated += self.local_batch_size_train
 
             if (

@@ -181,33 +181,38 @@ async def score_uid(self, uid: int):
         blocks = model_final.config.block_list
         try:
             for block in blocks:
+                bt.logging.info(":pages: Fetching fineweb-edu pages")
                 dataset = await fetch_training_data(self, block, uid)
-                total_loss = 0
-                batch_count = 0
-                inner_step_counter = 0
+                
+                samples_accumulated = 0
+                inner_step = 0
 
                 for inputs, labels in dataset:
                     # Move to device
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs[1]
-
-                    loss.backward()
-
-                    self.local_progress.samples_accumulated += inputs.size(0)
-                    total_loss += loss.detach().item()
-                    batch_count += 1
-                    inner_step_counter += 1
-
-                    if batch_count % 5 == 0:
+                        _, loss = self.model(input_ids=inputs, labels=labels)
+                        scaled_loss = loss / self.number_of_local_steps
+                    
+                    scaled_loss.backward()
+                    
+                    samples_accumulated += self.local_batch_size_train
+                    
+                    if samples_accumulated % (self.logging_interval * self.local_batch_size_train) == 0:
                         bt.logging.info(
-                            f":training: Inner Step: {inner_step_counter} | Average Loss: {total_loss / batch_count:.4f}"
+                            f":training: Inner Step: {inner_step} | "
+                            f"Average Loss: {loss.item():.4f} | "
+                            f"Micro Batches: [{samples_accumulated}/{self.local_batch_size_train_effective}]"
                         )
-
-                    self.inner_optimizer.step()
-                    self.inner_optimizer.zero_grad()
+                   
+                    # Check if we've accumulated enough samples for a step
+                    if samples_accumulated >= self.local_batch_size_train_effective:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                        self.inner_optimizer.step()
+                        self.inner_optimizer.zero_grad()
+                        inner_step += 1
+                        samples_accumulated = 0
 
         except Exception:
             bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
@@ -225,16 +230,14 @@ async def score_uid(self, uid: int):
             bt.logging.error(f"Error calculating final score: {str(e)}")
             scores = 1.0
 
-        self.uid_tracker[uid]["last_commit"] = latest_commit
-        self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
-        self.uid_tracker[uid]["train_duration"] += time_delta
-
+    self.uid_tracker[uid]["last_commit"] = latest_commit
+    self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
+    self.uid_tracker[uid]["train_duration"] += time_delta
     self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
     self.uid_tracker[uid]["train_similarity_score"] += scores
     self.uid_tracker[uid]["train_validation_count"] += 1
 
     rewards = get_normalised_score(self, uid)
-
     bt.logging.info(f"UID {uid} Train Score: {rewards}")
 
     return rewards
