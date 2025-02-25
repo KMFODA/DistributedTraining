@@ -174,16 +174,21 @@ async def forward(self):
 
         rewards = await score_uid(self, uid)
 
-    self.event.update(
-        {
-            "learning_rate": self.learning_rate,
-            "average_miner_loss": self.average_loss,
-            "local_epoch": self.local_progress.epoch,
-            "global_epoch": self.global_progress.epoch,
-            "local_samples_accumulated": self.local_progress.samples_accumulated,
-            "global_samples_accumulated": self.global_progress.samples_accumulated,
-        }
-    )
+        self.event.update(
+            {
+                "uids": self.miner_uids,
+                "learning_rate": self.learning_rate,
+                "average_miner_loss": self.average_loss,
+                "local_epoch": self.local_progress.epoch,
+                "global_epoch": self.global_progress.epoch,
+                "local_samples_accumulated": self.local_progress.samples_accumulated,
+                "global_samples_accumulated": self.global_progress.samples_accumulated,
+            }
+        )
+        self.event.update(
+            {"uid_" + str(key): value for key, value in self.uid_tracker.items()}
+        )
+
     # Update scores
     if len(rewards) > 0:
         self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)

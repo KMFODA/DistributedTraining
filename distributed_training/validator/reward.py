@@ -196,15 +196,14 @@ async def score_uid(self, uid: int):
                 f"Score 0 for UID {uid}: Local Epoch {self.local_progress.epoch} != Global Epoch {self.global_progress.epoch}"
             )
             scores = 0
-        if ("block_list" in self.model.config.__dict__) and (
+        elif ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
         ):
             scores = 0
             bt.logging.info(
                 f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
             )
-
-        if scores != 0:
+        else:
             blocks = model_final.config.block_list
             try:
                 for block in blocks:
@@ -220,6 +219,8 @@ async def score_uid(self, uid: int):
                             scaled_loss = loss / self.number_of_local_steps
 
                         scaled_loss.backward()
+
+                        self.local_progress.loss = loss.item()
 
                         self.local_progress.samples_accumulated += (
                             self.local_batch_size_train
@@ -245,7 +246,7 @@ async def score_uid(self, uid: int):
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                             self.inner_optimizer.step()
                             self.inner_optimizer.zero_grad()
-                            inner_step += 1
+                            self.local_progress.inner_step += 1
                             self.local_progress.samples_accumulated = 0
 
             except Exception:
