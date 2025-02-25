@@ -372,94 +372,90 @@ def load_model_optimizer_gradient_averager(
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
 
-    # Delete existing gradient averager
     if hasattr(self, "state_averager"):
-        for i in self.state_averager.main_parameters:
-            del i
+        self.grad_averager.shutdown()
+        while self.grad_averager.is_alive():
+            time.sleep(1)
 
-        for i in self.state_averager._averaged_parameters:
-            del i
-
-        for i in self.state_averager.optimizer.param_groups[0]:
-            del i
-
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        # Reset gradient buffers and parameters
-        self.state_averager.main_parameters = tuple(self.model.parameters())
-        (
-            param_groups,
-            self.state_averager.main_parameters,
-            self.state_averager.parameter_names,
-        ) = self.state_averager._check_params(
-            self.outer_optimizer, tuple(self.model.parameters()), parameter_names=None
-        )
-        self.state_averager._averaged_parameters = (
-            self.state_averager._make_averaged_parameters(
-                self.state_averager.main_parameters
-            )
-        )
-        (
-            self.state_averager.optimizer,
-            self.state_averager.scheduler,
-        ) = self.state_averager._init_components(
-            param_groups,
-            self.outer_optimizer,
-            scheduler_or_factory=None,
-            initialize_optimizer=True,
-        )
-
-        del param_groups
-        gc.collect()
-        torch.cuda.empty_cache()
-    else:
-        self.state_averager = DTStateAverager(
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_state_averager",
-            optimizer=self.outer_optimizer,
-            params=self.model.parameters(),
-            initialize_optimizer=True,
-            offload_optimizer=self.offload_optimizer,
-            custom_gradients=self.offload_optimizer,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
-            start=True,
-        )
-
-    # Delete existing gradient averager
-    if hasattr(self, "grad_averager"):
         for i in self.grad_averager.main_parameters:
+            i = None
             del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        for i in self.grad_averager.offloaded_optimizer.param_groups[0]["params"]:
+            i = None
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        del self.grad_averager
+        self.grad_averager = None
         gc.collect()
         torch.cuda.empty_cache()
 
-        # Reset gradient buffers and parameters
-        self.grad_averager.main_parameters = tuple(self.model.parameters())
-        self.grad_averager.offloaded_optimizer = self.state_averager.optimizer
-        self.grad_averager._averaged_tensors = tuple(
-            grad for grad in self.grad_averager._grads_from_optimizer()
-        )
+        self.state_averager.shutdown()
+        while self.state_averager.is_alive():
+            time.sleep(1)
 
-    else:
-        # Load a new gradient averager
-        self.grad_averager = DTGradAverager(
-            dht=self.dht,
-            main_parameters=self.state_averager.main_parameters,
-            offloaded_optimizer=self.state_averager.optimizer,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
-            start=True,
-        )
+        for i in self.state_averager.main_parameters:
+            i = None
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        for i in self.state_averager.optimizer.param_groups[0]["params"]:
+            i = None
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        for i in self.state_averager._averaged_tensors:
+            i = None
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        del self.state_averager
+        self.state_averager = None
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # Load a new state averager
+    self.state_averager = DTStateAverager(
+        dht=self.dht,
+        prefix=f"{self.config.neuron.run_id}_state_averager",
+        optimizer=self.outer_optimizer,
+        params=self.model.parameters(),
+        initialize_optimizer=True,
+        offload_optimizer=self.offload_optimizer,
+        custom_gradients=self.offload_optimizer,
+        min_group_size=self.config.neuron.min_group_size,
+        min_matchmaking_time=30.0,
+        request_timeout=10.0,
+        next_chunk_timeout=45.0,
+        allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+        start=True,
+    )
+    bt.logging.info("Succesfully Loaded Gradient Averager")
+
+    # Load a new gradient averager
+    self.grad_averager = DTGradAverager(
+        dht=self.dht,
+        main_parameters=self.state_averager.main_parameters,
+        offloaded_optimizer=self.state_averager.optimizer,
+        prefix=f"{self.config.neuron.run_id}_grad_averager",
+        compression=hivemind.Uniform8BitQuantization(),
+        state_compression=hivemind.Uniform8BitQuantization(),
+        min_group_size=self.config.neuron.min_group_size,
+        min_matchmaking_time=30.0,
+        request_timeout=10.0,
+        next_chunk_timeout=45.0,
+        allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+        start=True,
+    )
+    bt.logging.info("Succesfully Loaded State Averager")
 
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
