@@ -184,13 +184,13 @@ class Miner(BaseMinerNeuron):
 
     def _load_model(self):
         # Initialize loader
-        self.loader = FastModelLoader(self.config.neuron.miner_hf_repo_id)
+        self.loader = FastModelLoader(self.config.neuron.local_model_name)
 
         # Load model and components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.miner_hf_repo_id, self.local_progress.epoch
+            self, self.config.neuron.local_model_name, self.local_progress.epoch
         )
-        cleanup_old_cache(self, repo_id=self.config.neuron.miner_hf_repo_id)
+        cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
 
         # Setup upload executor
         self.upload_executor = ThreadPoolExecutor(
@@ -228,12 +228,12 @@ class Miner(BaseMinerNeuron):
 
     def _sync_with_global_model(self):
         global_model = AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name,
+            self.config.neuron.global_model_name,
             revision=str(self.global_progress.epoch),
             trust_remote_code=True,
         )
 
-        if self.config.neuron.model_name == self.config.neuron.miner_hf_repo_id:
+        if self.config.neuron.global_model_name == self.config.neuron.local_model_name:
             bt.logging.warning(
                 "Your local miner_hf_repo_id set to the global model_name. This will harm your incentive. Set miner_hf_repo_id to a unique huggingface repo id."
             )
@@ -265,15 +265,15 @@ class Miner(BaseMinerNeuron):
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
 
-        if not repo_exists(self.config.neuron.miner_hf_repo_id, repo_type="model"):
+        if not repo_exists(self.config.neuron.local_model_name, repo_type="model"):
             try:
                 create_repo(
-                    self.config.neuron.miner_hf_repo_id,
+                    self.config.neuron.local_model_name,
                     repo_type="model",
                     private=False,
                 )
                 bt.logging.info(
-                    f"Created new repository: {self.config.neuron.miner_hf_repo_id}"
+                    f"Created new repository: {self.config.neuron.local_model_name}"
                 )
             except Exception as e:
                 bt.logging.error(f"Failed to create repository: {str(e)}")
@@ -294,30 +294,30 @@ class Miner(BaseMinerNeuron):
                     self.model.save_pretrained(tmp_folder)
 
                     bt.logging.info(
-                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.miner_hf_repo_id}"
+                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
                     )
                     commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
                     upload_folder(
                         folder_path=tmp_folder,
-                        repo_id=self.config.neuron.miner_hf_repo_id,
+                        repo_id=self.config.neuron.local_model_name,
                         repo_type="model",
                         commit_message=commit_message,
                     )
                     refs = list_repo_refs(
-                        self.config.neuron.miner_hf_repo_id, repo_type="model"
+                        self.config.neuron.local_model_name, repo_type="model"
                     )
                     for tag in refs.tags:
                         if int(tag.name) >= epoch:
                             # Update tag for this version
                             delete_tag(
-                                self.config.neuron.miner_hf_repo_id,
+                                self.config.neuron.local_model_name,
                                 repo_type="model",
                                 tag=tag.name,
                             )
                             time.sleep(1)
                     # Create new tag for this version
                     create_tag(
-                        self.config.neuron.miner_hf_repo_id,
+                        self.config.neuron.local_model_name,
                         repo_type="model",
                         tag=str(epoch),
                         tag_message=commit_message,
@@ -326,12 +326,12 @@ class Miner(BaseMinerNeuron):
                     # Cleanup old cache
                     cleanup_old_cache(
                         self,
-                        repo_id=self.config.neuron.miner_hf_repo_id,
+                        repo_id=self.config.neuron.local_model_name,
                         current_revision=None,
                     )
 
                     bt.logging.info(
-                        f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.miner_hf_repo_id}"
+                        f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.local_model_name}"
                     )
 
                     # Reset block_list

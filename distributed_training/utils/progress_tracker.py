@@ -28,7 +28,7 @@ class LocalTrainingProgress(BaseModel):
 
 def get_global_epoch(self):
     try:
-        refs = list_repo_refs(self.config.neuron.model_name, repo_type="model")
+        refs = list_repo_refs(self.config.neuron.global_model_name, repo_type="model")
         global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
         return global_epoch
     except Exception as e:
@@ -38,7 +38,7 @@ def get_global_epoch(self):
 
 def get_local_epoch(self, repo_id: str = None):
     if repo_id is None:
-        repo_id = self.config.neuron.miner_hf_repo_id
+        repo_id = self.config.neuron.local_model_name
 
     try:
         refs = list_repo_refs(repo_id, repo_type="model")

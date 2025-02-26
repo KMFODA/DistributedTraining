@@ -237,7 +237,7 @@ def load_model_optimizer_gradient_averager(
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
-    fall_back_model_name = self.config.neuron.model_name
+    fall_back_model_name = self.config.neuron.global_model_name
 
     # Delete existing model
     if hasattr(self, "model"):
@@ -489,7 +489,7 @@ def load_state_from_peer(self, epoch=None):
             while attempt < MAX_ATTEMPTS:
                 try:
                     load_model_optimizer_gradient_averager(
-                        self, self.config.neuron.model_name, epoch
+                        self, self.config.neuron.global_model_name, epoch
                     )
                     break
 
@@ -577,7 +577,7 @@ async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
 def cleanup_old_cache(self, repo_id=None, current_revision=None):
     """Helper method to clean up old cache files"""
     if repo_id is None:
-        repo_id = self.config.neuron.model_name
+        repo_id = self.config.neuron.global_model_name
         current_revision = self.model.config._commit_hash
 
     cache_info = scan_cache_dir()
@@ -625,7 +625,7 @@ def upload_new_state(self, epoch: int, results: dict, block: int = None):
             if upload_success:
                 # Verify the upload
                 updated_refs = list_repo_refs(
-                    self.config.neuron.model_name,
+                    self.config.neuron.global_model_name,
                     repo_type="model",
                 )
                 new_tag = max([int(tag.name) for tag in updated_refs.tags])
@@ -683,28 +683,28 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
 
                 bt.logging.info(
-                    f"Uploading model and optimizer states to repo: {self.config.neuron.model_name}"
+                    f"Uploading model and optimizer states to repo: {self.config.neuron.global_model_name}"
                 )
 
                 # Upload everything in one go
                 commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
-                    repo_id=self.config.neuron.model_name,
+                    repo_id=self.config.neuron.global_model_name,
                     repo_type="model",
                     commit_message=commit_message,
                 )
 
                 # Create a tag for this version
                 create_tag(
-                    self.config.neuron.model_name,
+                    self.config.neuron.global_model_name,
                     repo_type="model",
                     tag=str(epoch),
                     tag_message=commit_message,
                 )
 
                 bt.logging.info(
-                    f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.model_name}"
+                    f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.global_model_name}"
                 )
                 return True
 

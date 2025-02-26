@@ -142,7 +142,7 @@ class Validator(BaseValidatorNeuron):
         self.loader = FastModelLoader(self.config.neuron.hf_repo_id)
 
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.model_name, self.global_progress.epoch
+            self, self.config.neuron.global_model_name, self.global_progress.epoch
         )
         cleanup_old_cache(self)
 

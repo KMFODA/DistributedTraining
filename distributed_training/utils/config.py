@@ -151,17 +151,18 @@ def add_args(cls, parser, prefix=None):
     )
 
     parser.add_argument(
-        "--neuron.model_name",
+        "--neuron.global_model_name",
         type=str,
         help="The model to be trained",
         default="distributed/optimized-gpt2-1b",
     )
 
     parser.add_argument(
-        "--neuron.miner_hf_repo_id",
+        "--neuron.local_model_name",
         type=str,
         help="The model to be trained",
         default=None,
+        required=True,
     )
 
     parser.add_argument(

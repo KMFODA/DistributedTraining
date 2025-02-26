@@ -114,7 +114,9 @@ async def forward(self):
             if all_reduce_success_status:
                 # Reset allreduce block tracker
                 self.last_allreduce_block = self.current_block
+                # Update state after successful allreduce
                 self.local_progress.epoch += 1
+                self.local_progress.samples_accumulated = 0
 
                 if self.uid == self.master_uid:
                     # Upload new global state to HF
@@ -135,9 +137,6 @@ async def forward(self):
                     event=self.event,
                     metagraph=self.metagraph,
                 )
-                # Update state after successful allreduce
-                self.local_progress.epoch += 1
-                self.local_progress.samples_accumulated = 0
 
                 for uid in self.uid_tracker.keys():
                     self.uid_tracker[uid][
