@@ -159,54 +159,58 @@ async def score_uid(self, uid: int):
         scores = 0
 
     else:
-        cleanup_old_cache(
-            self,
-            repo_id=self.uid_tracker[uid]["model_huggingface_id"],
-            current_revision=None,
-        )
-
-        commits = list_repo_commits(
-            self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
-        )[:2]
-        latest_commit = commits[0].commit_id
-        time_delta = (commits[0].created_at - commits[1].created_at).seconds
-
-        model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
-
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
-        )
-        # Move the model to the appropriate device
-        self.model = self.model.to(self.device)
-
-        model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
-        )
-
-        self.local_progress.samples_accumulated = 0
-        self.local_progress.inner_step = (
-            self.model.config.inner_step
-            if "inner_step" in self.model.config.__dict__
-            else 0
-        )
-        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
-
-        if self.local_progress.epoch != self.global_progress.epoch:
-            bt.logging.info(
-                f"Score 0 for UID {uid}: Local Epoch {self.local_progress.epoch} != Global Epoch {self.global_progress.epoch}"
+        try:
+            cleanup_old_cache(
+                self,
+                repo_id=self.uid_tracker[uid]["model_huggingface_id"],
+                current_revision=None,
             )
-            scores = 0
-        elif ("block_list" in self.model.config.__dict__) and (
-            len(self.model.config.block_list) > target_blocks
-        ):
-            scores = 0
-            bt.logging.info(
-                f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
+
+            commits = list_repo_commits(
+                self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
+            )[:2]
+            latest_commit = commits[0].commit_id
+            time_delta = (commits[0].created_at - commits[1].created_at).seconds
+
+            model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
+
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_huggingface_id,
+                revision=commits[0].commit_id,
+                trust_remote_code=True,
             )
-        else:
-            blocks = model_final.config.block_list
-            try:
-                for block in blocks:
+            # Move the model to the appropriate device
+            self.model = self.model.to(self.device)
+
+            model_final = AutoModelForCausalLM.from_pretrained(
+                model_huggingface_id,
+                revision=commits[1].commit_id,
+                trust_remote_code=True,
+            )
+
+            self.local_progress.samples_accumulated = 0
+            self.local_progress.inner_step = (
+                self.model.config.inner_step
+                if "inner_step" in self.model.config.__dict__
+                else 0
+            )
+            self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
+
+            if self.local_progress.epoch != self.global_progress.epoch:
+                bt.logging.info(
+                    f"Score 0 for UID {uid}: Local Epoch {self.local_progress.epoch} != Global Epoch {self.global_progress.epoch}"
+                )
+                scores = 0
+            elif ("block_list" in self.model.config.__dict__) and (
+                len(self.model.config.block_list) > target_blocks
+            ):
+                scores = 0
+                bt.logging.info(
+                    f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
+                )
+            else:
+                blocks = model_final.config.block_list
+                for block in [blocks[0]]:
                     bt.logging.info(":pages: Fetching fineweb-edu pages")
                     dataset = await fetch_training_data(self, block, uid)
 
@@ -251,9 +255,12 @@ async def score_uid(self, uid: int):
                             self.running_loss = 0.0
                             self.batch_count = 0
 
-            except Exception:
-                bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")
-                return torch.tensor([1.0])
+        except OSError or Exception as e:
+            breakpoint()
+            bt.logging.error(
+                f"Score 0 for UID {uid}: Forward Loop Failed With Error: {e}"
+            )
+            return torch.tensor([0.0])
 
         cleanup_old_cache(
             self,
@@ -275,7 +282,7 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["train_validation_count"] += 1
 
     rewards = get_normalised_score(self, uid, target_blocks)
-    bt.logging.info(f"UID {uid} Train Score: {rewards}")
+    bt.logging.info(f"UID {uid} Current Score: {rewards}")
 
     return rewards
 
@@ -284,11 +291,10 @@ def get_normalised_score(self, uid, target_blocks):
     miner_uid_tracker = self.uid_tracker[uid]
 
     if miner_uid_tracker["train_duration"] != 0:
-        train_score = (
+        miner_uid_tracker["train_score"] = (
             miner_uid_tracker["train_similarity_score"]
             * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
         ) / miner_uid_tracker["train_duration"]
-        miner_uid_tracker["train_score"] = train_score
 
     if miner_uid_tracker["all_reduce_counts"] != 0:
         miner_uid_tracker["all_reduce_score"] = (
@@ -301,6 +307,7 @@ def get_normalised_score(self, uid, target_blocks):
         + 0.5 * miner_uid_tracker["all_reduce_score"]
     )
 
+    self.uid_tracker = dict(sorted(self.uid_tracker.items()))
     # Normalise all total_scores after updating uid specific total_score
     all_scores = [self.uid_tracker[u]["total_score"] for u in self.uid_tracker]
     scores = torch.nn.functional.normalize(torch.tensor(all_scores), dim=0)

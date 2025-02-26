@@ -117,8 +117,6 @@ class Validator(BaseValidatorNeuron):
 
     def _setup_model_params(self):
         # Timeouts
-        self.train_timeout = 120
-        self.allreduce_timeout = 540
         self.load_state_timeout = 180
 
         # Core parameters
