@@ -510,10 +510,17 @@ class Miner(BaseMinerNeuron):
                 >= self.local_batch_size_train_effective
             ):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.event.update(
+                    {
+                        "outer_step": self.local_progress.epoch,
+                        "inner_step": self.local_progress.inner_step,
+                        "loss": self.local_progress.loss,
+                        "samples_accumulated": self.local_progress.samples_accumulated,
+                    }
+                )
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
-
                 self.local_progress.samples_accumulated = 0
 
     async def all_reduce(
