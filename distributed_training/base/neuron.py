@@ -119,6 +119,7 @@ class BaseNeuron(ABC):
         self.uid_tracker = {
             uid: self.uid_tracker_initial_state for uid in self.metagraph.uids.tolist()
         }
+        self.allreduce_timeout = 540
         self.upload_state_duration = 150
 
     # @abstractmethod # miner is not using this anymore

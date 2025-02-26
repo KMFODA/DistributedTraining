@@ -175,7 +175,6 @@ class Miner(BaseMinerNeuron):
         # Optimizer settings
         self.learning_rate_maximum = 6e-4
         self.weight_decay = 0.1
-        self.allreduce_timeout = 360
         self.num_inner_steps = 500
         self.offload_optimizer = True
 

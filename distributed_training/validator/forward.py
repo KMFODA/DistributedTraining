@@ -88,9 +88,9 @@ async def forward(self):
         else:
             # For non-master validators
             bt.logging.info(
-                f"Waiting {self.all_reduce_timeout + self.upload_state_duration} seconds whilst master UID completes all reduce."
+                f"Waiting {self.allreduce_timeout + self.upload_state_duration} seconds whilst master UID completes all reduce."
             )
-            time.sleep(self.all_reduce_timeout + self.upload_state_duration)
+            time.sleep(self.allreduce_timeout + self.upload_state_duration)
             self.miner_uids = []
             return responses
 
