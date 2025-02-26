@@ -168,6 +168,9 @@ class Validator(BaseValidatorNeuron):
             self.config.neuron.local_batch_size_train_effective
             // self.config.neuron.local_batch_size_train
         )
+        
+        self.running_loss = 0.0
+        self.batch_count = 0
 
     def _init_network_components(self):
         """Initialize network and P2P components"""
