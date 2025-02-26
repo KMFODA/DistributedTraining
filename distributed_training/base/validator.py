@@ -338,19 +338,7 @@ class BaseValidatorNeuron(BaseNeuron):
             min_len = min(len(self.hotkeys), len(self.scores))
             new_moving_average[:min_len] = self.scores[:min_len]
             self.scores = new_moving_average
-            self.uid_tracker[uid] = {
-                "peer_id": None,
-                "model_huggingface_id": None,
-                "last_updated_block": None,
-                "last_commit": None,
-                "train_similarity_score_last_updated": 0,
-                "train_similarity_score": 0,
-                "train_validation_count": 0,
-                "train_number_of_blocks": 0,
-                "train_duration": 0,
-                "all_reduce_successes": 0,
-                "all_reduce_counts": 0,
-            }
+            self.uid_tracker[uid] = self.uid_tracker_initial_state
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)

@@ -100,24 +100,24 @@ class BaseNeuron(ABC):
         )
         self.step = 0
 
+        self.uid_tracker_initial_state = {
+            "peer_id": None,
+            "model_huggingface_id": None,
+            "last_updated_block": None,
+            "last_commit": None,
+            "train_similarity_score_last_updated": 0,
+            "train_similarity_score": 0,
+            "train_validation_count": 0,
+            "train_number_of_blocks": 0,
+            "train_duration": 0,
+            "train_score": 0,
+            "all_reduce_successes": 0,
+            "all_reduce_counts": 0,
+            "all_reduce_score": 0,
+            "total_score": 0,
+        }
         self.uid_tracker = {
-            uid: {
-                "peer_id": None,
-                "model_huggingface_id": None,
-                "last_updated_block": None,
-                "last_commit": None,
-                "train_similarity_score_last_updated": 0,
-                "train_similarity_score": 0,
-                "train_validation_count": 0,
-                "train_number_of_blocks": 0,
-                "train_duration": 0,
-                "train_score": 0,
-                "all_reduce_successes": 0,
-                "all_reduce_counts": 0,
-                "all_reduce_score": 0,
-                "total_score": 0,
-            }
-            for uid in self.metagraph.uids.tolist()
+            uid: self.uid_tracker_initial_state for uid in self.metagraph.uids.tolist()
         }
         self.upload_state_duration = 150
 
