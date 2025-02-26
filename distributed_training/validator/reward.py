@@ -220,12 +220,12 @@ async def score_uid(self, uid: int):
 
                         scaled_loss.backward()
 
-                        self.local_progress.loss = loss.item()
+                        self.running_loss += loss.item()
+                        self.batch_count += 1
+                        self.local_progress.loss = self.running_loss / self.batch_count
 
-                        self.local_progress.samples_accumulated += (
-                            self.local_batch_size_train
-                        )
-
+                        self.local_progress.samples_accumulated += self.local_batch_size_train
+                        
                         if (
                             self.local_progress.samples_accumulated
                             % (self.logging_interval * self.local_batch_size_train)
@@ -248,6 +248,8 @@ async def score_uid(self, uid: int):
                             self.inner_optimizer.zero_grad()
                             self.local_progress.inner_step += 1
                             self.local_progress.samples_accumulated = 0
+                            self.running_loss = 0.0
+                            self.batch_count = 0
 
             except Exception:
                 bt.logging.error("Forward Loop Failed, Falling Back To Full Reward")

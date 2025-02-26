@@ -219,6 +219,9 @@ class Miner(BaseMinerNeuron):
             // self.config.neuron.local_batch_size_train
         )
 
+        self.running_loss = 0.0
+        self.batch_count = 0
+
     def _init_network_components(self):
         """Initialize network and P2P components"""
         bt.logging.info("Logging PeerID to chain")
@@ -490,7 +493,9 @@ class Miner(BaseMinerNeuron):
 
             scaled_loss.backward()
 
-            self.local_progress.loss = loss.item()
+            self.running_loss += loss.item()
+            self.batch_count += 1
+            self.local_progress.loss = self.running_loss / self.batch_count
 
             self.local_progress.samples_accumulated += self.local_batch_size_train
 
@@ -514,6 +519,9 @@ class Miner(BaseMinerNeuron):
                 self.inner_optimizer.step()
                 self.inner_optimizer.zero_grad()
                 self.local_progress.inner_step += 1
+
+                self.running_loss = 0.0
+                self.batch_count = 0
 
                 self.local_progress.samples_accumulated = 0
 
@@ -540,7 +548,7 @@ class Miner(BaseMinerNeuron):
                     synapse = await self.avg_handler.run_miner_allreduce(
                         synapse,
                         self.local_progress,
-                        start_time
+                        start_time,
                         # bandwidth
                     )
                     if not synapse.completion:
