@@ -210,7 +210,7 @@ async def score_uid(self, uid: int):
                 )
             else:
                 blocks = model_final.config.block_list
-                for block in [blocks[0]]:
+                for block in blocks:
                     bt.logging.info(":pages: Fetching fineweb-edu pages")
                     dataset = await fetch_training_data(self, block, uid)
 
@@ -257,23 +257,19 @@ async def score_uid(self, uid: int):
                             self.running_loss = 0.0
                             self.batch_count = 0
 
-        except OSError or Exception as e:
-            bt.logging.error(
+                scores = score_models(self.model, model_final)
+        except Exception as e:
+            bt.logging.info(
                 f"Score 0 for UID {uid}: Forward Loop Failed With Error: {e}"
             )
-            return torch.tensor([0.0])
+            scores = 0.0
 
-        cleanup_old_cache(
-            self,
-            repo_id=model_huggingface_id,
-            current_revision=None,
-        )
-
-        try:
-            scores = score_models(self.model, model_final)
-        except Exception as e:
-            bt.logging.error(f"Error calculating final score: {str(e)}")
-            scores = 1.0
+        finally:
+            cleanup_old_cache(
+                self,
+                repo_id=model_huggingface_id,
+                current_revision=None,
+            )
 
     self.uid_tracker[uid]["last_commit"] = latest_commit
     self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)

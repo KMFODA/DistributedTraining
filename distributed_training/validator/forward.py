@@ -32,6 +32,7 @@ from distributed_training.utils.state_loader import (
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
 from distributed_training.validator.reward import score_uid
+from distributed_training.utils.uids import map_uid_to_peerid
 
 
 async def forward(self):
@@ -45,6 +46,7 @@ async def forward(self):
 
     """
     # Evaluate wether to run an AllReduce or validate HF miner states
+    map_uid_to_peerid(self)
     blocks_since_allreduce = self.current_block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
     bt.logging.info(

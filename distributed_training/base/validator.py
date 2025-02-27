@@ -164,6 +164,7 @@ class BaseValidatorNeuron(BaseNeuron):
                         )
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
                     self.all_reduce_success_status = True
+                    self.last_allreduce_block = self.block
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())

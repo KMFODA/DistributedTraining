@@ -145,7 +145,12 @@ async def get_hf_validation_uid(self, outer_step: int = None):
             key=lambda item: item[1]["train_similarity_score_last_updated"],
         )
     )
-
+    bt.logging.info(
+        {
+            k: v["train_similarity_score_last_updated"]
+            for k, v in self.uid_tracker.items()
+        }
+    )
     for uid in self.uid_tracker.keys():
         if (
             (self.uid_tracker[uid]["model_huggingface_id"] is not None)
