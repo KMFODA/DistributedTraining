@@ -36,6 +36,7 @@ from distributed_training.utils.weight_utils import (
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.utils.state_loader import load_state_from_peer
 
+
 class BaseValidatorNeuron(BaseNeuron):
     """
     Base class for Bittensor validators. Your validator should inherit from this class.
@@ -150,13 +151,17 @@ class BaseValidatorNeuron(BaseNeuron):
                     self.event = {}
 
                 self.global_progress.epoch = get_global_epoch(self)
-                if (self.local_progress.epoch != self.global_progress.epoch) or (not self.all_reduce_success_status):
-                    if (self.local_progress.epoch != self.global_progress.epoch):
+                if (self.local_progress.epoch != self.global_progress.epoch) or (
+                    not self.all_reduce_success_status
+                ):
+                    if self.local_progress.epoch != self.global_progress.epoch:
                         bt.logging.info(
                             f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                         )
-                    if (not self.all_reduce_success_status):
-                        bt.logging.info("All Reduce Failed. Loading Latest Model State.")
+                    if not self.all_reduce_success_status:
+                        bt.logging.info(
+                            "All Reduce Failed. Loading Latest Model State."
+                        )
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
                     self.all_reduce_success_status = True
 

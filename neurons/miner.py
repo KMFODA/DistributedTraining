@@ -248,7 +248,6 @@ class Miner(BaseMinerNeuron):
             )
         )
         self.model.to(self.device)
-
         if should_sync_model:
             del global_model
             gc.collect()
@@ -590,10 +589,10 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(
                     f"Global Epoch Wasn't Updated After All Reduce. Resetting To Current Global Epoch: {self.global_progress.epoch}"
                 )
-                load_state_from_peer(self, epoch=self.global_progress.epoch)
-
-            # Resume training when done
-            self.resume_training()
+                self.all_reduce_success_status = False
+            else:
+                # Resume training when done
+                self.resume_training()
 
             return synapse
 
@@ -687,7 +686,4 @@ class Miner(BaseMinerNeuron):
 
 # This is the main function, which runs the miner.
 if __name__ == "__main__":
-    with Miner() as miner:
-        while True:
-            bt.logging.info(":lightning: Miner Running..")
-            time.sleep(45)
+    Miner().run()

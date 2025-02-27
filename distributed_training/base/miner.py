@@ -25,6 +25,7 @@ import bittensor as bt
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import get_bandwidth
+from distributed_training.utils.state_loader import load_state_from_peer
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -140,6 +141,12 @@ class BaseMinerNeuron(BaseNeuron):
                                 bt.logging.debug("Error getting bandwidth metrics")
                             self.wandb.log(self.event)
                             self.event = {}
+
+                    if not self.all_reduce_success_status:
+                        load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        self.resume_training()
+                        self.all_reduce_success_status = True
+
                     # Wait before checking again.
                     time.sleep(1)
 
