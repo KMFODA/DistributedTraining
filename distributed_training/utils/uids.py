@@ -353,7 +353,6 @@ def map_uid_to_peerid(self):
 
     for key, value in result:
         try:
-            # breakpoint()
             hotkey, metadata = decode_metadata(key, value.value)
             if hotkey not in hotkey_to_uid:
                 continue

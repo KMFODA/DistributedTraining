@@ -117,7 +117,8 @@ class BaseNeuron(ABC):
             "total_score": 0,
         }
         self.uid_tracker = {
-            uid: self.uid_tracker_initial_state for uid in self.metagraph.uids.tolist()
+            uid: self.uid_tracker_initial_state.copy()
+            for uid in self.metagraph.uids.tolist()
         }
         self.allreduce_timeout = 540
         self.upload_state_duration = 150

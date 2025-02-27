@@ -438,7 +438,7 @@ class BaseValidatorNeuron(BaseNeuron):
                         self.uid_tracker[uid].keys()
                         != self.uid_tracker_initial_state.keys()
                     ):
-                        self.uid_tracker[uid] = self.uid_tracker_initial_state
+                        self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(
