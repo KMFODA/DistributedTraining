@@ -28,7 +28,6 @@ from distributed_training.utils.progress_tracker import (
     get_global_epoch,
 )
 from distributed_training.utils.state_loader import (
-    load_state_from_peer,
     upload_new_state,
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
@@ -45,13 +44,6 @@ async def forward(self):
         self (:obj:`bittensor.neuron.Neuron`): The neuron object which contains all the necessary state for the validator.
 
     """
-    self.global_progress.epoch = get_global_epoch(self)
-    if self.local_progress.epoch != self.global_progress.epoch:
-        bt.logging.info(
-            f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-        )
-        load_state_from_peer(self, epoch=self.global_progress.epoch)
-
     # Evaluate wether to run an AllReduce or validate HF miner states
     blocks_since_allreduce = self.current_block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
@@ -150,7 +142,7 @@ async def forward(self):
         except Exception as e:
             bt.logging.error(f"AllReduce Failed: {e}")
             self.global_progress.epoch = get_global_epoch(self)
-            load_state_from_peer(self, epoch=self.global_progress.epoch)
+            self.all_reduce_success_status = False
             return
 
     else:

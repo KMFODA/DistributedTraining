@@ -50,7 +50,6 @@ from distributed_training.utils.state_loader import (
 from distributed_training.utils.uids import map_uid_to_peerid, update_run_peerid_list
 from distributed_training.validator import forward
 
-
 class Validator(BaseValidatorNeuron):
     def __init__(self, config=None):
         super(Validator, self).__init__(config=config)
@@ -242,9 +241,6 @@ class Validator(BaseValidatorNeuron):
     async def forward(self):
         return await forward(self)
 
-
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
-    with Validator() as validator:
-        while True:
-            time.sleep(5)
+    Validator().run()

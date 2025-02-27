@@ -122,6 +122,7 @@ class BaseNeuron(ABC):
         }
         self.allreduce_timeout = 540
         self.upload_state_duration = 150
+        self.all_reduce_success_status = True
 
     # @abstractmethod # miner is not using this anymore
     async def forward(self, synapse: bt.Synapse) -> bt.Synapse:

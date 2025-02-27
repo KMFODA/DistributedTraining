@@ -258,7 +258,6 @@ async def score_uid(self, uid: int):
                             self.batch_count = 0
 
         except OSError or Exception as e:
-            breakpoint()
             bt.logging.error(
                 f"Score 0 for UID {uid}: Forward Loop Failed With Error: {e}"
             )

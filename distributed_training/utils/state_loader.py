@@ -377,20 +377,7 @@ def load_model_optimizer_gradient_averager(
         while self.grad_averager.is_alive():
             time.sleep(1)
 
-        for i in self.grad_averager.main_parameters:
-            i = None
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-
-        for i in self.grad_averager.offloaded_optimizer.param_groups[0]["params"]:
-            i = None
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-
         del self.grad_averager
-        self.grad_averager = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -398,27 +385,7 @@ def load_model_optimizer_gradient_averager(
         while self.state_averager.is_alive():
             time.sleep(1)
 
-        for i in self.state_averager.main_parameters:
-            i = None
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-
-        for i in self.state_averager.optimizer.param_groups[0]["params"]:
-            i = None
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-
-        for i in self.state_averager._averaged_tensors:
-            i = None
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-
         del self.state_averager
-        self.state_averager = None
-
         gc.collect()
         torch.cuda.empty_cache()
 
