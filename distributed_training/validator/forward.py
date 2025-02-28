@@ -185,7 +185,6 @@ async def forward(self):
 
     # Update scores
     self.update_scores()
-    breakpoint()
 
     self.event.update(self.get_validator_info())
 
