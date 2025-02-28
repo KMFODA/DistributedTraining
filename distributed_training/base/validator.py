@@ -163,8 +163,9 @@ class BaseValidatorNeuron(BaseNeuron):
                             "All Reduce Failed. Loading Latest Model State."
                         )
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
-                    self.all_reduce_success_status = True
-                    self.last_allreduce_block = self.block
+                    if not self.all_reduce_success_status:
+                        self.all_reduce_success_status = True
+                        self.last_allreduce_block = self.block
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
@@ -361,8 +362,15 @@ class BaseValidatorNeuron(BaseNeuron):
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-    def update_scores(self, rewards: np.ndarray, uids: List[int]):
+    def update_scores(self):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
+
+        #  Make sure uid_tracker is sorted by uids
+        self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+        uids = list(self.uid_tracker.keys())
+        rewards = np.array(
+            [self.uid_tracker[i]["total_score"] for i in self.uid_tracker.keys()]
+        )
 
         # Check if rewards contains NaN values.
         if np.isnan(rewards).any():

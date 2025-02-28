@@ -31,7 +31,7 @@ from distributed_training.utils.state_loader import (
     upload_new_state,
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
-from distributed_training.validator.reward import score_uid
+from distributed_training.validator.reward import score_uid, score_repo
 from distributed_training.utils.uids import map_uid_to_peerid
 
 
@@ -47,7 +47,7 @@ async def forward(self):
     """
     # Evaluate wether to run an AllReduce or validate HF miner states
     map_uid_to_peerid(self)
-    blocks_since_allreduce = self.current_block - self.last_allreduce_block
+    blocks_since_allreduce = self.block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
     bt.logging.info(
         f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {should_allreduce}"
@@ -86,6 +86,7 @@ async def forward(self):
             )
             time.sleep(self.allreduce_timeout + self.upload_state_duration)
             self.miner_uids = []
+            self.last_allreduce_block = self.block
             return responses
 
         self.miner_uids = np.array([n for n in range(self.metagraph.n)])
@@ -107,7 +108,7 @@ async def forward(self):
 
             if all_reduce_success_status:
                 # Reset allreduce block tracker
-                self.last_allreduce_block = self.current_block
+                self.last_allreduce_block = self.block
                 # Update state after successful allreduce
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
@@ -150,7 +151,7 @@ async def forward(self):
     else:
         # If running HF validation round, only call one UID each step
         self.event.update({"synapse_type": "train"})
-        # breakpoint()
+
         self.miner_uids = await get_hf_validation_uid(
             self,
         )
@@ -165,26 +166,26 @@ async def forward(self):
 
         uid = self.miner_uids[0]
 
-        rewards = await score_uid(self, uid)
+        await score_uid(self, uid)
 
-        self.event.update(
-            {
-                "uids": self.miner_uids,
-                "learning_rate": self.learning_rate,
-                "average_miner_loss": self.average_loss,
-                "local_epoch": self.local_progress.epoch,
-                "global_epoch": self.global_progress.epoch,
-                "local_samples_accumulated": self.local_progress.samples_accumulated,
-                "global_samples_accumulated": self.global_progress.samples_accumulated,
-            }
-        )
-        self.event.update(
-            {"uid_" + str(key): value for key, value in self.uid_tracker.items()}
-        )
+    self.event.update(
+        {
+            "uids": self.miner_uids,
+            "learning_rate": self.learning_rate,
+            "average_miner_loss": self.average_loss,
+            "local_epoch": self.local_progress.epoch,
+            "global_epoch": self.global_progress.epoch,
+            "local_samples_accumulated": self.local_progress.samples_accumulated,
+            "global_samples_accumulated": self.global_progress.samples_accumulated,
+        }
+    )
+    self.event.update(
+        {"uid_" + str(key): value for key, value in self.uid_tracker.items()}
+    )
 
     # Update scores
-    if len(rewards) > 0:
-        self.update_scores(rewards.detach().cpu().numpy(), self.miner_uids)
+    self.update_scores()
+    breakpoint()
 
     self.event.update(self.get_validator_info())
 

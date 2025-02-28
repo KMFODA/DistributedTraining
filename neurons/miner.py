@@ -418,7 +418,7 @@ class Miner(BaseMinerNeuron):
         """Async function to fetch training data"""
         try:
             pages = await DatasetLoader.next_pages(
-                offset=self.current_block,
+                offset=self.block,
                 n_pages=5,
                 seed=self.uid,
             )
@@ -462,7 +462,7 @@ class Miner(BaseMinerNeuron):
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
-                self.model.config.block_list.append(self.current_block)
+                self.model.config.block_list.append(self.block)
 
                 self._process_training_batch(dataset)
 
