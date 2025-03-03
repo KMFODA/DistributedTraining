@@ -257,7 +257,6 @@ class Miner(BaseMinerNeuron):
 
     def upload_model(self, epoch, inner_step, batch_size):
         """Unified function to save and upload both model and optimizer state"""
-
         if not repo_exists(self.config.neuron.local_model_name, repo_type="model"):
             try:
                 create_repo(
@@ -300,14 +299,14 @@ class Miner(BaseMinerNeuron):
                         self.config.neuron.local_model_name, repo_type="model"
                     )
                     for tag in refs.tags:
-                        if int(tag.name) >= epoch:
+                        if (tag.name == "None") or (int(tag.name) >= epoch):
                             # Update tag for this version
                             delete_tag(
                                 self.config.neuron.local_model_name,
                                 repo_type="model",
                                 tag=tag.name,
                             )
-                            time.sleep(1)
+                            time.sleep(5)
                     # Create new tag for this version
                     create_tag(
                         self.config.neuron.local_model_name,
@@ -315,7 +314,6 @@ class Miner(BaseMinerNeuron):
                         tag=str(epoch),
                         tag_message=commit_message,
                     )
-
                     # Cleanup old cache
                     cleanup_old_cache(
                         self,

@@ -169,9 +169,11 @@ class BaseValidatorNeuron(BaseNeuron):
                             "All Reduce Failed. Loading Latest Model State."
                         )
                     load_state_from_peer(self, epoch=self.global_progress.epoch)
+                    # Reset all_reduce success status
                     if not self.all_reduce_success_status:
                         self.all_reduce_success_status = True
                         self.last_allreduce_block = self.block
+                    # Load all_reduce scores if non_master_uid
                     if (
                         (self.uid != self.master_uid)
                         and (self.global_progress.epoch != current_global_epoch)
