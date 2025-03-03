@@ -124,7 +124,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.epoch_length",
         type=int,
         help="The default epoch length (how often we set weights, measured in 12 second blocks).",
-        default=100,
+        default=160,
     )
 
     parser.add_argument(
@@ -281,7 +281,7 @@ def add_args(cls, parser, prefix=None):
             "--neuron.moving_average_alpha",
             type=float,
             help="Moving average alpha parameter, how much to add of the new observation.",
-            default=0.05,
+            default=0.6,
         )
 
         parser.add_argument(

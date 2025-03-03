@@ -33,6 +33,11 @@ from distributed_training.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
     process_weights_for_netuid,
 )
+from distributed_training.validator.reward import (
+    score_uid,
+    update_all_reduce_scores,
+    update_total_scores,
+)
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.utils.state_loader import load_state_from_peer
 
@@ -150,6 +155,7 @@ class BaseValidatorNeuron(BaseNeuron):
                 if self.event != {}:
                     self.event = {}
 
+                current_global_epoch = self.global_progress.epoch
                 self.global_progress.epoch = get_global_epoch(self)
                 if (self.local_progress.epoch != self.global_progress.epoch) or (
                     not self.all_reduce_success_status
@@ -166,6 +172,13 @@ class BaseValidatorNeuron(BaseNeuron):
                     if not self.all_reduce_success_status:
                         self.all_reduce_success_status = True
                         self.last_allreduce_block = self.block
+                    if (
+                        (self.uid != self.master_uid)
+                        and (self.global_progress.epoch != current_global_epoch)
+                        and (self.should_all_reduce)
+                    ):
+                        update_all_reduce_scores(self)
+                        update_total_scores(self)
 
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())

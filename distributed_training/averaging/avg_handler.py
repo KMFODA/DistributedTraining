@@ -276,7 +276,7 @@ class AveragingHandler:
         bt.logging.info(f"AllReduce UID Scores: {scores}")
         bt.logging.info(f"AllReduce UID Rewards: {rewards}")
 
-        return rewards, event
+        return rewards, status_dict, event
 
     async def run_miner_allreduce(
         self,

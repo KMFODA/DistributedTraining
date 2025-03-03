@@ -567,9 +567,16 @@ class Miner(BaseMinerNeuron):
             if synapse.completion is True:
                 self.local_progress.epoch += 1
                 bt.logging.info("AllReduce Operation Finished Succesfully")
-            bt.logging.info(synapse.timeout)
-            bt.logging.info(self.upload_state_duration)
-            bt.logging.info(time.perf_counter() - start_time)
+
+            wait_time = (
+                synapse.timeout
+                + self.upload_state_duration
+                + time.perf_counter()
+                - start_time
+            )
+            bt.logging.info(
+                f"Waiting {int(wait_time)} seconds until all nodes complete the all_reduce"
+            )
 
             # Wait for the master validator to upload new global model
             while (time.perf_counter() - start_time) <= (

@@ -31,7 +31,12 @@ from distributed_training.utils.state_loader import (
     upload_new_state,
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
-from distributed_training.validator.reward import score_uid, score_repo
+from distributed_training.validator.reward import (
+    score_uid,
+    benchmark_untested_uids,
+    update_all_reduce_scores,
+    update_total_scores,
+)
 from distributed_training.utils.uids import map_uid_to_peerid
 
 
@@ -49,16 +54,18 @@ async def forward(self):
     if self.step % 2 == 0:
         map_uid_to_peerid(self)
     blocks_since_allreduce = self.current_block - self.last_allreduce_block
-    should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    self.should_all_reduce = (
+        blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
+    )
     bt.logging.info(
-        f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {should_allreduce}"
+        f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {self.should_all_reduce}"
     )
 
     responses = [[]]
     self.miner_uids = []
     rewards = torch.tensor([])
 
-    if should_allreduce:
+    if self.should_all_reduce:
         self.event.update({"synapse_type": "all_reduce"})
 
         self.peerids_to_uids = {
@@ -114,15 +121,10 @@ async def forward(self):
                 self.local_progress.epoch += 1
                 self.local_progress.samples_accumulated = 0
 
-                if self.uid == self.master_uid:
-                    # Upload new global state to HF
-                    upload_new_state(
-                        self, self.local_progress.epoch, results, self.current_block
-                    )
-
                 # Update scoring based on allreduce participation
                 (
                     self.allreduce_scores,
+                    self.allreduce_status_dict,
                     self.event,
                 ) = self.avg_handler.calculate_allreduce_scores(
                     participating_peers=results["participating_peers"],
@@ -134,11 +136,16 @@ async def forward(self):
                     metagraph=self.metagraph,
                 )
 
-                for uid in self.uid_tracker.keys():
-                    self.uid_tracker[uid][
-                        "all_reduce_successes"
-                    ] = self.allreduce_scores[uid]
-                    self.uid_tracker[uid]["all_reduce_counts"] += 1
+                self.model.config.all_reduce_scores = self.allreduce_status_dict
+
+                if self.uid == self.master_uid:
+                    # Upload new global state to HF
+                    upload_new_state(
+                        self, self.local_progress.epoch, results, self.current_block
+                    )
+
+                update_all_reduce_scores(self)
+                update_total_scores(self)
 
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")
@@ -183,6 +190,9 @@ async def forward(self):
     self.event.update(
         {"uid_" + str(key): value for key, value in self.uid_tracker.items()}
     )
+
+    # Benchmark any untested uids
+    benchmark_untested_uids(self)
 
     # Update scores
     self.update_scores()

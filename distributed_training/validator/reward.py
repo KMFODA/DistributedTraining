@@ -304,10 +304,8 @@ async def score_uid(self, uid: int):
 
             scores = score_models(self.model, model_final)
     except Exception as e:
-        if e.errno == errno.ENOSPC:
-            scores = 1.0
-        else:
-            scores = 0.0
+        # TODO if OSError and e.rrno == errno.ENOSPC score as 1
+        scores = 0.0
         bt.logging.info(
             f"Score {int(scores)} for UID {uid}: Forward Loop Failed With Error: {e}"
         )
@@ -393,60 +391,48 @@ def score_repo(self, repo_id: str) -> bool:
 
 def benchmark_untested_uids(self):
     for uid in self.uid_tracker:
-        if (self.uid_tracker[uid]["train_validation_count"] == 0) or (
-            self.uid_tracker[uid]["all_reduce_counts"] == 0
-        ):
-            self.uid_tracker[uid]["repo_valid_sum"] += score_repo(
-                self, self.uid_tracker[uid]["model_huggingface_id"]
-            )
-            self.uid_tracker[uid]["repo_valid_count"] += 1
-            self.uid_tracker[uid]["total_score"] = (
-                self.uid_tracker[uid]["repo_valid_sum"]
-                / self.uid_tracker[uid]["repo_valid_count"]
+        try:
+            if (self.uid_tracker[uid]["train_validation_count"] == 0) and (
+                self.uid_tracker[uid]["all_reduce_counts"] == 0
+            ):
+                self.uid_tracker[uid]["repo_valid_sum"] += score_repo(
+                    self, self.uid_tracker[uid]["model_huggingface_id"]
+                )
+                self.uid_tracker[uid]["repo_valid_count"] += 1
+                self.uid_tracker[uid]["total_score"] = (
+                    self.uid_tracker[uid]["repo_valid_sum"]
+                    / self.uid_tracker[uid]["repo_valid_count"]
+                )
+                bt.logging.info(
+                    f"UID {uid} identifies as untested. Benchmarking with score {self.uid_tracker[uid]['total_score']}"
+                )
+        except Exception as e:
+            bt.logging.info(
+                f"UID {uid} identifies as untested. Benchmarking failed with error {e}"
             )
 
-    target_blocks = self.config.neuron.target_n_blocks
 
+def update_all_reduce_scores(self):
+    try:
+        if self.model.config.all_reduce_scores != {}:
+            for uid in self.allreduce_status_dict.keys():
+                if self.allreduce_status_dict[uid] == "SUCCESS":
+                    self.uid_tracker[int(uid)]["all_reduce_successes"] += 1
+                self.uid_tracker[int(uid)]["all_reduce_counts"] += 1
+                # Update all_reduce_score
+                self.uid_tracker[int(uid)]["all_reduce_score"] = (
+                    self.uid_tracker[int(uid)]["all_reduce_successes"]
+                    / self.uid_tracker[int(uid)]["all_reduce_counts"]
+                )
+
+    except Exception as e:
+        bt.logging.info(f"Error {e} updating all_reduce scores")
+
+
+def update_total_scores(self):
     for uid in self.uid_tracker:
-        miner_uid_tracker = self.uid_tracker[uid]
-
-        if miner_uid_tracker["train_duration"] != 0:
-            miner_uid_tracker["train_score"] = (
-                miner_uid_tracker["train_similarity_score"]
-                * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
-            ) / miner_uid_tracker["train_duration"]
-
-        if miner_uid_tracker["all_reduce_counts"] != 0:
-            miner_uid_tracker["all_reduce_score"] = (
-                miner_uid_tracker["all_reduce_successes"]
-                / miner_uid_tracker["all_reduce_counts"]
-            )
-
-        miner_uid_tracker["total_score"] = (
-            0.5 * miner_uid_tracker["train_score"]
-            + 0.5 * miner_uid_tracker["all_reduce_score"]
+        # Update total_score
+        self.uid_tracker[uid]["total_score"] = (
+            0.5 * self.uid_tracker[uid]["train_score"]
+            + 0.5 * self.uid_tracker[uid]["all_reduce_score"]
         )
-
-        self.uid_tracker = dict(sorted(self.uid_tracker.items()))
-        # Normalise all total_scores after updating uid specific total_score
-        all_scores = [self.uid_tracker[u]["total_score"] for u in self.uid_tracker]
-        scores = torch.nn.functional.normalize(torch.tensor(all_scores), dim=0)
-
-        self.uid_tracker[uid]["pick"] = True
-        import pandas as pd
-
-        for uid_number in range(self.metagraph.n):
-            self.uid_tracker[uid_number]["emission"] = self.metagraph.emission[
-                uid_number
-            ]
-            self.uid_tracker[uid_number]["incentive"] = self.metagraph.incentive[
-                uid_number
-            ]
-            self.uid_tracker[uid_number]["timestamps"] = time.time()
-            # self.uid_tracker[uid_number]["weight"] = self.metagraph.weights[uid_number]
-
-        pd.DataFrame.from_dict(self.uid_tracker, orient="index").reset_index().to_csv(
-            "results.csv", mode="a", header=False
-        )
-
-        return torch.tensor([scores[uid]])

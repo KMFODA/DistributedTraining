@@ -26,6 +26,7 @@ from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.state_loader import load_state_from_peer
+from distributed_training.utils.progress_tracker import get_global_epoch
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -146,6 +147,17 @@ class BaseMinerNeuron(BaseNeuron):
                         load_state_from_peer(self, epoch=self.global_progress.epoch)
                         self.resume_training()
                         self.all_reduce_success_status = True
+                    else:
+                        # TODO this can be improved and instead related to an estimated block where an all_reduce should take place
+                        if self.current_block % self.config.neuron.epoch_length == 0:
+                            self.global_progress.epoch = get_global_epoch(self)
+                            if self.local_progress.epoch != self.global_progress.epoch:
+                                bt.logging.info(
+                                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                                )
+                                load_state_from_peer(
+                                    self, epoch=self.global_progress.epoch
+                                )
 
                     # Wait before checking again.
                     time.sleep(1)
