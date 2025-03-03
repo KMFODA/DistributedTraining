@@ -362,9 +362,9 @@ class Miner(BaseMinerNeuron):
         def upload_completed(future):
             try:
                 future.result()  # This will raise any exceptions that occurred
-                bt.logging.info("Validation state upload completed successfully")
+                bt.logging.info("Model state upload completed successfully")
             except Exception as e:
-                bt.logging.error(f"Validation state upload failed: {str(e)}")
+                bt.logging.error(f"Model state upload failed: {str(e)}")
 
         self.current_upload_future.add_done_callback(upload_completed)
 
