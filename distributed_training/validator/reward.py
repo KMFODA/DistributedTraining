@@ -17,6 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import errno
 import random
 import time
 from typing import List
@@ -303,15 +304,21 @@ async def score_uid(self, uid: int):
 
             scores = score_models(self.model, model_final)
     except Exception as e:
-        bt.logging.info(f"Score 0 for UID {uid}: Forward Loop Failed With Error: {e}")
-        scores = 0.0
+        if e.errno == errno.ENOSPC:
+            scores = 1.0
+        else:
+            scores = 0.0
+        bt.logging.info(
+            f"Score {int(scores)} for UID {uid}: Forward Loop Failed With Error: {e}"
+        )
 
     finally:
-        cleanup_old_cache(
-            self,
-            repo_id=model_huggingface_id,
-            current_revision=None,
-        )
+        if model_huggingface_id is not None:
+            cleanup_old_cache(
+                self,
+                repo_id=model_huggingface_id,
+                current_revision=None,
+            )
 
     self.uid_tracker[uid]["last_commit"] = latest_commit
     self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)

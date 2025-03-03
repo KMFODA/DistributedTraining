@@ -200,12 +200,6 @@ class Miner(BaseMinerNeuron):
 
         # Sync and initialize handlers
         self._sync_with_global_model()
-        self.avg_handler = AveragingHandler(
-            self.model,
-            self.inner_optimizer,
-            self.grad_averager,
-            self.state_averager,
-        )
 
     def _setup_training_params(self):
         self.local_batch_size_train = self.config.neuron.local_batch_size_train
@@ -418,7 +412,7 @@ class Miner(BaseMinerNeuron):
         """Async function to fetch training data"""
         try:
             pages = await DatasetLoader.next_pages(
-                offset=self.block,
+                offset=self.current_block,
                 n_pages=5,
                 seed=self.uid,
             )
@@ -462,10 +456,9 @@ class Miner(BaseMinerNeuron):
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
-                self.model.config.block_list.append(self.block)
+                self.model.config.block_list.append(self.current_block)
 
                 self._process_training_batch(dataset)
-
             except Exception as e:
                 bt.logging.warning(f"Training Loop Failed with error: {e}")
                 self.training_status = TrainingStatus.ERROR

@@ -46,8 +46,9 @@ async def forward(self):
 
     """
     # Evaluate wether to run an AllReduce or validate HF miner states
-    map_uid_to_peerid(self)
-    blocks_since_allreduce = self.block - self.last_allreduce_block
+    if self.step % 2 == 0:
+        map_uid_to_peerid(self)
+    blocks_since_allreduce = self.current_block - self.last_allreduce_block
     should_allreduce = blocks_since_allreduce >= self.config.neuron.blocks_per_allreduce
     bt.logging.info(
         f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {should_allreduce}"

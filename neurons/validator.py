@@ -27,7 +27,7 @@ import threading
 import bittensor as bt
 from transformers import AutoTokenizer
 
-from distributed_training.averaging.avg_handler import AveragingHandler
+
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
@@ -148,13 +148,6 @@ class Validator(BaseValidatorNeuron):
 
         if self.local_progress.epoch < self.global_progress.epoch:
             load_state_from_peer(self, epoch=self.global_progress.epoch)
-
-        self.avg_handler = AveragingHandler(
-            self.model,
-            self.inner_optimizer,
-            self.grad_averager,
-            self.state_averager,
-        )
 
     def _setup_training_params(self):
         self.local_batch_size_train = self.config.neuron.local_batch_size_train

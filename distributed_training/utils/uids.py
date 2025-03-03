@@ -139,36 +139,40 @@ async def get_random_uids(
 
 async def get_hf_validation_uid(self, outer_step: int = None):
     uids = []
-    self.uid_tracker = dict(
-        sorted(
-            self.uid_tracker.items(),
-            key=lambda item: item[1]["train_similarity_score_last_updated"],
-        )
-    )
-    bt.logging.info(
-        {
-            k: v["train_similarity_score_last_updated"]
-            for k, v in self.uid_tracker.items()
-        }
-    )
-    for uid in self.uid_tracker.keys():
-        if (
-            (self.uid_tracker[uid]["model_huggingface_id"] is not None)
-            and (check_model_exists(self.uid_tracker[uid]["model_huggingface_id"]))
-            and (
-                (self.uid_tracker[uid]["last_commit"] is None)
-                or (
-                    list_repo_commits(
-                        self.uid_tracker[uid]["model_huggingface_id"], repo_type="model"
-                    )[0]
-                    != self.uid_tracker[uid]["last_commit"]
-                )
+    try:
+        self.uid_tracker = dict(
+            sorted(
+                self.uid_tracker.items(),
+                key=lambda item: item[1]["train_similarity_score_last_updated"],
             )
-        ):
-            uids.append(uid)
-            return uids
-        else:
-            continue
+        )
+        bt.logging.info(
+            {
+                k: v["train_similarity_score_last_updated"]
+                for k, v in self.uid_tracker.items()
+            }
+        )
+        for uid in self.uid_tracker.keys():
+            if (
+                (self.uid_tracker[uid]["model_huggingface_id"] is not None)
+                and (check_model_exists(self.uid_tracker[uid]["model_huggingface_id"]))
+                and (
+                    (self.uid_tracker[uid]["last_commit"] is None)
+                    or (
+                        list_repo_commits(
+                            self.uid_tracker[uid]["model_huggingface_id"],
+                            repo_type="model",
+                        )[0]
+                        != self.uid_tracker[uid]["last_commit"]
+                    )
+                )
+            ):
+                uids.append(uid)
+                return uids
+            else:
+                continue
+    except Exception as e:
+        bt.logging.info(f"Error getting UIDs: {e}")
 
     return uids
 
@@ -346,15 +350,18 @@ def decode_metadata(encoded_ss58: tuple, metadata: dict) -> tuple[str, str]:
 
 
 def map_uid_to_peerid(self):
-    subtensor = bt.subtensor(config=self.config)
-    result = subtensor.substrate.query_map(
-        module="Commitments",
-        storage_function="CommitmentOf",
-        params=[self.config.netuid],
-        block_hash=None,
-    )
+    try:
+        subtensor = bt.subtensor(config=self.config)
+        result = subtensor.substrate.query_map(
+            module="Commitments",
+            storage_function="CommitmentOf",
+            params=[self.config.netuid],
+            block_hash=None,
+        )
 
-    hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
+        hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
+    except Exception as e:
+        bt.loggin.info(f"Error {e} when querying UID commitments")
 
     for key, value in result:
         try:
@@ -367,12 +374,12 @@ def map_uid_to_peerid(self):
             concatenated = eval(metadata)
 
             if "peer_id" not in concatenated:
-                bt.logging.info(
+                bt.logging.debug(
                     f"Invalid commitment for UID {uid}: peer_id not in commitment metadata"
                 )
                 continue
             if "model_huggingface_id" not in concatenated:
-                bt.logging.info(
+                bt.logging.debug(
                     f"Invalid commitment for UID {uid}: model_huggingface_id not in commitment metadata"
                 )
             if concatenated["peer_id"] != self.uid_tracker[uid]["peer_id"]:
@@ -443,10 +450,10 @@ def map_uid_to_peerid(self):
                             self.uid_tracker[uid]["model_huggingface_id"] = None
                             self.uid_tracker[uid]["peer_id"] = None
 
-            bt.logging.info(f"Retrieved commitment for UID {uid}")
+            bt.logging.debug(f"Retrieved commitment for UID {uid}: {metadata}")
 
         except Exception as e:
-            bt.logging.info(f"Failed to decode commitment for UID {uid}: {e}")
+            bt.logging.debug(f"Failed to decode commitment for UID {uid}: {e}")
             continue
 
-    bt.logging.info("Finished extracting commitments for all uids")
+    bt.logging.debug("Finished extracting commitments for all uids")

@@ -3,6 +3,7 @@ import gc
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import threading
 import time
@@ -32,10 +33,12 @@ from huggingface_hub.utils import (
     RepositoryNotFoundError,
     EntryNotFoundError,
 )
+from huggingface_hub.constants import HF_HUB_CACHE
 from transformers import AutoModelForCausalLM, AutoConfig
 
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.averaging.avg_handler import AveragingHandler
 
 hivemind_logger = get_logger(__name__)
 
@@ -391,6 +394,7 @@ def load_model_optimizer_gradient_averager(
         del self.state_averager
         gc.collect()
         torch.cuda.empty_cache()
+        bt.logging.info("Deleted state_averager and grad_averager")
 
     # Load a new state averager
     self.state_averager = DTStateAverager(
@@ -426,6 +430,13 @@ def load_model_optimizer_gradient_averager(
         start=True,
     )
     bt.logging.info("Succesfully Loaded State Averager")
+
+    self.avg_handler = AveragingHandler(
+        self.model,
+        self.inner_optimizer,
+        self.grad_averager,
+        self.state_averager,
+    )
 
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
@@ -554,6 +565,7 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
     bt.logging.info("Cache clearing warnings:")
     bt.logging.info(f"{cache_info.warnings}")
 
+    # Delete cache using preferred huggingface cache clearing method
     for repo in cache_info.repos:
         if repo.repo_id == repo_id:
             revisions = sorted(
@@ -577,6 +589,24 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
                     )
                     cache_info.delete_revisions(revision.commit_hash).execute()
             break
+
+    # Forcefully remove the entire cache folder for a model if it's corrupted
+    repo_folder_name = repo_id.replace("/", "--")
+    if sum([repo_folder_name in str(warning) for warning in cache_info.warnings]) > 0:
+        cache_dir = HF_HUB_CACHE
+        cache_dir = Path(cache_dir).expanduser().resolve()
+        for cache in cache_dir.iterdir():
+            if repo_folder_name in str(cache):
+                bt.logging.info(
+                    f"Found repo {repo_id} in HF cache warning message. Proceeding to delete the entire cache folder."
+                )
+                try:
+                    shutil.rmtree(str(cache))
+                except OSError as e:
+                    bt.logging.info(
+                        "Error: %s - %s deleting the entire cache folder for the repo: %s"
+                        % (e.filename, e.strerror, repo_id)
+                    )
 
 
 def upload_new_state(self, epoch: int, results: dict, block: int = None):
