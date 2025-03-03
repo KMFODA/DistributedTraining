@@ -31,7 +31,14 @@ pip install -e .
 wandb login <your_wandb_api_key>
 ```
 
-3. Install [PM2](https://pm2.io/docs/runtime/guide/installation/) and the [`jq` package](https://jqlang.github.io/jq/) on your system.
+3. Log in to huggingface
+```bash
+huggingface-cli login <your_hf_write_api_key>
+```
+
+4. Create a unique huggignface repo_id via the following link: https://huggingface.co/new and note the repo_id to provide it under the config neuron.local_model_name in the startup command
+
+5. Install [PM2](https://pm2.io/docs/runtime/guide/installation/) and the [`jq` package](https://jqlang.github.io/jq/) on your system.
 
 **On Linux**:
 ```bash
@@ -42,12 +49,12 @@ sudo apt update && sudo apt install jq && sudo apt install npm && sudo npm insta
 brew update && brew install jq && brew install npm && sudo npm install pm2 -g && pm2 update
 ```
 
-4. Register your hotkey
+6. Register your hotkey
 ```bash
 btcli subnets register --subtensor.network finney --netuid $NETUID --wallet.name $WALLET_NAME --wallet.hotkey $HOTKEY_NAME
 ```
 
-5. Copy the .env file to your root directory
+7. Copy the .env file to your root directory
 ```bash
 cp DistributedTraining/.env /root/
 ```
@@ -66,6 +73,7 @@ pm2 start run_miner.sh --name distributed_training_miner_auto_update --
     --axon.port <an open port to serve the bt axon on>
     --dht.port <another open port to serve the dht axon on>
     --dht.ip <your device ip address>
+    --neuron.local_model_name <a unique hf public repo id you can push models to>
 ```
 ---
 

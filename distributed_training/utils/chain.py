@@ -75,15 +75,15 @@ async def get_chain_metadata(self, uid):
 
 def log_peerid_to_chain(self):
     try:
-        self.subtensor.commit(
-            self.wallet, self.config.netuid, self.dht.peer_id.to_base58()
-        )
+        metadata = {
+            "peer_id": self.dht.peer_id.to_base58(),
+            "model_huggingface_id": self.config.neuron.local_model_name,
+        }
+        self.subtensor.commit(self.wallet, self.config.netuid, str(metadata))
         self.peer_id_logged_to_chain = True
-        bt.logging.info(
-            f"DHT PeerID {self.dht.peer_id.to_base58()} succesfully logged to chain."
-        )
-    except:
+        bt.logging.info(f"Metadata dict {metadata} succesfully logged to chain.")
+    except Exception:
         self.peer_id_logged_to_chain = False
-        bt.logging.info(
-            f"Unable to log DHT PeerID to chain. Retrying on the next step."
+        bt.logging.debug(
+            "Unable to log DHT PeerID to chain. Retrying on the next step."
         )

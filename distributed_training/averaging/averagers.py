@@ -1,22 +1,11 @@
+# With many thanks to Prime-Intellect for inspiration for this code
+
 import asyncio
-import logging
-from contextlib import contextmanager
-from typing import (
-    Any,
-    AsyncIterator,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Sequence,
-    Union,
-)
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 import bittensor as bt
-import torch
-
 import hivemind
-import hivemind.averaging.averager
+import torch
 from hivemind.averaging.allreduce import (
     AllreduceException,
     AllReduceRunner,
@@ -28,6 +17,8 @@ from hivemind.averaging.load_balancing import load_balance_peers
 from hivemind.averaging.matchmaking import MatchmakingException
 from hivemind.compression import CompressionInfo, deserialize_torch_tensor
 from hivemind.dht import DHT
+from hivemind.dht.dht import DHT
+from hivemind.optim.state_averager import TorchOptimizer, TrainingStateAverager
 from hivemind.p2p import P2PContext, P2PDaemonError, P2PHandlerError, PeerID
 from hivemind.proto import averaging_pb2
 from hivemind.utils import MPFuture, get_logger
@@ -44,8 +35,7 @@ from hivemind.utils.timed_storage import DHTExpiration, get_dht_time
 
 GatheredData = Any
 
-logger = get_logger(__name__)
-logger.setLevel(logging.INFO)
+hivemind_logger = get_logger(__name__)
 
 
 class DTAllReduceRunner(AllReduceRunner):
@@ -127,7 +117,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     != self.tensor_part_container.num_parts_by_peer[peer_index]
                 ):
                     bt.logging.info(
-                        f"part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
+                        "part_index != self.tensor_part_container.num_parts_by_peer[peer_index]"
                     )
                     raise AllreduceException(
                         f"peer {peer_id_abreviated} sent {part_index} parts, but we expected "
@@ -135,7 +125,7 @@ class DTAllReduceRunner(AllReduceRunner):
                     )
             except BaseException as e:
                 if isinstance(e, Exception):
-                    logger.debug(
+                    hivemind_logger.debug(
                         f"Caught {repr(e)} when communicating to {peer_id_abreviated}",
                         exc_info=True,
                     )
@@ -166,7 +156,7 @@ class DTAllReduceRunner(AllReduceRunner):
 
         try:
             if len(self.sender_peer_ids) == 0:
-                logger.debug(
+                hivemind_logger.debug(
                     f"{self} - finished all-reduce early: all peers are auxiliaries ({self.modes})"
                 )
                 self.finalize()
@@ -187,18 +177,18 @@ class DTAllReduceRunner(AllReduceRunner):
                             asyncio.create_task(self._communicate_with_peer(peer_id))
                         )
 
-                bt.logging.info(f"Succesfully Communicated With All Peers")
+                bt.logging.info("Succesfully Communicated With All Peers")
 
                 async for (
                     averaged_tensor_delta
                 ) in self.tensor_part_container.iterate_output_tensors():
                     yield averaged_tensor_delta  # delta = averaged_tensor - original_tensor
 
-                bt.logging.info(f"Iterate Output Tensors Finished")
+                bt.logging.info("Iterate Output Tensors Finished")
 
                 self.finalize()
 
-                bt.logging.info(f"Finalize Finished")
+                bt.logging.info("Finalize Finished")
 
             else:  # auxiliary peer
                 await self.tensor_part_reducer.finished.wait()
@@ -219,7 +209,9 @@ class DTAllReduceRunner(AllReduceRunner):
                 except asyncio.CancelledError:
                     pass
                 except Exception as inner_exc:
-                    logger.debug(f"Task {task} failed with {inner_exc}", exc_info=True)
+                    hivemind_logger.debug(
+                        f"Task {task} failed with {inner_exc}", exc_info=True
+                    )
 
     async def _generate_input_for_peer(
         self, peer_index: int, uid: str, peer_id: PeerID
@@ -242,7 +234,7 @@ class DTAllReduceRunner(AllReduceRunner):
                 yield averaging_pb2.AveragingData(tensor_part=part, weight=self.weight)
 
         except Exception as e:
-            logger.error(
+            hivemind_logger.error(
                 f"Error preparing input for peer {self.ordered_peer_ids[peer_index]}: {e}"
             )
 
@@ -277,7 +269,9 @@ class DTAverager(hivemind.DecentralizedAverager):
         **kwargs,
     ) -> Union[Optional[Dict[PeerID, GatheredData]], StepControl]:
         if self.mode == AveragingMode.AUX and weight is not None:
-            logger.warning("Averager is running in auxiliary mode, weight is unused")
+            hivemind_logger.warning(
+                "Averager is running in auxiliary mode, weight is unused"
+            )
         if scheduled_time is None:
             scheduled_time = (
                 get_dht_time() + self.matchmaking_kwargs["min_matchmaking_time"]
@@ -411,11 +405,11 @@ class DTAverager(hivemind.DecentralizedAverager):
                         or get_dht_time() >= step.deadline
                     ):
                         if not step.cancelled():
-                            logger.exception(e)
+                            hivemind_logger.exception(e)
                         if not step.done():
                             step.set_exception(e)
                     else:
-                        logger.warning(
+                        hivemind_logger.warning(
                             f"{self.__class__.__name__} caught {repr(e)}, retrying"
                         )
 
@@ -457,8 +451,6 @@ class DTAverager(hivemind.DecentralizedAverager):
                 thr if mode != AveragingMode.CLIENT else 0.0
                 for thr, mode in zip(bandwidths, modes)
             ]
-            # bt.logging.info("Donwloaded bandwidths")
-            # bt.logging.info(download_bandwidths)
             peer_fractions = await asyncio.get_event_loop().run_in_executor(
                 None,
                 load_balance_peers,
@@ -498,146 +490,71 @@ class DTAverager(hivemind.DecentralizedAverager):
                             "aux peers should not receive averaged tensors"
                         )
 
-                return user_gathered, runner.banned_senders, group_info.peer_ids
+                return (
+                    user_gathered,
+                    runner.banned_senders,
+                    group_info.peer_ids,
+                    modes,
+                    download_bandwidths,
+                )
         except BaseException as e:
             if isinstance(e, Exception):
-                logger.exception(e)
+                hivemind_logger.exception(e)
             raise MatchmakingException(f"Unable to run All-Reduce: {e}")
 
-    async def rpc_download_state_partial(
-        self, _request: averaging_pb2.DownloadRequest, _context: P2PContext
-    ) -> AsyncIterator[averaging_pb2.DownloadData]:
-        """
-        Get the up-to-date trainer state from a peer.
-        The state consists of two parts: (serialized_metadata, tensors)
 
-         - serialized_metadata is a small serialized bytestring meant to store scalars and hyperparameters
-         - tensors is a sequence of pytorch tensors that represent model parameters or optimizer statistics
-        """
-        logger.info("rpc_download_state_partial")
-        if not self.allow_state_sharing:
-            return  # deny request and direct peer to the next prospective averager
-        metadata, tensors, infos = await self._get_current_state_from_host_process()
-        logger.info(len(tensors))
-        if infos is None:
-            infos = [
-                CompressionInfo.from_tensor(tensor, key=i)
-                for i, tensor in enumerate(tensors)
-            ]
-        assert len(tensors) == len(infos)
+class DTGradAverager(DTAverager):
+    """ "
+    DTGradAverager is meant to be used in pair with DTStateAverager. Specifically it takes as input the offloaded optimizer of DTStateAverager, and
+    use the grad buffer of the offloaded param as averaged_tensors for the DecentralizedAverager. In other words the DTGradAverager makes sure that the grad of the offloaded optimizer
+    are kept in sync between peers.
+    """
 
-        # for tensor, info in zip([tensors[0]], infos):
-        for tensor, info in zip([tensors[0]], infos):
-            for part in split_for_streaming(
-                self.state_compression.compress(tensor, info, allow_inplace=False)
-            ):
-                if metadata is not None:
-                    yield averaging_pb2.DownloadData(
-                        tensor_part=part, metadata=metadata
-                    )
-                    metadata = None
-                else:
-                    yield averaging_pb2.DownloadData(tensor_part=part)
-            break
-
-
-class DTGradientAverager(DTAverager):
     def __init__(
         self,
-        parameters: Iterable[torch.nn.Parameter],
+        main_parameters: List[torch.nn.Parameter],
+        offloaded_optimizer: TorchOptimizer,
         *,
         dht: DHT,
         prefix: str,
-        reuse_grad_buffers: bool = False,
-        accumulate_grads_on: Optional[torch.device] = None,
-        client_mode: bool = None,
         warn: bool = True,
-        averaged_grads: Sequence[torch.Tensor] = (),
         **kwargs,
     ):
-        if reuse_grad_buffers and accumulate_grads_on is not None:
-            logger.warning(
-                "Setting 'accumulate_grads_on' has no effect if reuse_grad_buffers=True"
+        if "averaged_grads" in kwargs:
+            raise KeyError(
+                "DTGradAverager does not support averaged_grads since it use the offloaded optimizer gradients directly"
             )
-        client_mode = client_mode if client_mode is not None else dht.client_mode
-        self.parameters = tuple(parameters)
-        self.reuse_grad_buffers = reuse_grad_buffers
+
+        if not isinstance(main_parameters, (list, tuple)):
+            raise ValueError(
+                "main_parameters must be a list or tuple of torch.nn.Parameter and not an iterator otherwise parameters will be consumed"
+            )
+        self.main_parameters = list(main_parameters)
+        self.offloaded_optimizer = offloaded_optimizer
+
         self.warn = warn
         self.local_samples_accumulated = 0
         self.local_times_accumulated = 0
-        self._anchor_batch_size = None
-        self._local_accumulators = None
-        if not reuse_grad_buffers:
-            self._local_accumulators = tuple(
-                torch.zeros_like(grad, device=accumulate_grads_on)
-                for grad in self._grads_from_parameters()
-            )
-        self._accumulators_used_in_step = False
+
         self._new_averaged_grads = False
 
-        with torch.no_grad():
-            if not averaged_grads:
-                averaged_grads = tuple(
-                    grad.detach().cpu().clone().share_memory_()
-                    for grad in self._grads_from_parameters()
-                )
-            else:
-                if any(
-                    param_grad.size() != grad.size()
-                    for param_grad, grad in zip(
-                        self._grads_from_parameters(), averaged_grads
-                    )
-                ):
-                    raise ValueError(
-                        "Averaged gradients don't have same shape as gradients from parameters"
-                    )
+        averaged_grads = tuple(grad for grad in self._grads_from_optimizer())
+
         super().__init__(
             averaged_tensors=averaged_grads,
             dht=dht,
             prefix=prefix,
-            client_mode=client_mode,
             **kwargs,
         )
 
-    def _grads_from_parameters(self) -> Iterator[torch.Tensor]:
-        """gradient buffers associated with parameters"""
-        for param in self.parameters:
-            if param.grad is None:
-                param.grad = torch.zeros_like(param)
-            yield param.grad
-
-    @torch.no_grad()
-    def _grad_accumulators(self) -> Iterator[torch.Tensor]:
-        """averager-based gradient accumulators"""
-        assert (self._local_accumulators is None) == self.reuse_grad_buffers
-        yield from (
-            self._grads_from_parameters()
-            if self.reuse_grad_buffers
-            else self._local_accumulators
-        )
-
-    @torch.no_grad()
-    def accumulate_grads_(self, batch_size: int):
-        """add current gradients to local grad accumulators (if used)"""
-        if self._accumulators_used_in_step and self.warn:
-            logger.warning(
-                "[warn=True] Gradient accumulators were not reset since the last averaging round. Please "
-                "call .reset_accumulated_grads_ after every step or use .step(reset_accumulators=True)"
-            )
-            self._accumulators_used_in_step = False  # warn once per round
-        if self._anchor_batch_size is None:
-            # remember the first batch size to correctly re-scale gradients if subsequent batches have a different size
-            self._anchor_batch_size = batch_size
-        self.local_samples_accumulated += batch_size
-        self.local_times_accumulated += 1
-        if self.reuse_grad_buffers:
-            pass  # user is responsible for accumulating gradients in .grad buffers
-        else:
-            alpha = float(batch_size) / self._anchor_batch_size
-            for grad_buf, grad_acc in zip(
-                self._grads_from_parameters(), self._grad_accumulators()
-            ):
-                grad_acc.add_(grad_buf.to(grad_acc.device), alpha=alpha)
+    def _grads_from_optimizer(self) -> Iterator[torch.Tensor]:
+        """gradient buffers associated optimizer"""
+        param_groups = self.offloaded_optimizer.param_groups
+        for param_group in param_groups:
+            for param in param_group["params"]:
+                if param.grad is None:
+                    param.grad = torch.zeros_like(param)
+                yield param.grad
 
     def schedule_step(
         self, scheduled_time: Optional[DHTExpiration] = None, **kwargs
@@ -660,8 +577,6 @@ class DTGradientAverager(DTAverager):
 
     def step(
         self,
-        weight: Optional[float] = None,
-        reset_accumulators: bool = True,
         control: Optional[StepControl] = None,
         timeout: Optional[float] = None,
         wait: bool = True,
@@ -678,74 +593,83 @@ class DTGradientAverager(DTAverager):
         """
         if control is None:
             control = self.schedule_step(timeout=timeout, **kwargs)
-        elif len(kwargs) > 0:
-            raise RuntimeError(
-                f"Averaging with a pre-scheduled group, parameters {kwargs} will have no effect"
-            )
-        assert not control.triggered, f"This {type(control)} instance was already used"
-        if self._new_averaged_grads and self.warn:
-            logger.warning(
-                "[warn=True] Starting new averaging round, but previous round results were not used. "
-                "This may be a sign of incorrect optimizer behavior"
-            )
 
-        self.load_accumulators_into_averager_()
-        self._accumulators_used_in_step = True
-        self._new_averaged_grads = True
-
-        control.weight = self.local_samples_accumulated if weight is None else weight
-        if reset_accumulators:
-            self.reset_accumulated_grads_()
+        self.compute_and_load_pseudo_grad_into_averager()
         control.allow_allreduce()
 
         return control.result(timeout) if wait else control
 
     @torch.no_grad()
-    def load_accumulators_into_averager_(self):
-        """load locally accumulated gradients into the averager for aggregation"""
-        # divide locally accumulated gradients by the number of times they were accumulated
-        grad_scale = (
-            (1.0 / self.local_times_accumulated)
-            if self.local_times_accumulated != 0
-            else 0.0
-        )
+    def compute_and_load_pseudo_grad_into_averager(self):
+        """compute pseudo gradient by subtracting the offloaded optimizer parameters with the main parameters and load them in the averager"""
+        opt_parameters = [
+            param
+            for group in self.offloaded_optimizer.param_groups
+            for param in group["params"]
+        ]
         with self.get_tensors() as averaged_grads:
-            for grad_acc, averaged_grad in zip(
-                self._grad_accumulators(), averaged_grads
+            for opt_param, averaged_grad, main_param in zip(
+                opt_parameters, averaged_grads, self.main_parameters
             ):
-                averaged_grad.copy_(grad_acc, non_blocking=True).mul_(grad_scale)
-
-    @torch.no_grad()
-    def reset_accumulated_grads_(self):
-        """reset averager-internal gradient accumulators and the denominator"""
-        self._accumulators_used_in_step = False
-        self.local_samples_accumulated = self.local_times_accumulated = 0
-        self._anchor_batch_size = None
-        for grad_buf in self._grad_accumulators():
-            grad_buf.zero_()
-
-    """
-    Needs this wrapper class to ensure device is set properly when averaging gradients
-    See: https://github.com/learning-at-home/hivemind/blob/d20e81017481aa2028efc33217522248aabd7d95/hivemind/optim/grad_averager.py#L224
-    """
-
-    @contextmanager
-    @torch.no_grad()
-    def use_averaged_gradients(self):
-        """Substitute model's main gradients with averaged gradients"""
-        self._new_averaged_grads = False
-        with self.get_tensors() as averaged_grads:
-            assert len(averaged_grads) == len(self.parameters)
-            try:
-                old_grads = [param.grad for param in self.parameters]
-                for param, new_grad in zip(self.parameters, averaged_grads):
-                    # move new_grad to the same device as param before assigning
-                    param.grad = new_grad.to(param.device)
-                yield averaged_grads
-            finally:
-                for param, old_grad in zip(self.parameters, old_grads):
-                    param.grad = old_grad
+                # opt_param is the param that will be all_reduce, it is suppose to be on cpu
+                # main_param is the param that has been updated by the inner optimizer, it is suppose to be on gpu
+                grad = opt_param.data - main_param.detach().to(opt_param.device)
+                averaged_grad.copy_(grad, non_blocking=True)
 
     def notify_used_averaged_gradients(self):
         """Notify averager that the results of a previous averaging round are accounted for"""
         self._new_averaged_grads = False
+
+    async def rpc_download_state_partial(
+        self, _request: averaging_pb2.DownloadRequest, _context: P2PContext
+    ) -> AsyncIterator[averaging_pb2.DownloadData]:
+        """
+        Get the up-to-date trainer state from a peer.
+        The state consists of two parts: (serialized_metadata, tensors)
+
+         - serialized_metadata is a small serialized bytestring meant to store scalars and hyperparameters
+         - tensors is a sequence of pytorch tensors that represent model parameters or optimizer statistics
+        """
+        hivemind_logger.info("rpc_download_state_partial")
+        if not self.allow_state_sharing:
+            return  # deny request and direct peer to the next prospective averager
+        metadata, tensors, infos = await self._get_current_state_from_host_process()
+        hivemind_logger.info(len(tensors))
+        if infos is None:
+            infos = [
+                CompressionInfo.from_tensor(tensor, key=i)
+                for i, tensor in enumerate(tensors)
+            ]
+        assert len(tensors) == len(infos)
+
+        # for tensor, info in zip([tensors[0]], infos):
+        for tensor, info in zip([tensors[0]], infos):
+            for part in split_for_streaming(
+                self.state_compression.compress(tensor, info, allow_inplace=False)
+            ):
+                if metadata is not None:
+                    yield averaging_pb2.DownloadData(
+                        tensor_part=part, metadata=metadata
+                    )
+                    metadata = None
+                else:
+                    yield averaging_pb2.DownloadData(tensor_part=part)
+            break
+
+
+class DTStateAverager(TrainingStateAverager):
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(
+            **kwargs
+        )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
+
+    def update_main_param_after_outer_step(self):
+        """Update the main parameters with the inner optimizer step"""
+        opt_parameters = [
+            param for group in self.optimizer.param_groups for param in group["params"]
+        ]
+        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
+            main_param.data.copy_(opt_param.data, non_blocking=True)

@@ -1,31 +1,46 @@
-import os
 import copy
-import time
 import gc
-import hivemind
-import logging
+import os
+import subprocess
+import sys
+import shutil
 import tempfile
 import threading
-from typing import Dict
+import time
+from functools import partial
+from pathlib import Path
+from typing import Optional
 
 import bittensor as bt
-import torch
-from hivemind.utils import get_logger
-from huggingface_hub import hf_hub_download, scan_cache_dir, create_tag, upload_folder
-
-from bitsandbytes.optim import LAMB8bit
-from transformers import AutoModelForCausalLM
-
-from distributed_training.utils.progress_tracker import (
-    get_global_epoch,
-)
-from distributed_training.utils.gradient_averager import (
-    DTGradientAverager,
-)
+import hivemind
 import psutil
+import torch
+from hivemind.compression import deserialize_torch_tensor
+from hivemind.proto import averaging_pb2
+from hivemind.utils import get_logger
+from hivemind.utils.asyncio import aiter_with_timeout
+from hivemind.utils.streaming import combine_from_streaming
+from huggingface_hub import (
+    create_tag,
+    hf_hub_download,
+    list_repo_refs,
+    list_repo_files,
+    scan_cache_dir,
+    upload_folder,
+)
+from huggingface_hub.utils import (
+    HfHubHTTPError,
+    RepositoryNotFoundError,
+    EntryNotFoundError,
+)
+from huggingface_hub.constants import HF_HUB_CACHE
+from transformers import AutoModelForCausalLM, AutoConfig
 
-logger = get_logger(__name__)
-logger.setLevel(logging.INFO)
+from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
+from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.averaging.avg_handler import AveragingHandler
+
+hivemind_logger = get_logger(__name__)
 
 
 class ModelLoadingManager:
@@ -51,77 +66,300 @@ class ModelLoadingManager:
                 self._last_loaded_epoch = epoch
 
 
-def load_model_optimizer_gradient_averager(self, epoch):
-    bt.logging.info(
+class FastModelLoader:
+    def __init__(self, model_name: str, cache_dir: str = None):
+        """
+        Initialize the fast model loader with HF downloader integration.
+
+        Args:
+            model_name (str): The HuggingFace model name (e.g., 'organization/model-name')
+            cache_dir (str, optional): Directory to store downloaded files. Defaults to HF cache.
+        """
+        self.model_name = model_name
+        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
+        self._downloaded_files = {}  # Cache of downloaded files
+
+    def download_files(self, revision: str = None, files: list = None):
+        """
+        Download files using hfdownloader.
+
+        Args:
+            revision (str, optional): Git revision/epoch number
+            files (list, optional): List of specific files to download with patterns
+
+        Returns:
+            str: Path to downloaded files
+        """
+        # Generate cache key
+        cache_key = f"{revision}_{','.join(files) if files else 'default'}"
+
+        # Check if we already downloaded these files
+        if cache_key in self._downloaded_files:
+            return self._downloaded_files[cache_key]
+
+        model_path = os.path.join(self.cache_dir, self.model_name.replace("/", "_"))
+        os.makedirs(model_path, exist_ok=True)
+
+        cmd = [
+            "hfdownloader",
+            "-r",
+            self.model_name,
+            "download",
+            "-c",
+            "10",
+            "-y",
+        ]
+
+        if revision:
+            cmd.extend(["-b", revision])
+
+        # Add file patterns if specified, otherwise default to both model and optimizer
+        if files:
+            for file_pattern in files:
+                cmd.extend(["-f", f"{file_pattern}"])
+        else:
+            cmd.extend(
+                [
+                    "-f",
+                    "*.safetensors",
+                    "-f",
+                    "optimizer.pt",
+                    "--skip-verify",
+                ]
+            )
+
+        bt.logging.debug(f"Executing hfdownloader command: {' '.join(cmd)}")
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=model_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                env={
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                },  # Force Python unbuffered output
+            )
+
+            # Use select to handle both stdout and stderr
+            import select
+
+            outputs = [process.stdout, process.stderr]
+            while True:
+                # Wait for output on either stdout or stderr
+                readable, _, _ = select.select(outputs, [], [])
+
+                for output in readable:
+                    line = output.readline()
+                    if line:
+                        # Don't buffer the print
+                        print(line.rstrip(), flush=True)
+
+                # Check if process has finished
+                if process.poll() is not None:
+                    break
+
+            # Get any remaining output
+            remaining_stdout, remaining_stderr = process.communicate()
+            if remaining_stdout:
+                print(remaining_stdout.rstrip(), flush=True)
+            if remaining_stderr:
+                print(
+                    f"Error: {remaining_stderr.rstrip()}", file=sys.stderr, flush=True
+                )
+
+            if process.returncode != 0:
+                raise RuntimeError(
+                    f"hfdownloader failed with return code {process.returncode}"
+                )
+
+        except Exception as e:
+            bt.logging.error(f"Download failed! Error: {str(e)}")
+            raise RuntimeError(f"hfdownloader failed: {str(e)}")
+
+        return model_path
+
+    def load_model_and_optimizer(self, epoch: int = None):
+        """
+        Load both model and optimizer states in a single download operation.
+
+        Args:
+            epoch (int, optional): Epoch number for specific revision
+
+        Returns:
+            tuple: (model_state_dict, optimizer_state_dict)
+        """
+        revision = str(epoch) if epoch is not None else None
+
+        # Download both model and optimizer files in one go
+        model_path = self.download_files(revision=revision)
+
+        # Load model state
+        model_files = list(Path(model_path).rglob("*.safetensors"))
+        if not model_files:
+            raise FileNotFoundError(f"No model files found in {model_path}")
+
+        bt.logging.info(f"Loading model state from: {[f.name for f in model_files]}")
+
+        state_dict = {}
+        for model_file in model_files:
+            from safetensors.torch import load_file
+
+            state = load_file(model_file)
+            state_dict.update(state)
+
+        # Load optimizer state
+        optimizer_file = Path(model_path) / "optimizer.pt"
+        if not optimizer_file.exists():
+            raise FileNotFoundError(f"Optimizer state not found at {optimizer_file}")
+
+        bt.logging.info(f"Loading optimizer state from: {optimizer_file}")
+        optimizer_state = torch.load(str(optimizer_file), map_location="cpu")
+
+        return state_dict, optimizer_state
+
+
+def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
+    try:
+        if revision and revision != "None":
+            list_repo_files(repo_id, revision=revision)
+        else:
+            list_repo_files(repo_id)
+        return True
+    except (RepositoryNotFoundError, EntryNotFoundError):
+        return False
+
+
+def load_model_optimizer_gradient_averager(
+    self, model_name, epoch, use_fast_loader=False
+):
+    bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
+    fall_back_model_name = self.config.neuron.global_model_name
+    self.gloabl_model_config = AutoConfig.from_pretrained(
+        fall_back_model_name, trust_remote_code=True
+    )
+
     # Delete existing model
     if hasattr(self, "model"):
-        del self.model.model.transformer.wte.weight
-        del self.model.model.transformer.wte.norm
-        del self.model.model.transformer.wpe.weight
-        del self.model.model.transformer.wpe.norm
-        del self.model.model.transformer.wte
-        del self.model.model.transformer.wpe
+        transformer = self.model.model.transformer
+        for component in ["wte", "wpe"]:
+            if hasattr(transformer, component):
+                comp = getattr(transformer, component)
+                if hasattr(comp, "weight"):
+                    del comp.weight
+                if hasattr(comp, "norm"):
+                    del comp.norm
+                delattr(transformer, component)
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
 
-    # Load a new model
-    self.model = (
-        AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name, revision=str(epoch), trust_remote_code=True
-        )
-        if epoch
-        else AutoModelForCausalLM.from_pretrained(
-            self.config.neuron.model_name, trust_remote_code=True
-        )
-    )
-    # Move the model to the appropriate device
+    if use_fast_loader:
+        try:
+            # Load both model and optimizer states
+            model_state, optimizer_state = self.loader.load_model_and_optimizer(
+                epoch=epoch
+            )
+
+            # Create model instance and load state
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, state_dict=model_state, trust_remote_code=True
+            )
+
+        except Exception as e:
+            bt.logging.error(
+                f"Fast loader failed: {str(e)}. Falling back to standard loading."
+            )
+            use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
+
+    if not use_fast_loader:
+        if check_model_exists(model_name, revision=str(epoch)):
+            try:
+                self.model = (
+                    AutoModelForCausalLM.from_pretrained(
+                        model_name, revision=str(epoch), trust_remote_code=True
+                    )
+                    if epoch
+                    else AutoModelForCausalLM.from_pretrained(
+                        model_name, trust_remote_code=True
+                    )
+                )
+                bt.logging.info(
+                    f"Successfully loaded model from {model_name} with revision {epoch}"
+                )
+
+            except Exception as e:
+                bt.logging.warning(
+                    f"Failed to load model despite repo existing: {str(e)}"
+                )
+
+                bt.logging.info("Fallback to loading from global repo")
+                self.model = (
+                    AutoModelForCausalLM.from_pretrained(
+                        fall_back_model_name,
+                        revision=str(epoch),
+                        trust_remote_code=True,
+                    )
+                    if epoch
+                    else AutoModelForCausalLM.from_pretrained(
+                        fall_back_model_name, trust_remote_code=True
+                    )
+                )
+                bt.logging.info("Successfully loaded global model")
+
+    # Move model to device
     self.model = self.model.to(self.device)
+    self.model.config.block_list = []
+    self.local_progress.inner_step = (
+        self.model.config.inner_step
+        if "inner_step" in self.model.config.__dict__
+        else 0
+    )
 
     # Delete any historic model references in GlobalOptimManager
-    if hasattr(self, "opt") and (len(self.opt.mng.module_weight_config_triple) > 2):
-        self.opt.mng.module_weight_config_triple = (
-            self.opt.mng.module_weight_config_triple[-2:]
+    if (
+        hasattr(self, "inner_optimizer")
+        and hasattr(self.inner_optimizer, "mng")
+        and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+    ):
+        self.inner_optimizer.mng.module_weight_config_triple = (
+            self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
-    # Load a new optimizer
-    param_dict = {pn: p for pn, p in self.model.named_parameters()}
-    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-    optim_groups = [
-        {"params": decay_params, "weight_decay": self.weight_decay},
-        {"params": nodecay_params, "weight_decay": 0.0},
-    ]
-    # Try to load optimizer state if it exists
+    self.inner_optimizer = torch.optim.AdamW(
+        self.model.parameters(),
+        lr=self.learning_rate_maximum,
+        betas=(0.9, 0.95),
+        eps=1e-8,
+        weight_decay=0.1,
+    )
+
+    optimizer_state = None
     try:
         optimizer_state = torch.load(
             hf_hub_download(
-                repo_id=self.config.neuron.model_name,
-                filename="optimizer.pt",
+                repo_id=model_name,
+                filename="inner_optimizer.pt",
                 revision=str(epoch),
             ),
             weights_only=True,
             map_location="cpu",
         )
 
-        # Delete existing optimizer
-        if hasattr(self, "opt"):
-            self.opt.param_groups = optim_groups
-        else:
-            self.opt = LAMB8bit(
-                optim_groups,
-                lr=optimizer_state["learning_rate"],
-                betas=(0.9, 0.95),
-                eps=1e-8,
-                block_wise=True,
+        # Load optimizer state if available
+        if "optimizer_state_dict" in optimizer_state:
+            self.inner_optimizer.load_state_dict(
+                optimizer_state["optimizer_state_dict"]
             )
 
-        self.opt.load_state_dict(optimizer_state["optimizer_state_dict"])
+        if "learning_rate" in optimizer_state:
+            self.inner_optimizer.lr = optimizer_state["learning_rate"]
 
         del optimizer_state
         gc.collect()
@@ -133,84 +371,95 @@ def load_model_optimizer_gradient_averager(self, epoch):
         bt.logging.warning(
             f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
         )
-        # Initialize fresh optimizer
-        self.opt = LAMB8bit(
-            optim_groups,
-            lr=self.learning_rate_maximum,
-            betas=(0.9, 0.95),
-            eps=1e-8,
-            block_wise=True,
-        )
-    del (
-        param_dict,
-        decay_params,
-        nodecay_params,
-        optim_groups,
-    )
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    # Delete existing gradient averager
-    if hasattr(self, "grad_averager"):
-        for i in self.grad_averager.parameters:
-            del i
+        del optimizer_state
         gc.collect()
         torch.cuda.empty_cache()
 
-        # Reset gradient buffers and parameters
-        self.grad_averager.parameters = tuple(self.model.parameters())
+    # Set outer optimizer
+    self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
 
-        self.grad_averager.reset_accumulated_grads_()
+    if hasattr(self, "state_averager"):
+        self.grad_averager.shutdown()
+        while self.grad_averager.is_alive():
+            time.sleep(1)
 
-    else:
-        # Load a new gradient averager
-        self.grad_averager = DTGradientAverager(
-            self.model.parameters(),
-            dht=self.dht,
-            prefix=f"{self.config.neuron.run_id}_grad_averager",
-            compression=hivemind.Uniform8BitQuantization(),
-            state_compression=hivemind.Uniform8BitQuantization(),
-            accumulate_grads_on=torch.device(self.device),
-            start=True,
-            min_group_size=self.config.neuron.min_group_size,
-            min_matchmaking_time=30.0,
-            request_timeout=10.0,
-            next_chunk_timeout=45.0,
-            allreduce_timeout=self.all_reduce_timeout - 30.0 - 15.0,
-        )
+        del self.grad_averager
+        gc.collect()
+        torch.cuda.empty_cache()
 
-    bt.logging.info(
+        self.state_averager.shutdown()
+        while self.state_averager.is_alive():
+            time.sleep(1)
+
+        del self.state_averager
+        gc.collect()
+        torch.cuda.empty_cache()
+        bt.logging.info("Deleted state_averager and grad_averager")
+
+    # Load a new state averager
+    self.state_averager = DTStateAverager(
+        dht=self.dht,
+        prefix=f"{self.config.neuron.run_id}_state_averager",
+        optimizer=self.outer_optimizer,
+        params=self.model.parameters(),
+        initialize_optimizer=True,
+        offload_optimizer=self.offload_optimizer,
+        custom_gradients=self.offload_optimizer,
+        min_group_size=self.config.neuron.min_group_size,
+        min_matchmaking_time=30.0,
+        request_timeout=10.0,
+        next_chunk_timeout=45.0,
+        allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+        start=True,
+    )
+    bt.logging.info("Succesfully Loaded Gradient Averager")
+
+    # Load a new gradient averager
+    self.grad_averager = DTGradAverager(
+        dht=self.dht,
+        main_parameters=self.state_averager.main_parameters,
+        offloaded_optimizer=self.state_averager.optimizer,
+        prefix=f"{self.config.neuron.run_id}_grad_averager",
+        compression=hivemind.Uniform8BitQuantization(),
+        state_compression=hivemind.Uniform8BitQuantization(),
+        min_group_size=self.config.neuron.min_group_size,
+        min_matchmaking_time=30.0,
+        request_timeout=10.0,
+        next_chunk_timeout=45.0,
+        allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
+        start=True,
+    )
+    bt.logging.info("Succesfully Loaded State Averager")
+
+    self.avg_handler = AveragingHandler(
+        self.model,
+        self.inner_optimizer,
+        self.grad_averager,
+        self.state_averager,
+    )
+
+    bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
 
 
 def load_state_from_peer(self, epoch=None):
-    # Skip if we're already loading or if we've already loaded this epoch
-    if self.model_loading_manager.is_loading:
-        bt.logging.info(
-            "Model loading already in progress. Skipping load_state_from_peer."
-        )
-        return False
-
-    # Set loading state
-    self.model_loading_manager.set_loading_state(True, epoch)
-
     try:
         state_loaded = False
-        if epoch == None:
+        if epoch is None:
             self.global_progress.epoch = get_global_epoch(self)
             epoch = self.global_progress.epoch
 
-        bt.logging.info("Model Weights Before Loading State")
+        bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
             [layer for layer in self.model.parameters()][-2][-10:].tolist()
         )
-        bt.logging.info(current_model_weights_sample)
+        bt.logging.debug(current_model_weights_sample)
 
-        bt.logging.info(f"Old Model Tag: {self.local_progress.epoch}")
+        bt.logging.debug(f"Old Model Tag: {self.local_progress.epoch}")
 
         if self.global_progress.epoch is not None:
-            bt.logging.info(
+            bt.logging.debug(
                 f"Latest Model State Found On The HF Hub With The Tag: {self.global_progress.epoch}. Loading That Model State."
             )
 
@@ -220,7 +469,9 @@ def load_state_from_peer(self, epoch=None):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    load_model_optimizer_gradient_averager(self, epoch)
+                    load_model_optimizer_gradient_averager(
+                        self, self.config.neuron.global_model_name, epoch
+                    )
                     break
 
                 except Exception as e:
@@ -235,15 +486,16 @@ def load_state_from_peer(self, epoch=None):
 
             state_loaded = True
 
-            bt.logging.info("Model Weights After Loading State")
+            bt.logging.debug("Model Weights After Loading State")
             new_model_weights_sample = copy.copy(
                 [layer for layer in self.model.parameters()][-2][-10:].tolist()
             )
-            bt.logging.info(new_model_weights_sample)
+            bt.logging.debug(new_model_weights_sample)
 
             self.local_progress.epoch = self.global_progress.epoch
+            self.local_progress.inner_step = 0
             self.local_progress.samples_accumulated = 0
-            bt.logging.info(f"New Model Tag: {self.global_progress.epoch}")
+            bt.logging.debug(f"New Model Tag: {self.global_progress.epoch}")
 
             # Clean up old cache
             try:
@@ -252,50 +504,164 @@ def load_state_from_peer(self, epoch=None):
                 bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 
         else:
-            bt.logging.info(f"Model With Tag: {epoch} Does Not Exist")
-
-        if state_loaded:
-            self.model_loading_manager.set_loading_state(False, epoch)
-        else:
-            self.model_loading_manager.set_loading_state(False, None)
+            bt.logging.debug(f"Model With Tag: {epoch} Does Not Exist")
 
         return state_loaded
 
     except Exception as e:
         bt.logging.error(f"Error loading state: {str(e)}")
-        self.model_loading_manager.set_loading_state(False, None)
         return False
 
 
-def cleanup_old_cache(self):
+# TODO Remove this if score_bandwidth is deprecated
+async def load_state_from_miner(self, peer, timeout: Optional[float] = None):
+    metadata = None
+    hivemind_logger.info(f"Downloading parameters from peer {peer}")
+    try:
+        stub = self.grad_averager.get_stub(
+            self._p2p,
+            peer,
+            namespace=self.grad_averager.matchmaking_kwargs["prefix"],
+        )
+        stream = await stub.rpc_download_state_partial(averaging_pb2.DownloadRequest())
+        current_tensor_parts, tensors = [], []
+
+        # TODO merge this with hivemind.compression.deserialize_tensor_stream
+        async for message in aiter_with_timeout(stream, timeout=timeout):
+            if message.metadata:
+                metadata = self.grad_averager.serializer.loads(message.metadata)
+            if message.tensor_part.dtype and current_tensor_parts:
+                # tensor_part.dtype indicates the start of the new tensor, so we should wrap up this one
+                tensors.append(
+                    deserialize_torch_tensor(
+                        combine_from_streaming(current_tensor_parts)
+                    )
+                )
+                current_tensor_parts = []
+            current_tensor_parts.append(message.tensor_part)
+        if current_tensor_parts:
+            tensors.append(
+                deserialize_torch_tensor(combine_from_streaming(current_tensor_parts))
+            )
+
+        if not metadata:
+            hivemind_logger.exception(f"Peer {peer} did not send its state")
+            return
+
+        hivemind_logger.info(f"Finished downloading state from {peer}")
+        return metadata, tensors
+    except Exception as e:
+        hivemind_logger.exception(f"Failed to download state from {peer} - {repr(e)}")
+        return None, None
+
+
+def cleanup_old_cache(self, repo_id=None, current_revision=None):
     """Helper method to clean up old cache files"""
-    current_revision = self.model.config._commit_hash
+    if repo_id is None:
+        repo_id = self.config.neuron.global_model_name
+        current_revision = self.model.config._commit_hash
+
     cache_info = scan_cache_dir()
     bt.logging.info("Cache clearing warnings:")
     bt.logging.info(f"{cache_info.warnings}")
 
+    # Delete cache using preferred huggingface cache clearing method
     for repo in cache_info.repos:
-        if repo.repo_id == self.config.neuron.model_name:
+        if repo.repo_id == repo_id:
             revisions = sorted(
                 repo.revisions, key=lambda r: r.last_modified, reverse=True
             )
-            if current_revision is not None:
-                bt.logging.info(
-                    f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
-                )
-                for revision in revisions:
-                    if revision.commit_hash == current_revision:
-                        continue
-                    else:
-                        bt.logging.info(
-                            f"Deleting cache for revision {revision.commit_hash}"
-                        )
-                        cache_info.delete_revisions(revision.commit_hash).execute()
+
+            bt.logging.info(
+                f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
+            )
+            for revision in revisions:
+                if (current_revision is not None) and (
+                    revision.commit_hash == current_revision
+                ):
+                    bt.logging.info(
+                        f"Skipping cache for current revision {revision.commit_hash}"
+                    )
+                    continue
+                else:
+                    bt.logging.info(
+                        f"Deleting cache for revision {revision.commit_hash}"
+                    )
+                    cache_info.delete_revisions(revision.commit_hash).execute()
             break
 
+    # Forcefully remove the entire cache folder for a model if it's corrupted
+    repo_folder_name = repo_id.replace("/", "--")
+    if sum([repo_folder_name in str(warning) for warning in cache_info.warnings]) > 0:
+        cache_dir = HF_HUB_CACHE
+        cache_dir = Path(cache_dir).expanduser().resolve()
+        for cache in cache_dir.iterdir():
+            if repo_folder_name in str(cache):
+                bt.logging.info(
+                    f"Found repo {repo_id} in HF cache warning message. Proceeding to delete the entire cache folder."
+                )
+                try:
+                    shutil.rmtree(str(cache))
+                except OSError as e:
+                    bt.logging.info(
+                        "Error: %s - %s deleting the entire cache folder for the repo: %s"
+                        % (e.filename, e.strerror, repo_id)
+                    )
 
-def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_peers):
+
+def upload_new_state(self, epoch: int, results: dict, block: int = None):
+    attempt = 0
+    while attempt < self.model_upload_retry_limit:
+        try:
+            bt.logging.info(
+                f"Pushing new model and optimizer state to HF Hub with tag {epoch}"
+            )
+
+            # Save and upload both model and optimizer state
+            upload_success = save_and_upload_state(
+                self, epoch=epoch, results=results, block=block
+            )
+
+            if upload_success:
+                # Verify the upload
+                updated_refs = list_repo_refs(
+                    self.config.neuron.global_model_name,
+                    repo_type="model",
+                )
+                new_tag = max([int(tag.name) for tag in updated_refs.tags])
+                bt.logging.info(f"Successfully pushed new model with tag {new_tag}")
+                # Wait to allow out of sync miners to download new model state
+                time.sleep(self.load_state_timeout)
+                break
+
+        except HfHubHTTPError as e:
+            attempt += 1
+            bt.logging.info(f"{e}. Loading State from Peer.")
+            state_loaded = load_state_from_peer(self, epoch=self.global_progress.epoch)
+            if state_loaded:
+                break
+        except Exception:
+            attempt += 1
+            bt.logging.warning(
+                f"Failed To Upload Model To HF hub, Retrying. Attempt {attempt}/{self.model_upload_retry_limit}."
+            )
+            if attempt < self.model_upload_retry_limit:
+                time.sleep(self.model_upload_retry_delay)
+            else:
+                bt.logging.error(
+                    "Maximum Retry Limit Reached. Unable To Upload Model To HF Hub."
+                )
+                raise
+    return upload_success
+
+
+def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
     """Unified function to save and upload both model and optimizer state"""
+    batch_size = sum(
+        [result for result in results["gathered"].values() if result is not None]
+    )
+    participating_peers = results["participating_peers"]
+    failed_peers = results["failed_peers"]
     attempt = 0
     while attempt < self.model_upload_retry_limit:
         try:
@@ -303,38 +669,42 @@ def save_and_upload_state(self, epoch, batch_size, participating_peers, failed_p
                 bt.logging.info(
                     f"Preparing model and optimizer state for epoch {epoch}"
                 )
+                if block is not None:
+                    self.model.config.last_allreduce_block = block
                 self.model.save_pretrained(tmp_folder)
                 # Save optimizer state
                 optimizer_state = {
-                    "optimizer_state_dict": self.opt.state_dict(),
+                    "optimizer_state_dict": self.state_averager.optimizer.state_dict(),
                     "learning_rate": self.learning_rate_maximum,
                     "epoch": epoch,
                 }
-                torch.save(optimizer_state, os.path.join(tmp_folder, "optimizer.pt"))
+                torch.save(
+                    optimizer_state, os.path.join(tmp_folder, "outer_optimizer.pt")
+                )
 
                 bt.logging.info(
-                    f"Uploading model and optimizer states to repo: {self.config.neuron.model_name}"
+                    f"Uploading model and optimizer states to repo: {self.config.neuron.global_model_name}"
                 )
 
                 # Upload everything in one go
-                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers)-len(failed_peers)}."
+                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
-                    repo_id=self.config.neuron.model_name,
+                    repo_id=self.config.neuron.global_model_name,
                     repo_type="model",
                     commit_message=commit_message,
                 )
 
                 # Create a tag for this version
                 create_tag(
-                    self.config.neuron.model_name,
+                    self.config.neuron.global_model_name,
                     repo_type="model",
                     tag=str(epoch),
                     tag_message=commit_message,
                 )
 
                 bt.logging.info(
-                    f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.model_name}"
+                    f"Successfully pushed new model and optimizer state with tag {epoch} to repo: {self.config.neuron.global_model_name}"
                 )
                 return True
 

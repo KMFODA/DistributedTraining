@@ -33,6 +33,13 @@ from distributed_training.utils.weight_utils import (
     convert_weights_and_uids_for_emit,
     process_weights_for_netuid,
 )
+from distributed_training.validator.reward import (
+    score_uid,
+    update_all_reduce_scores,
+    update_total_scores,
+)
+from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.utils.state_loader import load_state_from_peer
 
 
 class BaseValidatorNeuron(BaseNeuron):
@@ -148,6 +155,33 @@ class BaseValidatorNeuron(BaseNeuron):
                 if self.event != {}:
                     self.event = {}
 
+                current_global_epoch = self.global_progress.epoch
+                self.global_progress.epoch = get_global_epoch(self)
+                if (self.local_progress.epoch != self.global_progress.epoch) or (
+                    not self.all_reduce_success_status
+                ):
+                    if self.local_progress.epoch != self.global_progress.epoch:
+                        bt.logging.info(
+                            f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                        )
+                    if not self.all_reduce_success_status:
+                        bt.logging.info(
+                            "All Reduce Failed. Loading Latest Model State."
+                        )
+                    load_state_from_peer(self, epoch=self.global_progress.epoch)
+                    # Reset all_reduce success status
+                    if not self.all_reduce_success_status:
+                        self.all_reduce_success_status = True
+                        self.last_allreduce_block = self.block
+                    # Load all_reduce scores if non_master_uid
+                    if (
+                        (self.uid != self.master_uid)
+                        and (self.global_progress.epoch != current_global_epoch)
+                        and (self.should_all_reduce)
+                    ):
+                        update_all_reduce_scores(self)
+                        update_total_scores(self)
+
                 # Run multiple forwards concurrently.
                 self.loop.run_until_complete(self.concurrent_forward())
 
@@ -166,7 +200,7 @@ class BaseValidatorNeuron(BaseNeuron):
                     self.wandb.log(self.event)
 
                 self.step += 1
-                if self.peer_id_logged_to_chain == False:
+                if self.peer_id_logged_to_chain is False:
                     log_peerid_to_chain(self)
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
@@ -328,6 +362,7 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
+                self.uid_tracker[uid] = 0
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -337,12 +372,20 @@ class BaseValidatorNeuron(BaseNeuron):
             min_len = min(len(self.hotkeys), len(self.scores))
             new_moving_average[:min_len] = self.scores[:min_len]
             self.scores = new_moving_average
+            self.uid_tracker[uid] = self.uid_tracker_initial_state
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-    def update_scores(self, rewards: np.ndarray, uids: List[int]):
+    def update_scores(self):
         """Performs exponential moving average on the scores based on the rewards received from the miners."""
+
+        #  Make sure uid_tracker is sorted by uids
+        self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+        uids = list(self.uid_tracker.keys())
+        rewards = np.array(
+            [self.uid_tracker[i]["total_score"] for i in self.uid_tracker.keys()]
+        )
 
         # Check if rewards contains NaN values.
         if np.isnan(rewards).any():
@@ -406,6 +449,7 @@ class BaseValidatorNeuron(BaseNeuron):
             scores=self.scores,
             hotkeys=self.hotkeys,
             failed_is_alive_counter=self.failed_is_alive_counter,
+            uid_tracker=self.uid_tracker,
         )
 
     def load_state(self):
@@ -428,6 +472,14 @@ class BaseValidatorNeuron(BaseNeuron):
                 self.failed_is_alive_counter = state[
                     "failed_is_alive_counter"
                 ].flatten()[0]
+            if "uid_tracker" in state:
+                self.uid_tracker = state["uid_tracker"].flatten()[0]
+                for uid in self.uid_tracker:
+                    if (
+                        self.uid_tracker[uid].keys()
+                        != self.uid_tracker_initial_state.keys()
+                    ):
+                        self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(

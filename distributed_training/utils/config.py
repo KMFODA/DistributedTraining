@@ -21,7 +21,6 @@ import os
 
 import bittensor as bt
 import torch
-
 from distributed_training import __run__, __version__
 
 
@@ -31,7 +30,7 @@ def check_config(cls, config: "bt.Config"):
 
     full_path = os.path.expanduser(
         "{}/{}/{}/netuid{}/{}".format(
-            config.logging.logging_dir,  # TODO: change from ~/.bittensor/miners to ~/.bittensor/neurons
+            config.logging.logging_dir,
             config.wallet.name,
             config.wallet.hotkey,
             config.netuid,
@@ -125,7 +124,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.epoch_length",
         type=int,
         help="The default epoch length (how often we set weights, measured in 12 second blocks).",
-        default=100,
+        default=160,
     )
 
     parser.add_argument(
@@ -141,15 +140,21 @@ def add_args(cls, parser, prefix=None):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWECM2JXC8qYyP74vxaEjhwCto4jarQDDw5hKTvCVNVAms",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWLiyHyX4SX7KP2bWrm24wg7AgMn5uPGotEKNpk8JxMNMR",
         ],
+    )
+    parser.add_argument(
+        "--neuron.blocks_per_allreduce",
+        type=int,
+        help="Amount of blocks between each all reduce",
+        default=3600,
     )
 
     parser.add_argument(
-        "--neuron.model_name",
+        "--neuron.global_model_name",
         type=str,
         help="The model to be trained",
-        default="distributed/optimized-gpt2-2b",
+        default="distributed/optimized-gpt2-1b",
     )
 
     parser.add_argument(
@@ -163,7 +168,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.min_group_size",
         type=int,
         help="The minimum group size for an all reduce",
-        default=30,
+        default=2,
     )
 
     parser.add_argument(
@@ -178,6 +183,20 @@ def add_args(cls, parser, prefix=None):
         type=int,
         help="The hivemind global target_batch_size",
         default=35200,
+    )
+
+    parser.add_argument(
+        "--neuron.target_n_blocks",
+        type=int,
+        help="The hivemind global target_batch_size",
+        default=5,
+    )
+
+    parser.add_argument(
+        "--neuron.local_batch_size_train_effective",
+        type=int,
+        help="Amount of micro batches for gradient accumulation",
+        default=512,
     )
 
     parser.add_argument(
@@ -227,7 +246,7 @@ def add_args(cls, parser, prefix=None):
             "--neuron.training_examples_per_miner",
             type=int,
             help="The number of rows to train on per miner",
-            default=500,
+            default=1024,
         )
 
         parser.add_argument(
@@ -262,7 +281,7 @@ def add_args(cls, parser, prefix=None):
             "--neuron.moving_average_alpha",
             type=float,
             help="Moving average alpha parameter, how much to add of the new observation.",
-            default=0.05,
+            default=0.6,
         )
 
         parser.add_argument(
@@ -279,10 +298,18 @@ def add_args(cls, parser, prefix=None):
             "--neuron.vpermit_tao_limit",
             type=int,
             help="The maximum number of TAO allowed to query a validator with a vpermit.",
-            default=4096,
+            default=40960,
         )
 
     else:
+        parser.add_argument(
+            "--neuron.local_model_name",
+            type=str,
+            help="The model to be trained",
+            default=None,
+            required=True,
+        )
+
         parser.add_argument(
             "--blacklist.force_validator_permit",
             action="store_true",

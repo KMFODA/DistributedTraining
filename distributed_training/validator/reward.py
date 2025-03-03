@@ -17,22 +17,33 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import base58
+import errno
 import random
 import time
 from typing import List
 
+import base58
 import bittensor as bt
 import numpy as np
 import torch
-
-from distributed_training.data.dataset import DataLoader
-from distributed_training.utils.uids import (
-    get_random_uids,
-    update_run_peerid_list,
-    map_uid_to_peerid,
-)
+import torch.nn.functional as F
 from hivemind.p2p import PeerID
+from huggingface_hub import list_repo_commits
+from transformers import AutoModelForCausalLM
+
+from distributed_training.data.dataset import DatasetLoader
+from distributed_training.utils.state_loader import (
+    check_model_exists,
+    cleanup_old_cache,
+)
+from distributed_training.utils.progress_tracker import get_local_epoch
+
+from datetime import datetime
+import pytz
+from huggingface_hub import list_repo_commits
+from transformers import AutoConfig
+from huggingface_hub import hf_hub_download, list_repo_files
+import json
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -42,135 +53,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-
-
-def score_gradients(self, response, uid, threshold=0.75):
-    try:
-        if "gradient_sums" not in response.__dict__:
-            bt.logging.info(
-                f"Gradient score = 0. Gradient sums not found in UID{uid}'s response"
-            )
-
-            score_sum = 0
-
-            return score_sum
-
-        else:
-            # Create DataLoader
-            dataloader = DataLoader(
-                batch_size=(
-                    response.batch_size
-                    if "batch_size" in response.__dict__
-                    else self.config.neuron.local_batch_size_train
-                ),
-                sequence_length=1024,
-                rows=response.dataset_indices,
-            )
-
-            num_checks = 10
-            seed = random.randint(0, 2**32 - 1)
-            checkpoint_rng = random.Random(seed)
-            checkpoint_indices = sorted(
-                checkpoint_rng.sample(range(len(dataloader)), num_checks)
-            )
-
-            if len(dataloader) != len(response.gradient_sums):
-                bt.logging.info(
-                    f"Gradient score = 0. Local dataloader length is {len(dataloader)}. UID{uid}'s gradinet_sums list length is {len(response.gradient_sums)}."
-                )
-
-                score_sum = 0
-
-                return score_sum
-
-            checkpoint_indices_set = set(checkpoint_indices)
-            validator_gradient_sums = []
-            collected_indices = set()
-
-            target_param = list(self.model.parameters())[response.gradient_test_index]
-
-            # Process data at checkpoint indices
-            for index, batch in enumerate(dataloader):
-                if index in checkpoint_indices_set:
-                    # Extract inputs and labels
-                    inputs = batch[0].to(self.device)
-                    labels = batch[1].to(self.device)
-
-                    # Zero Gradients
-                    self.opt.zero_grad()
-
-                    # Forward pass
-                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs[1]
-
-                    # Backward Pass
-                    loss.backward()
-
-                    # Extract gradient for the test_layer_index
-                    gradient = target_param.grad.detach()
-
-                    validator_gradient_sums.append(
-                        torch.sum(torch.abs(gradient)).item()
-                    )
-
-                    collected_indices.add(index)
-                    if len(collected_indices) == len(checkpoint_indices):
-                        break  # All required checkpoints have been processed
-
-            if response.gradient_test_index >= len(gradient):
-                bt.logging.info(
-                    f"UID {uid} running incorrect model. Assigning it a gradient score of 0."
-                )
-                score = 0
-                return score
-
-            # Extract miner's projected gradients and gradient sums at checkpoint indices
-            miner_gradient_sums = [
-                response.gradient_sums[idx] for idx in checkpoint_indices
-            ]
-
-            bt.logging.info(
-                f"Local Validator Gradient Sums at checkpoints: {validator_gradient_sums}"
-            )
-            bt.logging.info(
-                f"UID {uid} Gradient Sums at checkpoints: {miner_gradient_sums}"
-            )
-
-            # Compute the differences between the miner's and validator's gradient sums
-            differences = [
-                abs(m - v) for m, v in zip(miner_gradient_sums, validator_gradient_sums)
-            ]
-
-            # Compute relative differences
-            relative_diffs = [
-                diff / max(abs(m), abs(v), 1e-8)
-                for diff, m, v in zip(
-                    differences, miner_gradient_sums, validator_gradient_sums
-                )
-            ]
-
-            # Compute average relative difference
-            average_relative_diff = sum(relative_diffs) / len(relative_diffs)
-
-            # Normalize score between 0 and 1 for gradient sum method
-            score_sum = max(0.0, 1.0 - average_relative_diff)
-
-            # Zero out scores below threshold
-            if score_sum < threshold:
-                bt.logging.info(
-                    f"Gradient score = {score_sum} for UID {uid} below threshold of {threshold}. Setting to score to 0."
-                )
-                score_sum = 0
-
-            return score_sum
-    except Exception as e:
-        bt.logging.info(
-            f"Gradient score = 0. Gradient scoring failed for UID {uid} with error {e}."
-        )
-        score_sum = 0
-
-        return score_sum
 
 
 async def score_blacklist(self, uids):
@@ -242,195 +124,315 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
     return scores
 
 
-async def get_rewards(
-    self,
-    uids: List[int],
-    responses: list,
-    all_reduce: bool,
-) -> torch.FloatTensor:
-    """
-    Returns a tensor of rewards for the given query and responses.
+async def fetch_training_data(self, block, miner_uid):
+    """Async function to fetch training data"""
 
-    Args:
-    - uids (List[int]): A list of uids that were queried.
-    - responses (List): A list of all the responses from the queried uids.
-    - all_reduce (bool): A boolean representing wether the all_reduce synapse was called.
-    - responses (List[float]): A list of responses from the miners.
-
-    Returns:
-    - torch.FloatTensor: A tensor of rewards for the given query and responses.
-    """
-    # Score an AllReduce response
-    if all_reduce:
-        # Now that we've called all_reduce on all available UIDs, only score a sample of them to spread
-        # the scoring burden across all validators
-        self.miner_uids = await get_random_uids(
-            self, dendrite=self.dendrite, k=self.config.neuron.sample_size
+    try:
+        pages = await DatasetLoader.next_pages(
+            offset=block,
+            n_pages=5,
+            seed=miner_uid,
         )
-        self.event.update({"uids": self.miner_uids})
-        bt.logging.info(f"UIDs:  {self.miner_uids}")
+        random.seed(miner_uid)
+        random.shuffle(pages)
 
-        # Set up the scores tensor
-        scores = torch.FloatTensor([1 for _ in self.miner_uids]).to(self.device)
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        # Update UID to PeerID mapping
-        map_uid_to_peerid(self, uids)
-
-        # Update PeerIDs list
-        update_run_peerid_list(self)
-
-        blacklist_scores = await score_blacklist(self, self.miner_uids)
-        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-        self.event.update(
-            {
-                f"rewards.blacklist.uid{uid}": blacklist_score
-                for uid, blacklist_score in zip(uids, blacklist_scores)
-            }
+        dataset = await DatasetLoader.create(
+            batch_size=self.config.neuron.local_batch_size_train,
+            sequence_length=1024,
+            pages_info=pages,
+            tokenizer=self.tokenizer,
         )
-        scores *= blacklist_scores
 
-        # Score miners bandwidth
-        bandwidth_scores = await score_bandwidth(
+        return dataset
+    except Exception as e:
+        bt.logging.error(f"Error fetching training data: {str(e)}")
+        raise
+
+
+async def score_uid(self, uid: int):
+    """Score a single UID"""
+    target_blocks = self.config.neuron.target_n_blocks
+    latest_commit = None
+    model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
+    local_epoch = get_local_epoch(self, model_huggingface_id)
+    accepted_files = [".gitattributes", "config.json", "model.safetensors"]
+    blocks = []
+    time_delta = 0
+
+    try:
+        if model_huggingface_id is None:
+            scores = 0
+            raise Exception(f"Score 0 for UID {uid}: HuggingFace Repo Id is None")
+        elif not check_model_exists(model_huggingface_id):
+            scores = 0
+            raise Exception(
+                f"Score 0 for UID {uid}: HuggingFace Repo Id {self.uid_tracker[uid]['model_huggingface_id']} Doesn't Exist"
+            )
+        elif local_epoch != self.global_progress.epoch:
+            scores = 0
+            raise Exception(
+                f"Score 0 for UID {uid}: Local Epoch {local_epoch} != Global Epoch {self.global_progress.epoch}"
+            )
+
+        cleanup_old_cache(
             self,
-            self.miner_uids,
+            repo_id=model_huggingface_id,
+            current_revision=None,
         )
-        bt.logging.info(f"Bandwidth Scores: {bandwidth_scores}")
-        self.event.update(
-            {
-                f"rewards.bandwidth_scores.uid{uid}": bandwidth_score
-                for uid, bandwidth_score in zip(
-                    self.miner_uids.tolist(), bandwidth_scores
-                )
-            }
+
+        commits = list_repo_commits(model_huggingface_id, repo_type="model")[:2]
+        latest_commit = commits[0].commit_id
+        time_delta = (commits[0].created_at - commits[1].created_at).seconds
+
+        # Check current model configs haven't been altered
+        config_path = hf_hub_download(
+            repo_id=model_huggingface_id,
+            filename="config.json",
+            revision=commits[0].commit_id,
         )
-        scores *= bandwidth_scores
+        with open(config_path) as config_data:
+            config = json.load(config_data)
 
-    # Score an empty responses
-    elif (responses == [[]]) or (
-        [
-            response.gradient_sums
-            for response in responses[0]
-            if (response.dendrite.status_code == 200)
-            and (response.gradient_sums is not None)
-        ]
-        == []
-    ):
-        scores = torch.FloatTensor([0 for _ in uids]).to(self.device)
+        if config["auto_map"] != self.gloabl_model_config.auto_map:
+            raise Exception(
+                f"Score 0 for UID {uid}: Commit {commits[0].commit_id} config differs from the global model config"
+            )
 
-    # Score a non-empty Train response
-    else:
-        scores = torch.FloatTensor(
-            [
-                (
-                    1
-                    if response.dendrite.status_code == 200 and response.loss != 0.0
-                    else 0
-                )
-                for _, response in zip(uids, responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Timeout Scores: {scores}")
-
-        # Check if peer is connected to DHT & run_id and blacklist them if they are not
-        bt.logging.info(f"UID To PeerID Mapping: {self.uids_to_peerids}")
-
-        if (self.uid == self.master_uid) and (
-            self.local_progress.samples_accumulated == 0
+        for file in list_repo_files(
+            repo_id=model_huggingface_id, revision=commits[0].commit_id
         ):
-            indices = random.sample(range(len(uids)), self.config.neuron.sample_size)
-            uids = np.array([uids[i] for i in indices])
-            responses = [[responses[0][i] for i in indices]]
-            self.miner_uids = uids
-
-        # Update UID to PeerID mapping
-        map_uid_to_peerid(self, uids)
-
-        # Update PeerIDs list
-        update_run_peerid_list(self)
-
-        blacklist_scores = await score_blacklist(self, uids)
-        bt.logging.info(f"DHT Blacklist Scores: {blacklist_scores}")
-        self.event.update(
-            {
-                f"rewards.blacklist.uid{uid}": blacklist_score
-                for uid, blacklist_score in zip(uids, blacklist_scores)
-            }
-        )
-
-        # Re-calculate gradients and score the difference between local gradients and the miner's gradients
-        gradient_scores = torch.FloatTensor(
-            [
-                (
-                    score_gradients(self, response, uids[index])
-                    if (response.dendrite.status_code == 200)
-                    and (response.gradient_sums is not None)
-                    else 0
+            if file not in accepted_files:
+                raise Exception(
+                    f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
-                for index, response in enumerate(responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Gradient Scores: {gradient_scores}")
-        self.event.update(
-            {
-                f"rewards.gradient.uid{uid}": gradient_score
-                for uid, gradient_score in zip(uids, gradient_scores)
-            }
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
         )
+        # Move the model to the appropriate device
+        self.model = self.model.to(self.device)
 
-        # Score miners based off the size of the data they have trained on this step
-        steps_scores = torch.FloatTensor(
-            [
-                (
-                    len(set(response.dataset_indices))
-                    if (
-                        (response.dendrite.status_code == 200)
-                        and (response.dataset_indices is not None)
-                        and (type(response.dataset_indices) == list)
-                    )
-                    else 0
-                )
-                for index, response in enumerate(responses[0])
-            ]
-        ).to(self.device)
-        bt.logging.info(f"Steps Scores: {steps_scores}")
-        self.event.update(
-            {
-                f"rewards.steps.uid{uid}": steps_score
-                for uid, steps_score in zip(uids, steps_scores)
-            }
+        config_final_path = hf_hub_download(
+            repo_id=model_huggingface_id,
+            filename="config.json",
+            revision=commits[1].commit_id,
         )
-        steps_scores = torch.nn.functional.normalize(steps_scores, dim=0)
+        with open(config_final_path) as config_final_data:
+            config_final = json.load(config_final_data)
 
-        # Score miners based off wether they where succesfull or not in the all_reduce round
-        if hasattr(self.model.config, "all_reduce_scores"):
-            all_reduce_scores = torch.FloatTensor(
-                [
-                    1
-                    if str(uid) in self.model.config.all_reduce_scores
-                    and self.model.config.all_reduce_scores[str(uid)] == "SUCCESS"
-                    else 0
-                    for uid in uids.tolist()
-                ]
-            ).to(self.device)
-            bt.logging.info(f"All Reduce Scores: {all_reduce_scores}")
-
-            self.event.update(
-                {
-                    f"rewards.all_reduce.uid{uid}": all_reduce_score
-                    for uid, all_reduce_score in zip(uids, all_reduce_scores)
-                }
+        if config_final["auto_map"] != self.gloabl_model_config.auto_map:
+            raise Exception(
+                f"Score 0 for UID {uid}: Commit {commits[1].commit_id} config differs from the global model config"
             )
 
-            # Final balanced score calculation with all_reduce
-            scores = blacklist_scores * (
-                (0.5 * gradient_scores * steps_scores) + (0.5 * all_reduce_scores)
-            )
+        for file in list_repo_files(
+            repo_id=model_huggingface_id, revision=commits[1].commit_id
+        ):
+            if file not in accepted_files:
+                raise Exception(
+                    f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
+                )
 
+        model_final = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        )
+
+        self.local_progress.samples_accumulated = 0
+        self.local_progress.inner_step = (
+            self.model.config.inner_step
+            if "inner_step" in self.model.config.__dict__
+            else 0
+        )
+        # Only set self.local_progress.epoch if model is correct format
+        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
+
+        if ("block_list" in self.model.config.__dict__) and (
+            len(self.model.config.block_list) > target_blocks
+        ):
+            scores = 0
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
+            )
         else:
-            # Final balanced score calculation without all_reduce
-            scores = blacklist_scores * (gradient_scores * steps_scores)
+            blocks = model_final.config.block_list
+            for block in blocks:
+                bt.logging.info(":pages: Fetching fineweb-edu pages")
+                dataset = await fetch_training_data(self, block, uid)
 
-    return scores
+                for inputs, labels in dataset:
+                    # Move to device
+                    inputs, labels = inputs.to(self.device), labels.to(self.device)
+
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        _, loss = self.model(input_ids=inputs, labels=labels)
+                        scaled_loss = loss / self.number_of_local_steps
+
+                    scaled_loss.backward()
+
+                    self.running_loss += loss.item()
+                    self.batch_count += 1
+                    self.local_progress.loss = self.running_loss / self.batch_count
+
+                    self.local_progress.samples_accumulated += (
+                        self.local_batch_size_train
+                    )
+
+                    if (
+                        self.local_progress.samples_accumulated
+                        % (self.logging_interval * self.local_batch_size_train)
+                        == 0
+                    ):
+                        bt.logging.info(
+                            f":training:  Outer Step: {self.local_progress.epoch} | "
+                            f"Inner Step: {self.local_progress.inner_step} | "
+                            f"Average Loss: {self.local_progress.loss:.4f} | "
+                            f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
+                        )
+
+                    # Check if we've accumulated enough samples for a step
+                    if (
+                        self.local_progress.samples_accumulated
+                        >= self.local_batch_size_train_effective
+                    ):
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                        self.inner_optimizer.step()
+                        self.inner_optimizer.zero_grad()
+                        self.local_progress.inner_step += 1
+                        self.local_progress.samples_accumulated = 0
+                        self.running_loss = 0.0
+                        self.batch_count = 0
+
+            scores = score_models(self.model, model_final)
+    except Exception as e:
+        # TODO if OSError and e.rrno == errno.ENOSPC score as 1
+        scores = 0.0
+        bt.logging.info(
+            f"Score {int(scores)} for UID {uid}: Forward Loop Failed With Error: {e}"
+        )
+
+    finally:
+        if model_huggingface_id is not None:
+            cleanup_old_cache(
+                self,
+                repo_id=model_huggingface_id,
+                current_revision=None,
+            )
+
+    self.uid_tracker[uid]["last_commit"] = latest_commit
+    self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
+    self.uid_tracker[uid]["train_duration"] += time_delta
+    self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
+    self.uid_tracker[uid]["train_similarity_score"] += scores
+    self.uid_tracker[uid]["train_validation_count"] += 1
+    self.uid_tracker[uid]["loss"] = self.local_progress.loss
+
+    bt.logging.info(f"UID {uid} Current Train Score: {scores}")
+    update_total_score(self, uid, target_blocks)
+
+
+def update_total_score(self, uid, target_blocks):
+    miner_uid_tracker = self.uid_tracker[uid]
+
+    if miner_uid_tracker["train_duration"] != 0:
+        miner_uid_tracker["train_score"] = (
+            miner_uid_tracker["train_similarity_score"]
+            * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
+        ) / miner_uid_tracker["train_duration"]
+
+    if miner_uid_tracker["all_reduce_counts"] != 0:
+        miner_uid_tracker["all_reduce_score"] = (
+            miner_uid_tracker["all_reduce_successes"]
+            / miner_uid_tracker["all_reduce_counts"]
+        )
+
+    miner_uid_tracker["total_score"] = (
+        0.5 * miner_uid_tracker["train_score"]
+        + 0.5 * miner_uid_tracker["all_reduce_score"]
+    )
+
+    self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+
+
+def score_models(model_1, model_2):
+    """Calculate the cosine similarity score between two model states"""
+    score = 0
+    index = 0
+
+    for param_1, param_2 in zip(model_1.parameters(), model_2.parameters()):
+        score += (
+            F.cosine_similarity(param_1.to("cpu"), param_2.to("cpu"), dim=0)
+            .mean()
+            .item()
+        )
+        index += 1
+
+    average_score = score / index
+    return average_score
+
+
+def score_repo(self, repo_id: str) -> bool:
+    try:
+        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
+        if (
+            (self.gloabl_config.n_embd != local_config.n_embd)
+            or (self.gloabl_config.n_head != local_config.n_head)
+            or (self.gloabl_config.n_layer != local_config.n_layer)
+        ):
+            return False
+        latest_commit = list_repo_commits(repo_id)[0]
+        if (latest_commit.created_at - datetime.now(pytz.utc)).seconds > (
+            self.config.neruon.target_blocks * 12
+        ):
+            return False
+        return True
+    except Exception as e:
+        return False
+
+
+def benchmark_untested_uids(self):
+    for uid in self.uid_tracker:
+        try:
+            if (self.uid_tracker[uid]["train_validation_count"] == 0) and (
+                self.uid_tracker[uid]["all_reduce_counts"] == 0
+            ):
+                self.uid_tracker[uid]["repo_valid_sum"] += score_repo(
+                    self, self.uid_tracker[uid]["model_huggingface_id"]
+                )
+                self.uid_tracker[uid]["repo_valid_count"] += 1
+                self.uid_tracker[uid]["total_score"] = (
+                    self.uid_tracker[uid]["repo_valid_sum"]
+                    / self.uid_tracker[uid]["repo_valid_count"]
+                )
+                bt.logging.info(
+                    f"UID {uid} identifies as untested. Benchmarking with score {self.uid_tracker[uid]['total_score']}"
+                )
+        except Exception as e:
+            bt.logging.info(
+                f"UID {uid} identifies as untested. Benchmarking failed with error {e}"
+            )
+
+
+def update_all_reduce_scores(self):
+    try:
+        if self.model.config.all_reduce_scores != {}:
+            for uid in self.allreduce_status_dict.keys():
+                if self.allreduce_status_dict[uid] == "SUCCESS":
+                    self.uid_tracker[int(uid)]["all_reduce_successes"] += 1
+                self.uid_tracker[int(uid)]["all_reduce_counts"] += 1
+                # Update all_reduce_score
+                self.uid_tracker[int(uid)]["all_reduce_score"] = (
+                    self.uid_tracker[int(uid)]["all_reduce_successes"]
+                    / self.uid_tracker[int(uid)]["all_reduce_counts"]
+                )
+
+    except Exception as e:
+        bt.logging.info(f"Error {e} updating all_reduce scores")
+
+
+def update_total_scores(self):
+    for uid in self.uid_tracker:
+        # Update total_score
+        self.uid_tracker[uid]["total_score"] = (
+            0.5 * self.uid_tracker[uid]["train_score"]
+            + 0.5 * self.uid_tracker[uid]["all_reduce_score"]
+        )
