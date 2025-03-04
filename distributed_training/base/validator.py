@@ -362,7 +362,7 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
-                self.uid_tracker[uid] = 0
+                self.uid_tracker[uid] = self.uid_tracker_initial_state
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -372,7 +372,7 @@ class BaseValidatorNeuron(BaseNeuron):
             min_len = min(len(self.hotkeys), len(self.scores))
             new_moving_average[:min_len] = self.scores[:min_len]
             self.scores = new_moving_average
-            self.uid_tracker[uid] = self.uid_tracker_initial_state
+            self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
@@ -475,10 +475,18 @@ class BaseValidatorNeuron(BaseNeuron):
             if "uid_tracker" in state:
                 self.uid_tracker = state["uid_tracker"].flatten()[0]
                 for uid in self.uid_tracker:
-                    if (
-                        self.uid_tracker[uid].keys()
-                        != self.uid_tracker_initial_state.keys()
-                    ):
+                    try:
+                        if (
+                            self.uid_tracker[uid].keys()
+                            != self.uid_tracker_initial_state.keys()
+                        ):
+                            self.uid_tracker[
+                                uid
+                            ] = self.uid_tracker_initial_state.copy()
+                    except Exception as e:
+                        bt.logging.info(
+                            f"Failed to load saved uid_tracker for UID: {uid} with error: {e}"
+                        )
                         self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
 
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
