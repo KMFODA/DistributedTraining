@@ -54,11 +54,6 @@ brew update && brew install jq && brew install npm && sudo npm install pm2 -g &&
 btcli subnets register --subtensor.network finney --netuid $NETUID --wallet.name $WALLET_NAME --wallet.hotkey $HOTKEY_NAME
 ```
 
-7. Copy the .env file to your root directory
-```bash
-cp DistributedTraining/.env /root/
-```
-
 ---
 # Running a Miner
 Once you have installed this repo you can run a miner with **auto updates enabled** using the following commands.
