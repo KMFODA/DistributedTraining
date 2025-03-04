@@ -155,9 +155,11 @@ class BaseMinerNeuron(BaseNeuron):
                                 bt.logging.info(
                                     f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                                 )
+                                self.pause_training()
                                 load_state_from_peer(
                                     self, epoch=self.global_progress.epoch
                                 )
+                                self.resume_training()
 
                     # Wait before checking again.
                     time.sleep(1)

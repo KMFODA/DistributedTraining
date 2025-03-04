@@ -241,7 +241,7 @@ def load_model_optimizer_gradient_averager(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
     fall_back_model_name = self.config.neuron.global_model_name
-    self.gloabl_model_config = AutoConfig.from_pretrained(
+    self.global_model_config = AutoConfig.from_pretrained(
         fall_back_model_name, trust_remote_code=True
     )
 

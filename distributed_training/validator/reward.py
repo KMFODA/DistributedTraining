@@ -193,7 +193,7 @@ async def score_uid(self, uid: int):
         with open(config_path) as config_data:
             config = json.load(config_data)
 
-        if config["auto_map"] != self.gloabl_model_config.auto_map:
+        if config["auto_map"] != self.global_model_config.auto_map:
             raise Exception(
                 f"Score 0 for UID {uid}: Commit {commits[0].commit_id} config differs from the global model config"
             )
@@ -220,7 +220,7 @@ async def score_uid(self, uid: int):
         with open(config_final_path) as config_final_data:
             config_final = json.load(config_final_data)
 
-        if config_final["auto_map"] != self.gloabl_model_config.auto_map:
+        if config_final["auto_map"] != self.global_model_config.auto_map:
             raise Exception(
                 f"Score 0 for UID {uid}: Commit {commits[1].commit_id} config differs from the global model config"
             )
@@ -374,14 +374,15 @@ def score_repo(self, repo_id: str) -> bool:
     try:
         local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
         if (
-            (self.gloabl_config.n_embd != local_config.n_embd)
-            or (self.gloabl_config.n_head != local_config.n_head)
-            or (self.gloabl_config.n_layer != local_config.n_layer)
+            (self.global_model_config.n_embd != local_config.n_embd)
+            or (self.global_model_config.n_head != local_config.n_head)
+            or (self.global_model_config.n_layer != local_config.n_layer)
         ):
             return False
         latest_commit = list_repo_commits(repo_id)[0]
-        if (latest_commit.created_at - datetime.now(pytz.utc)).seconds > (
-            self.config.neruon.target_blocks * 12
+
+        if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
+            self.config.neuron.target_n_blocks * 60
         ):
             return False
         return True
