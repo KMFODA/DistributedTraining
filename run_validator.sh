@@ -192,6 +192,7 @@ current_version=$(read_version_value)
 # Check if script is already running with pm2
 if pm2 status | grep -q $proc_name; then
     echo "The script is already running with pm2. Stopping and restarting..."
+    pkill -9 python
     pm2 delete $proc_name
 fi
 
@@ -255,6 +256,7 @@ if [ "$?" -eq 1 ]; then
                         # TODO (shib): Remove this pm2 del in the next spec version update.
                         pm2 del auto_run_validator
                         echo "Restarting PM2 process"
+                        pkill -9 python
                         pm2 restart $proc_name
 
                         # Update current version:
