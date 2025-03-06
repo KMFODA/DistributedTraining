@@ -527,7 +527,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         """Handle incoming all_reduce requests by pausing continuous training"""
         bt.logging.info("Received All Reduce Call")
-        start_time = time.perf_counter()
+        self.all_reduce_start_time = time.perf_counter()
         try:
             async with self.training_lock:
                 # Cancel any ongoing upload
@@ -545,7 +545,7 @@ class Miner(BaseMinerNeuron):
                     synapse = await self.avg_handler.run_miner_allreduce(
                         synapse,
                         self.local_progress,
-                        start_time,
+                        self.all_reduce_start_time,
                         # bandwidth
                     )
                     if not synapse.completion:
@@ -566,21 +566,6 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.epoch += 1
                 bt.logging.info("AllReduce Operation Finished Succesfully")
 
-            wait_time = (
-                synapse.timeout
-                + self.upload_state_duration
-                + time.perf_counter()
-                - start_time
-            )
-            bt.logging.info(
-                f"Waiting {int(wait_time)} seconds until all nodes complete the all_reduce"
-            )
-
-            # Wait for the master validator to upload new global model
-            while (time.perf_counter() - start_time) <= (
-                synapse.timeout + self.upload_state_duration
-            ):
-                time.sleep(1)
             # Check if master validator has failed to all_reduce
             self.global_progress.epoch = get_global_epoch(self)
             if self.local_progress.epoch != self.global_progress.epoch:

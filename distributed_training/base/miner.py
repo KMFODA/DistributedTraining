@@ -144,11 +144,21 @@ class BaseMinerNeuron(BaseNeuron):
                             self.event = {}
 
                     if not self.all_reduce_success_status:
+                        wait_time = (
+                            self.allreduce_timeout
+                            + self.upload_state_duration
+                            - time.perf_counter()
+                            + self.all_reduce_start_time
+                        )
+                        bt.logging.info(
+                            f"Waiting {int(wait_time)} seconds until all nodes complete the all_reduce"
+                        )
+                        # Wait for the master validator to upload new global model
+                        time.sleep(wait_time)
                         load_state_from_peer(self, epoch=self.global_progress.epoch)
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
-                        # TODO this can be improved and instead related to an estimated block where an all_reduce should take place
                         if self.current_block % self.config.neuron.epoch_length == 0:
                             self.global_progress.epoch = get_global_epoch(self)
                             if self.local_progress.epoch != self.global_progress.epoch:
