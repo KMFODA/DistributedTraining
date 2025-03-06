@@ -443,12 +443,14 @@ def load_model_optimizer_gradient_averager(
     )
 
 
-def load_state_from_peer(self, epoch=None):
+def load_state_from_peer(self, repo_id=None, epoch=None):
     try:
         state_loaded = False
         if epoch is None:
             self.global_progress.epoch = get_global_epoch(self)
             epoch = self.global_progress.epoch
+        if repo_id is None:
+            repo_id = self.config.neuron.global_model_name
 
         bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
@@ -469,9 +471,7 @@ def load_state_from_peer(self, epoch=None):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    load_model_optimizer_gradient_averager(
-                        self, self.config.neuron.global_model_name, epoch
-                    )
+                    load_model_optimizer_gradient_averager(self, repo_id, epoch)
                     break
 
                 except Exception as e:

@@ -151,11 +151,23 @@ class BaseMinerNeuron(BaseNeuron):
                             + self.all_reduce_start_time
                         )
                         bt.logging.info(
-                            f"Waiting {int(wait_time)} seconds until all nodes complete the all_reduce"
+                            f"Waiting {int(wait_time)} seconds until validator complete the all_reduce"
                         )
                         # Wait for the master validator to upload new global model
                         time.sleep(wait_time)
-                        load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        # Check if master validator has failed to all_reduce
+                        self.global_progress.epoch = get_global_epoch(self)
+                        if self.local_progress.epoch != self.global_progress.epoch:
+                            bt.logging.info(
+                                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                            )
+                            load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        else:
+                            load_state_from_peer(
+                                self,
+                                repo_id=self.config.neuron.local_model_name,
+                                epoch=self.global_progress.epoch,
+                            )
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
@@ -166,9 +178,16 @@ class BaseMinerNeuron(BaseNeuron):
                                     f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                                 )
                                 self.pause_training()
-                                load_state_from_peer(
-                                    self, epoch=self.global_progress.epoch
-                                )
+                                if self.global_progress.epoch == 0:
+                                    load_state_from_peer(
+                                        self, epoch=self.global_progress.epoch
+                                    )
+                                else:
+                                    load_state_from_peer(
+                                        self,
+                                        repo_id=self.config.neuron.local_model_name,
+                                        epoch=self.global_progress.epoch,
+                                    )
                                 self.resume_training()
 
                     # Wait before checking again.

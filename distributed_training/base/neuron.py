@@ -128,6 +128,8 @@ class BaseNeuron(ABC):
         self.upload_state_duration = 150
         self.all_reduce_success_status = True
         self.should_all_reduce = False
+        self.retry_limit = 10
+        self.retry_delay = 5
 
     # @abstractmethod # miner is not using this anymore
     async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
