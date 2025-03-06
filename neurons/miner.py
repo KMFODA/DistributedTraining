@@ -408,26 +408,38 @@ class Miner(BaseMinerNeuron):
 
     async def fetch_training_data(self):
         """Async function to fetch training data"""
-        try:
-            pages = await DatasetLoader.next_pages(
-                offset=self.current_block,
-                n_pages=5,
-                seed=self.uid,
-            )
-            random.seed(self.uid)
-            random.shuffle(pages)
+        attempt = 0
+        while attempt < self.retry_limit:
+            try:
+                pages = await DatasetLoader.next_pages(
+                    offset=self.current_block,
+                    n_pages=5,
+                    seed=self.uid,
+                )
+                random.seed(self.uid)
+                random.shuffle(pages)
 
-            dataset = await DatasetLoader.create(
-                batch_size=self.config.neuron.local_batch_size_train,
-                sequence_length=1024,
-                pages_info=pages,
-                tokenizer=self.tokenizer,
-            )
+                dataset = await DatasetLoader.create(
+                    batch_size=self.config.neuron.local_batch_size_train,
+                    sequence_length=1024,
+                    pages_info=pages,
+                    tokenizer=self.tokenizer,
+                )
 
-            return dataset
-        except Exception as e:
-            bt.logging.error(f"Error fetching training data: {str(e)}")
-            raise
+                return dataset
+            except Exception as e:
+                bt.logging.error(f"Error fetching training data: {str(e)}")
+                attempt += 1
+                bt.logging.warning(
+                    f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
+                )
+                if attempt < self.retry_limit:
+                    time.sleep(self.retry_delay)  # Wait before the next retry
+                else:
+                    bt.logging.error(
+                        "Maximum retry limit reached. Unable to fetch data."
+                    )
+                    raise
 
     def _training_worker(self):
         """Worker function that runs in the ThreadPoolExecutor"""
@@ -527,7 +539,7 @@ class Miner(BaseMinerNeuron):
     ) -> distributed_training.protocol.AllReduce:
         """Handle incoming all_reduce requests by pausing continuous training"""
         bt.logging.info("Received All Reduce Call")
-        start_time = time.perf_counter()
+        self.all_reduce_start_time = time.perf_counter()
         try:
             async with self.training_lock:
                 # Cancel any ongoing upload
@@ -545,7 +557,7 @@ class Miner(BaseMinerNeuron):
                     synapse = await self.avg_handler.run_miner_allreduce(
                         synapse,
                         self.local_progress,
-                        start_time,
+                        self.all_reduce_start_time,
                         # bandwidth
                     )
                     if not synapse.completion:
@@ -565,32 +577,10 @@ class Miner(BaseMinerNeuron):
             if synapse.completion is True:
                 self.local_progress.epoch += 1
                 bt.logging.info("AllReduce Operation Finished Succesfully")
-
-            wait_time = (
-                synapse.timeout
-                + self.upload_state_duration
-                + time.perf_counter()
-                - start_time
-            )
-            bt.logging.info(
-                f"Waiting {int(wait_time)} seconds until all nodes complete the all_reduce"
-            )
-
-            # Wait for the master validator to upload new global model
-            while (time.perf_counter() - start_time) <= (
-                synapse.timeout + self.upload_state_duration
-            ):
-                time.sleep(1)
-            # Check if master validator has failed to all_reduce
-            self.global_progress.epoch = get_global_epoch(self)
-            if self.local_progress.epoch != self.global_progress.epoch:
-                bt.logging.info(
-                    f"Global Epoch Wasn't Updated After All Reduce. Resetting To Current Global Epoch: {self.global_progress.epoch}"
-                )
-                self.all_reduce_success_status = False
-            else:
                 # Resume training when done
                 self.resume_training()
+            else:
+                self.all_reduce_success_status = False
 
             return synapse
 

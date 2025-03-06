@@ -144,11 +144,33 @@ class BaseMinerNeuron(BaseNeuron):
                             self.event = {}
 
                     if not self.all_reduce_success_status:
-                        load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        wait_time = (
+                            self.allreduce_timeout
+                            + self.upload_state_duration
+                            - time.perf_counter()
+                            + self.all_reduce_start_time
+                        )
+                        bt.logging.info(
+                            f"Waiting {int(wait_time)} seconds until validator complete the all_reduce"
+                        )
+                        # Wait for the master validator to upload new global model
+                        time.sleep(wait_time)
+                        # Check if master validator has failed to all_reduce
+                        self.global_progress.epoch = get_global_epoch(self)
+                        if self.local_progress.epoch != self.global_progress.epoch:
+                            bt.logging.info(
+                                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                            )
+                            load_state_from_peer(self, epoch=self.global_progress.epoch)
+                        else:
+                            load_state_from_peer(
+                                self,
+                                repo_id=self.config.neuron.local_model_name,
+                                epoch=self.global_progress.epoch,
+                            )
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
-                        # TODO this can be improved and instead related to an estimated block where an all_reduce should take place
                         if self.current_block % self.config.neuron.epoch_length == 0:
                             self.global_progress.epoch = get_global_epoch(self)
                             if self.local_progress.epoch != self.global_progress.epoch:
@@ -156,9 +178,16 @@ class BaseMinerNeuron(BaseNeuron):
                                     f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                                 )
                                 self.pause_training()
-                                load_state_from_peer(
-                                    self, epoch=self.global_progress.epoch
-                                )
+                                if self.global_progress.epoch == 0:
+                                    load_state_from_peer(
+                                        self, epoch=self.global_progress.epoch
+                                    )
+                                else:
+                                    load_state_from_peer(
+                                        self,
+                                        repo_id=self.config.neuron.local_model_name,
+                                        epoch=self.global_progress.epoch,
+                                    )
                                 self.resume_training()
 
                     # Wait before checking again.
