@@ -176,6 +176,12 @@ async def forward(self):
 
         await score_uid(self, uid)
 
+        # Benchmark any untested uids
+        benchmark_untested_uids(self)
+
+        # Update total_scores
+        update_total_scores(self)
+
     self.event.update(
         {
             "uids": self.miner_uids,
@@ -190,9 +196,6 @@ async def forward(self):
     self.event.update(
         {"uid_" + str(key): value for key, value in self.uid_tracker.items()}
     )
-
-    # Benchmark any untested uids
-    benchmark_untested_uids(self)
 
     # Update scores
     self.update_scores()

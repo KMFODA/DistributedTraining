@@ -68,9 +68,6 @@ class Validator(BaseValidatorNeuron):
         """Initialize basic validator components"""
         setup_logging(config=self.config)
 
-        bt.logging.debug("load_state()")
-        self.load_state()
-
         # Core setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)

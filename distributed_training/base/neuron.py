@@ -118,6 +118,7 @@ class BaseNeuron(ABC):
             "all_reduce_counts": 0,
             "all_reduce_score": 0,
             "total_score": 0,
+            "loss": 0,
         }
         self.uid_tracker = {
             uid: self.uid_tracker_initial_state.copy()

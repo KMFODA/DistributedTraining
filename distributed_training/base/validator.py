@@ -63,6 +63,10 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info("Building validation weights.")
         self.scores = np.zeros(self.metagraph.n, dtype=np.float32)
 
+        # Load current state
+        bt.logging.debug("load_state()")
+        self.load_state()
+
         # Init sync with the network. Updates the metagraph.
         self.sync()
 

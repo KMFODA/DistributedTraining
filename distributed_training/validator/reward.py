@@ -400,12 +400,12 @@ def benchmark_untested_uids(self):
                     self, self.uid_tracker[uid]["model_huggingface_id"]
                 )
                 self.uid_tracker[uid]["repo_valid_count"] += 1
-                self.uid_tracker[uid]["total_score"] = (
+                self.uid_tracker[uid]["repo_valid_score"] = (
                     self.uid_tracker[uid]["repo_valid_sum"]
                     / self.uid_tracker[uid]["repo_valid_count"]
                 )
                 bt.logging.info(
-                    f"UID {uid} identifies as untested. Benchmarking with score {self.uid_tracker[uid]['total_score']}"
+                    f"UID {uid} identifies as untested. Benchmarking with score {self.uid_tracker[uid]['repo_valid_score']}"
                 )
         except Exception as e:
             bt.logging.info(
@@ -431,9 +431,58 @@ def update_all_reduce_scores(self):
 
 
 def update_total_scores(self):
+    # Sort uid tracker
+    self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+
+    # Normalise each type of reward
+    train_score_normalised = np.linalg.norm(
+        [self.uid_tracker[uid]["train_score"] for uid in self.uid_tracker],
+        ord=1,
+        axis=0,
+        keepdims=True,
+    ).item()
+    all_reduce_score_normalised = np.linalg.norm(
+        [self.uid_tracker[uid]["all_reduce_score"] for uid in self.uid_tracker],
+        ord=1,
+        axis=0,
+        keepdims=True,
+    ).item()
+    repo_valid_score_normalised = np.linalg.norm(
+        [self.uid_tracker[uid]["repo_valid_score"] for uid in self.uid_tracker],
+        ord=1,
+        axis=0,
+        keepdims=True,
+    ).item()
+
+    # Check if any norms are zero or contains NaN values
+    if np.any(train_score_normalised == 0) or np.isnan(train_score_normalised).any():
+        train_score_normalised = np.ones_like(train_score_normalised).item()
+
+    if (
+        np.any(all_reduce_score_normalised == 0)
+        or np.isnan(all_reduce_score_normalised).any()
+    ):
+        all_reduce_score_normalised = np.ones_like(all_reduce_score_normalised).item()
+
+    if (
+        np.any(repo_valid_score_normalised == 0)
+        or np.isnan(repo_valid_score_normalised).any()
+    ):
+        repo_valid_score_normalised = np.ones_like(repo_valid_score_normalised).item()
+
+    # Update total scores with repo_valid_score if train_score or all_reduce_score are 0
+    # Otherwise score using weighted train_score and all_reduce_score
     for uid in self.uid_tracker:
-        # Update total_score
-        self.uid_tracker[uid]["total_score"] = (
-            0.5 * self.uid_tracker[uid]["train_score"]
-            + 0.5 * self.uid_tracker[uid]["all_reduce_score"]
-        )
+        if (self.uid_tracker[uid]["all_reduce_score"] == 0) and (
+            self.uid_tracker[uid]["train_score"] == 0
+        ):
+            self.uid_tracker[uid]["total_score"] = (
+                self.uid_tracker[uid]["repo_valid_score"] / repo_valid_score_normalised
+            )
+        else:
+            self.uid_tracker[uid]["total_score"] = (
+                (0.5 * self.uid_tracker[uid]["train_score"]) / train_score_normalised
+            ) + (
+                (0.5 * self.uid_tracker[uid]["all_reduce_score"])
+                / all_reduce_score_normalised
+            )
