@@ -67,6 +67,9 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.debug("load_state()")
         self.load_state()
 
+        # Set event dictionary
+        self.event = {}
+
         # Init sync with the network. Updates the metagraph.
         self.sync()
 
@@ -141,7 +144,6 @@ class BaseValidatorNeuron(BaseNeuron):
             Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
         """
         # Check that validator is registered on the network.
-        self.event = {}
         self.sync()
 
         bt.logging.info(
