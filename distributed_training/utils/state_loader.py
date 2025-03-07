@@ -685,14 +685,29 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 if block is not None:
                     self.model.config.last_allreduce_block = block
                 self.model.save_pretrained(tmp_folder)
-                # Save optimizer state
-                optimizer_state = {
+
+                # Save outer optimizer state
+                outer_optimizer_state = {
                     "optimizer_state_dict": self.state_averager.optimizer.state_dict(),
-                    "learning_rate": self.learning_rate_maximum,
+                    "learning_rate": self.state_averager.optimizer.param_groups[0][
+                        "lr"
+                    ],
                     "epoch": epoch,
                 }
                 torch.save(
-                    optimizer_state, os.path.join(tmp_folder, "outer_optimizer.pt")
+                    outer_optimizer_state,
+                    os.path.join(tmp_folder, "outer_optimizer.pt"),
+                )
+
+                # Save outer optimizer state
+                inner_optimizer_state = {
+                    "optimizer_state_dict": self.inner_optimizer.state_dict(),
+                    "learning_rate": self.inner_optimizer.param_groups[0]["lr"],
+                    "epoch": epoch,
+                }
+                torch.save(
+                    inner_optimizer_state,
+                    os.path.join(tmp_folder, "inner_optimizer.pt"),
                 )
 
                 bt.logging.info(
