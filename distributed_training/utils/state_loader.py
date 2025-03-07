@@ -291,7 +291,7 @@ def load_model_optimizer_gradient_averager(
                     )
                 )
                 bt.logging.info(
-                    f"Successfully loaded model from {model_name} with revision {epoch}"
+                    f"Successfully Loaded Model From {model_name} With Revision {epoch}"
                 )
 
             except Exception as e:
@@ -312,7 +312,7 @@ def load_model_optimizer_gradient_averager(
                         fall_back_model_name, trust_remote_code=True
                     )
                 )
-                bt.logging.info("Successfully loaded global model")
+                bt.logging.info("Successfully Loaded Global Model")
 
     # Move model to device
     self.model = self.model.to(self.device)
@@ -378,7 +378,7 @@ def load_model_optimizer_gradient_averager(
         gc.collect()
         torch.cuda.empty_cache()
 
-        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
+        bt.logging.info(f"Successfully Loaded Optimizer State For Epoch {epoch}")
 
     except Exception as e:
         bt.logging.warning(
@@ -407,7 +407,7 @@ def load_model_optimizer_gradient_averager(
         del self.state_averager
         gc.collect()
         torch.cuda.empty_cache()
-        bt.logging.info("Deleted state_averager and grad_averager")
+        bt.logging.info("Deleted State Averager and Gradient Averager")
 
     # Load a new state averager
     self.state_averager = DTStateAverager(
@@ -425,7 +425,7 @@ def load_model_optimizer_gradient_averager(
         allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         start=True,
     )
-    bt.logging.info("Succesfully Loaded Gradient Averager")
+    bt.logging.info("Successfully Loaded Gradient Averager")
 
     # Load a new gradient averager
     self.grad_averager = DTGradAverager(
@@ -442,7 +442,7 @@ def load_model_optimizer_gradient_averager(
         allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         start=True,
     )
-    bt.logging.info("Succesfully Loaded State Averager")
+    bt.logging.info("Successfully Loaded State Averager")
 
     self.avg_handler = AveragingHandler(
         self.model,

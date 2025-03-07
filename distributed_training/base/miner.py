@@ -172,6 +172,7 @@ class BaseMinerNeuron(BaseNeuron):
                         self.all_reduce_success_status = True
                     else:
                         if self.current_block % self.config.neuron.epoch_length == 0:
+                            # Wait for upload
                             self.global_progress.epoch = get_global_epoch(self)
                             if self.local_progress.epoch != self.global_progress.epoch:
                                 bt.logging.info(
