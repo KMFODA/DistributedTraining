@@ -156,11 +156,31 @@ class AsyncDendritePool:
 
 
 def load_wandb(self, config, wallet, neuron_type, peer_id):
-    run_name = f"{config.neuron.run_id}_{neuron_type}_UID{self.uid}_{peer_id}"
+    run_name = f"{neuron_type}_{self.uid}"
+
+    tags = [config.neuron.run_id, self.wallet.hotkey.ss58_address, peer_id]
+
+    # Check for existing run
+    try:
+        api = wandb.Api(timeout=60)
+        run = api.run(
+            f"{config.neuron.wandb_entity}/{config.neuron.wandb_project}/{run_name}"
+        )
+        if run.tags != tags:
+            run_id = None
+        else:
+            run_id = run.name
+        bt.logging.info(f"Found existing run ID: {run_name}")
+    except Exception:
+        bt.logging.info(f"Previous run {run_name} not found in WandB, starting new run")
+        run_id = None
+
     wandb_run = wandb.init(
         id=run_name,
         name=run_name,
         anonymous="allow",
+        resume="must" if run_id else None,
+        tags=tags,
         project=config.neuron.wandb_project,
         entity=config.neuron.wandb_entity,
         config=config,
@@ -170,6 +190,7 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
     signature = wallet.hotkey.sign(config.neuron.run_id.encode()).hex()
     config.signature = signature
     wandb_run.config.update(config, allow_val_change=True)
+
     return wandb_run
 
 
