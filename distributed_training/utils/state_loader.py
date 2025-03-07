@@ -300,9 +300,10 @@ def load_model_optimizer_gradient_averager(
                 )
 
                 bt.logging.info("Fallback to loading from global repo")
+                model_name = fall_back_model_name
                 self.model = (
                     AutoModelForCausalLM.from_pretrained(
-                        fall_back_model_name,
+                        model_name,
                         revision=str(epoch),
                         trust_remote_code=True,
                     )
@@ -342,15 +343,27 @@ def load_model_optimizer_gradient_averager(
 
     optimizer_state = None
     try:
-        optimizer_state = torch.load(
-            hf_hub_download(
-                repo_id=model_name,
-                filename="inner_optimizer.pt",
-                revision=str(epoch),
-            ),
-            weights_only=True,
-            map_location="cpu",
-        )
+        if os.path.isfile(
+            os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
+        ):
+            optimizer_state = torch.load(
+                os.path.join(
+                    model_name.split("/")[-1],
+                    "inner_optimizer.pt",
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
+        else:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=model_name,
+                    filename="inner_optimizer.pt",
+                    revision=str(epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
 
         # Load optimizer state if available
         if "optimizer_state_dict" in optimizer_state:
