@@ -230,7 +230,8 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
         else:
             list_repo_files(repo_id)
         return True
-    except (RepositoryNotFoundError, EntryNotFoundError):
+    except Exception as e:
+        bt.logging.info(f"Model or revision check failed with error: {e}")
         return False
 
 
@@ -279,40 +280,39 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-        if check_model_exists(model_name, revision=str(epoch)):
-            try:
-                self.model = (
-                    AutoModelForCausalLM.from_pretrained(
-                        model_name, revision=str(epoch), trust_remote_code=True
-                    )
-                    if epoch
-                    else AutoModelForCausalLM.from_pretrained(
-                        model_name, trust_remote_code=True
-                    )
+        if not check_model_exists(model_name, revision=str(epoch)):
+            model_name = fall_back_model_name
+        try:
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    model_name, revision=str(epoch), trust_remote_code=True
                 )
-                bt.logging.info(
-                    f"Successfully Loaded Model From {model_name} With Revision {epoch}"
+                if epoch
+                else AutoModelForCausalLM.from_pretrained(
+                    model_name, trust_remote_code=True
                 )
+            )
+            bt.logging.info(
+                f"Successfully Loaded Model From {model_name} With Revision {epoch}"
+            )
 
-            except Exception as e:
-                bt.logging.warning(
-                    f"Failed to load model despite repo existing: {str(e)}"
-                )
+        except Exception as e:
+            bt.logging.warning(f"Failed to load model despite repo existing: {str(e)}")
 
-                bt.logging.info("Fallback to loading from global repo")
-                model_name = fall_back_model_name
-                self.model = (
-                    AutoModelForCausalLM.from_pretrained(
-                        model_name,
-                        revision=str(epoch),
-                        trust_remote_code=True,
-                    )
-                    if epoch
-                    else AutoModelForCausalLM.from_pretrained(
-                        fall_back_model_name, trust_remote_code=True
-                    )
+            bt.logging.info("Fallback to loading from global repo")
+            model_name = fall_back_model_name
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    revision=str(epoch),
+                    trust_remote_code=True,
                 )
-                bt.logging.info("Successfully Loaded Global Model")
+                if epoch
+                else AutoModelForCausalLM.from_pretrained(
+                    fall_back_model_name, trust_remote_code=True
+                )
+            )
+            bt.logging.info("Successfully Loaded Global Model")
 
     # Move model to device
     self.model = self.model.to(self.device)
