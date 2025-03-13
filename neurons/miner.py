@@ -23,7 +23,6 @@ import random
 import tempfile
 import time
 import typing
-from enum import Enum
 
 os.environ["NEST_ASYNCIO"] = "0"
 import threading
@@ -44,7 +43,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
-from distributed_training.base.miner import BaseMinerNeuron
+from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
@@ -74,13 +73,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-
-
-class TrainingStatus(Enum):
-    ERROR = "❗ | Error"
-    RUNNING = "🏋️ | Training"
-    STOPPED = "😴 | Stopped"
-    AVERAGING = "🔄 | Averaging"
 
 
 class Miner(BaseMinerNeuron):
@@ -417,7 +409,7 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
-        self.training_status = TrainingStatus.AVERAGING
+        self.training_status = TrainingStatus.PAUSED
         bt.logging.info(":warning:  Pausing continuous training.")
 
     def resume_training(self):
@@ -486,6 +478,10 @@ class Miner(BaseMinerNeuron):
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
+
+                # Wait if training is paused
+                self.training_active.wait()
+
                 self.model.config.block_list.append(self.current_block)
 
                 self._process_training_batch(dataset)

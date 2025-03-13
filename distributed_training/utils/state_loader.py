@@ -15,6 +15,8 @@ import bittensor as bt
 import hivemind
 import psutil
 import torch
+from memory_profiler import profile
+
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
@@ -235,6 +237,7 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
         return False
 
 
+@profile
 def load_model_optimizer_gradient_averager(
     self, model_name, epoch, use_fast_loader=False
 ):
@@ -333,6 +336,14 @@ def load_model_optimizer_gradient_averager(
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
+    if hasattr(self, "inner_optimizer"):
+        for i in self.inner_optimizer.param_groups[0]["params"]:
+            del i
+        del self.inner_optimizer
+        gc.collect()
+        torch.cuda.empty_cache()
+        bt.logging.info("Deleted Inner Optimizer")
+
     self.inner_optimizer = torch.optim.AdamW(
         self.model.parameters(),
         lr=self.learning_rate_maximum,
@@ -340,6 +351,7 @@ def load_model_optimizer_gradient_averager(
         eps=1e-8,
         weight_decay=0.1,
     )
+    bt.logging.info(f"Loaded Inner Optimizer")
 
     optimizer_state = None
     try:
@@ -374,16 +386,19 @@ def load_model_optimizer_gradient_averager(
         if "learning_rate" in optimizer_state:
             self.inner_optimizer.lr = optimizer_state["learning_rate"]
 
-        del optimizer_state
-        gc.collect()
-        torch.cuda.empty_cache()
-
         bt.logging.info(f"Successfully Loaded Optimizer State For Epoch {epoch}")
 
     except Exception as e:
         bt.logging.warning(
             f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
         )
+
+    finally:
+        if isinstance(optimizer_state, dict):
+            keys = list(optimizer_state.keys())
+            for k in keys:
+                del optimizer_state[k]
+                gc.collect()
         del optimizer_state
         gc.collect()
         torch.cuda.empty_cache()
@@ -396,6 +411,18 @@ def load_model_optimizer_gradient_averager(
         while self.grad_averager.is_alive():
             time.sleep(1)
 
+        for i in self.grad_averager.main_parameters:
+            del i
+
+        for i in self.grad_averager.offloaded_optimizer.param_groups[0]["params"]:
+            del i
+
+        for i in self.grad_averager._averaged_tensors:
+            del i
+
+        del self.grad_averager.main_parameters
+        del self.grad_averager.offloaded_optimizer
+        del self.grad_averager._averaged_tensors
         del self.grad_averager
         gc.collect()
         torch.cuda.empty_cache()
@@ -404,7 +431,21 @@ def load_model_optimizer_gradient_averager(
         while self.state_averager.is_alive():
             time.sleep(1)
 
+        for i in self.state_averager.main_parameters:
+            del i
+
+        for i in self.state_averager.optimizer.param_groups[0]["params"]:
+            del i
+
+        for i in self.state_averager._averaged_tensors:
+            del i
+
+        del self.state_averager.optimizer.param_groups
+        del self.state_averager.optimizer
+        del self.state_averager.main_parameters
+        del self.state_averager._averaged_tensors
         del self.state_averager
+
         gc.collect()
         torch.cuda.empty_cache()
         bt.logging.info("Deleted State Averager and Gradient Averager")
