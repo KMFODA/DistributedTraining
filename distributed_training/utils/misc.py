@@ -38,6 +38,7 @@ from hivemind.utils.logging import use_hivemind_log_handler
 
 import wandb
 from distributed_training.protocol import AllReduce
+from distributed_training import __run__, __version__
 
 EVENTS_LEVEL_NUM = 38
 DEFAULT_LOG_BACKUP_COUNT = 10
@@ -158,7 +159,7 @@ class AsyncDendritePool:
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{neuron_type[0].upper()}{'{:03}'.format(self.uid)}"
 
-    tags = [config.neuron.run_id, self.wallet.hotkey.ss58_address, peer_id]
+    tags = [peer_id, self.wallet.hotkey.ss58_address, __version__, __run__]
 
     # Check for existing run
     try:
@@ -166,7 +167,11 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
         run = api.run(
             f"{config.neuron.wandb_entity}/{config.neuron.wandb_project}/{run_name}"
         )
-        if run.tags != tags:
+        if (
+            (run.tags[1] != tags[-1])
+            and (run.tags[2] != tags[-2])
+            and (run.tags[3] != tags[3])
+        ):
             run_id = None
         else:
             run_id = run.name
