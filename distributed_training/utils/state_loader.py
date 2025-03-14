@@ -15,6 +15,8 @@ import bittensor as bt
 import hivemind
 import psutil
 import torch
+from memory_profiler import profile
+
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
 from hivemind.utils import get_logger
@@ -230,13 +232,21 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
         else:
             list_repo_files(repo_id)
         return True
-    except (RepositoryNotFoundError, EntryNotFoundError):
+    except Exception as e:
+        bt.logging.info(f"Model or revision check failed with error: {e}")
         return False
 
 
+@profile
 def load_model_optimizer_gradient_averager(
     self, model_name, epoch, use_fast_loader=False
 ):
+    """
+    Pytorch currently have an ongoing issue with memory leaks:
+    https://github.com/pytorch/pytorch/issues/64043. To mitigate
+    against this for now gc.collect() is run after each component
+    with optimizers and state averagers are deleted.
+    """
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
@@ -253,12 +263,85 @@ def load_model_optimizer_gradient_averager(
                 comp = getattr(transformer, component)
                 if hasattr(comp, "weight"):
                     del comp.weight
+                    gc.collect()
+                    torch.cuda.empty_cache()
                 if hasattr(comp, "norm"):
                     del comp.norm
+                    gc.collect()
+                    torch.cuda.empty_cache()
                 delattr(transformer, component)
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
+
+    # Delete Gradient and State Averagers
+    if hasattr(self, "state_averager"):
+        self.grad_averager.shutdown()
+        while self.grad_averager.is_alive():
+            time.sleep(1)
+
+        del self.grad_averager.main_parameters
+        del self.grad_averager.offloaded_optimizer
+        del self.grad_averager._averaged_tensors
+        del self.grad_averager
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        self.state_averager.shutdown()
+        while self.state_averager.is_alive():
+            time.sleep(1)
+
+        for i in self.state_averager.main_parameters:
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        for i in self.state_averager.optimizer.param_groups[0]["params"]:
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        del self.state_averager.optimizer.param_groups
+        del self.state_averager.optimizer
+        del self.state_averager.main_parameters
+        del self.state_averager._averaged_tensors
+        del self.state_averager
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        bt.logging.info("Deleted State Averager and Gradient Averager")
+
+    # Delete any historic model references in GlobalOptimManager
+    if (
+        hasattr(self, "inner_optimizer")
+        and hasattr(self.inner_optimizer, "mng")
+        and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+    ):
+        self.inner_optimizer.mng.module_weight_config_triple = (
+            self.inner_optimizer.mng.module_weight_config_triple[-2:]
+        )
+
+    # Delete existing inner optimizer
+    if hasattr(self, "inner_optimizer"):
+        for i in self.inner_optimizer.param_groups[0]["params"]:
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
+        del self.inner_optimizer
+        gc.collect()
+        torch.cuda.empty_cache()
+        bt.logging.info("Deleted Inner Optimizer")
+
+    # Delete existing averag handler
+    if hasattr(self, "avg_handler"):
+        del self.avg_handler.model
+        del self.avg_handler.inner_optimizer
+        del self.avg_handler.grad_averager
+        del self.avg_handler.state_averager
+        del self.avg_handler
+        gc.collect()
+        torch.cuda.empty_cache()
+        bt.logging.info("Deleted Average Handler")
 
     if use_fast_loader:
         try:
@@ -279,39 +362,39 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-        if check_model_exists(model_name, revision=str(epoch)):
-            try:
-                self.model = (
-                    AutoModelForCausalLM.from_pretrained(
-                        model_name, revision=str(epoch), trust_remote_code=True
-                    )
-                    if epoch
-                    else AutoModelForCausalLM.from_pretrained(
-                        model_name, trust_remote_code=True
-                    )
+        if not check_model_exists(model_name, revision=str(epoch)):
+            model_name = fall_back_model_name
+        try:
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    model_name, revision=str(epoch), trust_remote_code=True
                 )
-                bt.logging.info(
-                    f"Successfully loaded model from {model_name} with revision {epoch}"
+                if epoch
+                else AutoModelForCausalLM.from_pretrained(
+                    model_name, trust_remote_code=True
                 )
+            )
+            bt.logging.info(
+                f"Successfully Loaded Model From {model_name} With Revision {epoch}"
+            )
 
-            except Exception as e:
-                bt.logging.warning(
-                    f"Failed to load model despite repo existing: {str(e)}"
-                )
+        except Exception as e:
+            bt.logging.warning(f"Failed to load model despite repo existing: {str(e)}")
 
-                bt.logging.info("Fallback to loading from global repo")
-                self.model = (
-                    AutoModelForCausalLM.from_pretrained(
-                        fall_back_model_name,
-                        revision=str(epoch),
-                        trust_remote_code=True,
-                    )
-                    if epoch
-                    else AutoModelForCausalLM.from_pretrained(
-                        fall_back_model_name, trust_remote_code=True
-                    )
+            bt.logging.info("Fallback to loading from global repo")
+            model_name = fall_back_model_name
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    revision=str(epoch),
+                    trust_remote_code=True,
                 )
-                bt.logging.info("Successfully loaded global model")
+                if epoch
+                else AutoModelForCausalLM.from_pretrained(
+                    fall_back_model_name, trust_remote_code=True
+                )
+            )
+            bt.logging.info("Successfully Loaded Global Model")
 
     # Move model to device
     self.model = self.model.to(self.device)
@@ -322,16 +405,6 @@ def load_model_optimizer_gradient_averager(
         else 0
     )
 
-    # Delete any historic model references in GlobalOptimManager
-    if (
-        hasattr(self, "inner_optimizer")
-        and hasattr(self.inner_optimizer, "mng")
-        and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
-    ):
-        self.inner_optimizer.mng.module_weight_config_triple = (
-            self.inner_optimizer.mng.module_weight_config_triple[-2:]
-        )
-
     self.inner_optimizer = torch.optim.AdamW(
         self.model.parameters(),
         lr=self.learning_rate_maximum,
@@ -339,18 +412,31 @@ def load_model_optimizer_gradient_averager(
         eps=1e-8,
         weight_decay=0.1,
     )
+    bt.logging.info(f"Loaded Inner Optimizer")
 
     optimizer_state = None
     try:
-        optimizer_state = torch.load(
-            hf_hub_download(
-                repo_id=model_name,
-                filename="inner_optimizer.pt",
-                revision=str(epoch),
-            ),
-            weights_only=True,
-            map_location="cpu",
-        )
+        if os.path.isfile(
+            os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
+        ):
+            optimizer_state = torch.load(
+                os.path.join(
+                    model_name.split("/")[-1],
+                    "inner_optimizer.pt",
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
+        else:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=model_name,
+                    filename="inner_optimizer.pt",
+                    revision=str(epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
 
         # Load optimizer state if available
         if "optimizer_state_dict" in optimizer_state:
@@ -361,40 +447,25 @@ def load_model_optimizer_gradient_averager(
         if "learning_rate" in optimizer_state:
             self.inner_optimizer.lr = optimizer_state["learning_rate"]
 
-        del optimizer_state
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        bt.logging.info(f"Successfully loaded optimizer state for epoch {epoch}")
+        bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
 
     except Exception as e:
         bt.logging.warning(
             f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
         )
+
+    finally:
+        if isinstance(optimizer_state, dict):
+            keys = list(optimizer_state.keys())
+            for k in keys:
+                del optimizer_state[k]
+                gc.collect()
         del optimizer_state
         gc.collect()
         torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
-
-    if hasattr(self, "state_averager"):
-        self.grad_averager.shutdown()
-        while self.grad_averager.is_alive():
-            time.sleep(1)
-
-        del self.grad_averager
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        self.state_averager.shutdown()
-        while self.state_averager.is_alive():
-            time.sleep(1)
-
-        del self.state_averager
-        gc.collect()
-        torch.cuda.empty_cache()
-        bt.logging.info("Deleted state_averager and grad_averager")
 
     # Load a new state averager
     self.state_averager = DTStateAverager(
@@ -412,7 +483,7 @@ def load_model_optimizer_gradient_averager(
         allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         start=True,
     )
-    bt.logging.info("Succesfully Loaded Gradient Averager")
+    bt.logging.info("Successfully Loaded Gradient Averager")
 
     # Load a new gradient averager
     self.grad_averager = DTGradAverager(
@@ -429,7 +500,45 @@ def load_model_optimizer_gradient_averager(
         allreduce_timeout=self.allreduce_timeout - 30.0 - 15.0,
         start=True,
     )
-    bt.logging.info("Succesfully Loaded State Averager")
+    bt.logging.info("Successfully Loaded State Averager")
+
+    optimizer_state = None
+    try:
+        optimizer_state = torch.load(
+            hf_hub_download(
+                repo_id=fall_back_model_name,
+                filename="outer_optimizer.pt",
+                revision=str(epoch),
+            ),
+            weights_only=True,
+            map_location="cpu",
+        )
+
+        # Load optimizer state if available
+        if "optimizer_state_dict" in optimizer_state:
+            self.state_averager.optimizer.load_state_dict(
+                optimizer_state["optimizer_state_dict"]
+            )
+
+        if "learning_rate" in optimizer_state:
+            self.state_averager.optimizer.lr = optimizer_state["learning_rate"]
+
+        bt.logging.info(f"Successfully Loaded Outer Optimizer State For Epoch {epoch}")
+
+    except Exception as e:
+        bt.logging.warning(
+            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+        )
+
+    finally:
+        if isinstance(optimizer_state, dict):
+            keys = list(optimizer_state.keys())
+            for k in keys:
+                del optimizer_state[k]
+                gc.collect()
+        del optimizer_state
+        gc.collect()
+        torch.cuda.empty_cache()
 
     self.avg_handler = AveragingHandler(
         self.model,
@@ -672,14 +781,29 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 if block is not None:
                     self.model.config.last_allreduce_block = block
                 self.model.save_pretrained(tmp_folder)
-                # Save optimizer state
-                optimizer_state = {
+
+                # Save outer optimizer state
+                outer_optimizer_state = {
                     "optimizer_state_dict": self.state_averager.optimizer.state_dict(),
-                    "learning_rate": self.learning_rate_maximum,
+                    "learning_rate": self.state_averager.optimizer.param_groups[0][
+                        "lr"
+                    ],
                     "epoch": epoch,
                 }
                 torch.save(
-                    optimizer_state, os.path.join(tmp_folder, "outer_optimizer.pt")
+                    outer_optimizer_state,
+                    os.path.join(tmp_folder, "outer_optimizer.pt"),
+                )
+
+                # Save outer optimizer state
+                inner_optimizer_state = {
+                    "optimizer_state_dict": self.inner_optimizer.state_dict(),
+                    "learning_rate": self.inner_optimizer.param_groups[0]["lr"],
+                    "epoch": epoch,
+                }
+                torch.save(
+                    inner_optimizer_state,
+                    os.path.join(tmp_folder, "inner_optimizer.pt"),
                 )
 
                 bt.logging.info(

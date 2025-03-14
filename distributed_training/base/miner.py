@@ -22,11 +22,19 @@ import traceback
 
 import bittensor as bt
 
+from enum import Enum
 from distributed_training.base.neuron import BaseNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.state_loader import load_state_from_peer
 from distributed_training.utils.progress_tracker import get_global_epoch
+
+
+class TrainingStatus(Enum):
+    ERROR = "❗ | Error"
+    RUNNING = "🏋️ | Training"
+    STOPPED = "😴 | Stopped"
+    PAUSED = "🔄 | Paused"
 
 
 class BaseMinerNeuron(BaseNeuron):
@@ -178,6 +186,15 @@ class BaseMinerNeuron(BaseNeuron):
                                     f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                                 )
                                 self.pause_training()
+                                # If there's an ongoing upload, check if it's done
+                                while (
+                                    self.current_upload_future
+                                    and not self.current_upload_future.done()
+                                ):
+                                    bt.logging.info(
+                                        "Previous upload still in progress. Waiting until upload is complete."
+                                    )
+                                    time.sleep(1)
                                 if self.global_progress.epoch == 0:
                                     load_state_from_peer(
                                         self, epoch=self.global_progress.epoch

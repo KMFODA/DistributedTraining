@@ -1,6 +1,7 @@
 bitsandbytes==0.44.1
 bitarray==3.0.0
 datasets==3.0.2
+memory-profiler==0.61.0
 transformers==4.39.3
 wandb==0.17.7
 python-dotenv==1.0.1

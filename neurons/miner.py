@@ -23,7 +23,6 @@ import random
 import tempfile
 import time
 import typing
-from enum import Enum
 
 os.environ["NEST_ASYNCIO"] = "0"
 import threading
@@ -44,7 +43,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
-from distributed_training.base.miner import BaseMinerNeuron
+from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
@@ -74,13 +73,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-
-
-class TrainingStatus(Enum):
-    ERROR = "❗ | Error"
-    RUNNING = "🏋️ | Training"
-    STOPPED = "😴 | Stopped"
-    AVERAGING = "🔄 | Averaging"
 
 
 class Miner(BaseMinerNeuron):
@@ -159,6 +151,9 @@ class Miner(BaseMinerNeuron):
         # Status tracking
         self.training_status = TrainingStatus.STOPPED
         self.training_error = None
+
+        # Save directory
+        self.output_dir = self.config.neuron.local_model_name.split("/")[-1]
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
@@ -278,57 +273,74 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info("Upload Cancelled Due To AllReduce Operation")
                 return False
             try:
-                with tempfile.TemporaryDirectory() as tmp_folder:
-                    bt.logging.info(
-                        f":memory: Saving model state locally for epoch {epoch}"
-                    )
-                    self.model.config.inner_step = self.local_progress.inner_step
-                    self.model.save_pretrained(tmp_folder)
+                if not os.path.exists(self.output_dir):
+                    os.makedirs(self.output_dir)
+                bt.logging.info(
+                    f":memory: Saving model state locally for epoch {epoch}"
+                )
+                self.model.config.inner_step = self.local_progress.inner_step
+                self.model.save_pretrained(os.path.join(self.output_dir))
 
-                    bt.logging.info(
-                        f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
-                    )
-                    commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
-                    upload_folder(
-                        folder_path=tmp_folder,
-                        repo_id=self.config.neuron.local_model_name,
-                        repo_type="model",
-                        commit_message=commit_message,
-                    )
-                    refs = list_repo_refs(
-                        self.config.neuron.local_model_name, repo_type="model"
-                    )
-                    for tag in refs.tags:
-                        if (tag.name == "None") or (int(tag.name) >= epoch):
-                            # Update tag for this version
-                            delete_tag(
-                                self.config.neuron.local_model_name,
-                                repo_type="model",
-                                tag=tag.name,
-                            )
-                            time.sleep(5)
-                    # Create new tag for this version
-                    create_tag(
-                        self.config.neuron.local_model_name,
-                        repo_type="model",
-                        tag=str(epoch),
-                        tag_message=commit_message,
-                    )
-                    # Cleanup old cache
-                    cleanup_old_cache(
-                        self,
-                        repo_id=self.config.neuron.local_model_name,
-                        current_revision=None,
-                    )
+                # Save optimizer state
+                optimizer_state = {
+                    "optimizer_state_dict": self.inner_optimizer.state_dict(),
+                    "learning_rate": self.learning_rate_maximum,
+                    "epoch": epoch,
+                }
+                torch.save(
+                    optimizer_state,
+                    os.path.join(
+                        self.output_dir,
+                        "inner_optimizer.pt",
+                    ),
+                )
 
-                    bt.logging.info(
-                        f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.local_model_name}"
-                    )
+                bt.logging.info(
+                    f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
+                )
+                commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
+                upload_folder(
+                    folder_path=os.path.join(
+                        self.config.neuron.local_model_name.split("/")[-1]
+                    ),
+                    repo_id=self.config.neuron.local_model_name,
+                    repo_type="model",
+                    commit_message=commit_message,
+                )
+                refs = list_repo_refs(
+                    self.config.neuron.local_model_name, repo_type="model"
+                )
+                for tag in refs.tags:
+                    if (tag.name == "None") or (int(tag.name) >= epoch):
+                        # Update tag for this version
+                        delete_tag(
+                            self.config.neuron.local_model_name,
+                            repo_type="model",
+                            tag=tag.name,
+                        )
+                        time.sleep(5)
+                # Create new tag for this version
+                create_tag(
+                    self.config.neuron.local_model_name,
+                    repo_type="model",
+                    tag=str(epoch),
+                    tag_message=commit_message,
+                )
+                # Cleanup old cache
+                cleanup_old_cache(
+                    self,
+                    repo_id=self.config.neuron.local_model_name,
+                    current_revision=None,
+                )
 
-                    # Reset block_list
-                    self.model.config.block_list = []
+                bt.logging.info(
+                    f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.local_model_name}"
+                )
 
-                    return True
+                # Reset block_list
+                self.model.config.block_list = []
+
+                return True
 
             except Exception as e:
                 attempt += 1
@@ -397,7 +409,7 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
-        self.training_status = TrainingStatus.AVERAGING
+        self.training_status = TrainingStatus.PAUSED
         bt.logging.info(":warning:  Pausing continuous training.")
 
     def resume_training(self):
@@ -466,6 +478,10 @@ class Miner(BaseMinerNeuron):
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
+
+                # Wait if training is paused
+                self.training_active.wait()
+
                 self.model.config.block_list.append(self.current_block)
 
                 self._process_training_batch(dataset)
@@ -571,10 +587,10 @@ class Miner(BaseMinerNeuron):
             raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
-            # Reset inner_step
-            self.local_progress.inner_step = 0
             # Update epoch if all_reduce was succsefull
             if synapse.completion is True:
+                # Reset inner_step and update epoch
+                self.local_progress.inner_step = 0
                 self.local_progress.epoch += 1
                 bt.logging.info("AllReduce Operation Finished Succesfully")
                 # Resume training when done

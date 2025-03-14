@@ -155,7 +155,15 @@ async def score_uid(self, uid: int):
     latest_commit = None
     model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
     local_epoch = get_local_epoch(self, model_huggingface_id)
-    accepted_files = [".gitattributes", "config.json", "model.safetensors"]
+    accepted_files = [
+        ".gitattributes",
+        "config.json",
+        "model.safetensors",
+        "inner_optimizer.pt",
+        "inner_optimizer.npz",
+        "outer_optimizer.pt",
+        "outer_optimizer.npz",
+    ]
     blocks = []
     time_delta = 0
 
@@ -382,7 +390,7 @@ def score_repo(self, repo_id: str) -> bool:
         latest_commit = list_repo_commits(repo_id)[0]
 
         if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
-            self.config.neuron.target_n_blocks * 60
+            self.config.neuron.target_n_blocks * 60 * 3
         ):
             return False
         return True
