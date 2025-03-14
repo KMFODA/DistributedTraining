@@ -241,6 +241,12 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
 def load_model_optimizer_gradient_averager(
     self, model_name, epoch, use_fast_loader=False
 ):
+    """
+    Pytorch currently have an ongoing issue with memory leaks:
+    https://github.com/pytorch/pytorch/issues/64043. To mitigate
+    against this for now gc.collect() is run after each component
+    with optimizers and state averagers are deleted.
+    """
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
@@ -274,21 +280,6 @@ def load_model_optimizer_gradient_averager(
         while self.grad_averager.is_alive():
             time.sleep(1)
 
-        # for i in self.grad_averager.main_parameters:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-
-        # for i in self.grad_averager.offloaded_optimizer.param_groups[0]["params"]:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-
-        # for i in self.grad_averager._averaged_tensors:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-
         del self.grad_averager.main_parameters
         del self.grad_averager.offloaded_optimizer
         del self.grad_averager._averaged_tensors
@@ -309,11 +300,6 @@ def load_model_optimizer_gradient_averager(
             del i
             gc.collect()
             torch.cuda.empty_cache()
-
-        # for i in self.state_averager._averaged_tensors:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
 
         del self.state_averager.optimizer.param_groups
         del self.state_averager.optimizer
