@@ -368,7 +368,7 @@ class BaseValidatorNeuron(BaseNeuron):
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scores[uid] = 0  # hotkey has been replaced
-                self.uid_tracker[uid] = self.uid_tracker_initial_state
+                self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -480,6 +480,9 @@ class BaseValidatorNeuron(BaseNeuron):
                 ].flatten()[0]
             if "uid_tracker" in state:
                 self.uid_tracker = state["uid_tracker"].flatten()[0]
+                for uid in self.uid_tracker:
+                    self.uid_tracker[uid] = self.uid_tracker[uid].copy()
+
                 for uid in self.uid_tracker:
                     try:
                         if (
