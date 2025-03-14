@@ -390,7 +390,7 @@ def score_repo(self, repo_id: str) -> bool:
         latest_commit = list_repo_commits(repo_id)[0]
 
         if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
-            self.config.neuron.target_n_blocks * 60
+            self.config.neuron.target_n_blocks * 60 * 3
         ):
             return False
         return True
