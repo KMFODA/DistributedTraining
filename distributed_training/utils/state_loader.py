@@ -601,8 +601,7 @@ def load_state_from_peer(self, repo_id=None, epoch=None):
             )
             bt.logging.debug(new_model_weights_sample)
 
-            self.local_progress.epoch = self.global_progress.epoch
-            self.local_progress.inner_step = 0
+            self.local_progress.epoch = epoch
             self.local_progress.samples_accumulated = 0
             bt.logging.debug(f"New Model Tag: {self.global_progress.epoch}")
 
@@ -780,6 +779,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
                 if block is not None:
                     self.model.config.last_allreduce_block = block
+                self.model.config.inner_step = 0
                 self.model.save_pretrained(tmp_folder)
 
                 # Save outer optimizer state

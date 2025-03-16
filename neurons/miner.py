@@ -590,6 +590,7 @@ class Miner(BaseMinerNeuron):
             # Update epoch if all_reduce was succsefull
             if synapse.completion is True:
                 # Reset inner_step and update epoch
+                self.local_progress.samples_accumulated = 0
                 self.local_progress.inner_step = 0
                 self.local_progress.epoch += 1
                 bt.logging.info("AllReduce Operation Finished Succesfully")
