@@ -176,7 +176,7 @@ async def score_uid(self, uid: int):
             raise Exception(
                 f"Score 0 for UID {uid}: HuggingFace Repo Id {self.uid_tracker[uid]['model_huggingface_id']} Doesn't Exist"
             )
-        elif local_epoch != self.global_progress.epoch:
+        elif (local_epoch is None) or (local_epoch != self.global_progress.epoch):
             scores = 0
             raise Exception(
                 f"Score 0 for UID {uid}: Local Epoch {local_epoch} != Global Epoch {self.global_progress.epoch}"
