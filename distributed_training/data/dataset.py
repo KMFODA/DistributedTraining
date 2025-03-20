@@ -210,7 +210,7 @@ class SubsetLoader(IterableDataset):
 
 
 class DatasetLoader(SubsetLoader):
-    name: str = "HuggingFaceFW/fineweb-edu-score-2"
+    name: str = "HuggingFaceFW/fineweb-edu"
     rows_base_url: str = "https://datasets-server.huggingface.co/rows"
     size_base_url: str = "https://datasets-server.huggingface.co/size"
 
