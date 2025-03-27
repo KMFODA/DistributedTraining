@@ -125,7 +125,7 @@ class AveragingHandler:
                 )
 
                 # Update state_avgs main params with inner optimizer params
-                self.state_averager.update_main_param_after_outer_step()  # This updates the main parameters
+                self.update_main_param_after_outer_step()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
@@ -155,7 +155,6 @@ class AveragingHandler:
                 bt.logging.info("Gradient Step Cleaned Up")
             if all_reduce_success_status:
                 bt.logging.success("Averaging Round Finished Succesfully")
-            self.state_averager.optimizer.zero_grad()
             return all_reduce_success_status, results
 
     def calculate_allreduce_scores(
@@ -320,8 +319,7 @@ class AveragingHandler:
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
-                # Update state_avg main params with the inner optimizer params
-                self.state_averager.update_main_param_after_outer_step()
+                self.update_main_param_after_outer_step()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
@@ -346,5 +344,16 @@ class AveragingHandler:
                 bt.logging.info("Gradient Step Cleaned Up")
             if synapse.completion:
                 bt.logging.success("Averaging Round Finished Succesfully")
-            self.state_averager.optimizer.zero_grad()
             return synapse
+
+    def update_main_param_after_outer_step(self):
+        """Update the main parameters with the inner optimizer step"""
+        opt_parameters = [
+            param
+            for group in self.inner_optimizer.param_groups
+            for param in group["params"]
+        ]
+        for main_param, opt_param in zip(
+            self.state_averager.main_parameters, opt_parameters
+        ):
+            main_param.data.copy_(opt_param.data, non_blocking=True)
