@@ -523,8 +523,8 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(
                     f":training:  Outer Step: {self.local_progress.epoch} | "
                     f"Inner Step: {self.local_progress.inner_step} | "
-                    f"Learning Rate: {self.inner_optimizer.param_groups[0]['lr']:.6f} | "
-                    f"Average Loss: {self.local_progress.loss:.2f} | "
+                    f"Learning Rate: {self.inner_optimizer.param_groups[0]['lr']:.8f} | "
+                    f"Average Loss: {self.local_progress.loss:.2f}"
                 )
 
                 self.event.update(
