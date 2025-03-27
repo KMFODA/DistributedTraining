@@ -264,7 +264,7 @@ async def score_uid(self, uid: int):
         else:
             blocks = model_final.config.block_list
             for block in blocks:
-                bt.logging.info(":pages: Fetching fineweb-edu pages")
+                bt.logging.debug(":pages: Fetching fineweb-edu pages")
                 dataset = await fetch_training_data(self, block, uid)
 
                 for inputs, labels in dataset:
@@ -272,12 +272,12 @@ async def score_uid(self, uid: int):
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        _, loss = self.model(input_ids=inputs, labels=labels)
-                        scaled_loss = loss / self.number_of_local_steps
+                        outputs = self.model(input_ids=inputs, labels=labels)
+                        loss = outputs[1] / self.number_of_local_steps
 
-                    scaled_loss.backward()
+                    self.scaler.scale(loss).backward()
 
-                    self.running_loss += loss.item()
+                    self.running_loss += loss.item() * self.number_of_local_steps
                     self.batch_count += 1
                     self.local_progress.loss = self.running_loss / self.batch_count
 
@@ -285,30 +285,33 @@ async def score_uid(self, uid: int):
                         self.local_batch_size_train
                     )
 
-                    if (
-                        self.local_progress.samples_accumulated
-                        % (self.logging_interval * self.local_batch_size_train)
-                        == 0
-                    ):
-                        bt.logging.info(
-                            f":training:  Outer Step: {self.local_progress.epoch} | "
-                            f"Inner Step: {self.local_progress.inner_step} | "
-                            f"Average Loss: {self.local_progress.loss:.4f} | "
-                            f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
-                        )
-
                     # Check if we've accumulated enough samples for a step
                     if (
                         self.local_progress.samples_accumulated
                         >= self.local_batch_size_train_effective
                     ):
+                        bt.logging.info(
+                            f":training:  Outer Step: {self.local_progress.epoch} | "
+                            f"Inner Step: {self.local_progress.inner_step} | "
+                            f"Learning Rate: {self.inner_optimizer.param_groups[0]['lr']:.8f} | "
+                            f"Average Loss: {self.local_progress.loss:.2f}"
+                        )
+
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                        self.inner_optimizer.step()
+                        self.scaler.unscale_(optimizer=self.inner_optimizer)
+                        self.scaler.step(self.inner_optimizer)
+                        self.scaler.update()
+
+                        self.scheduler.step()
+
                         self.inner_optimizer.zero_grad()
+
                         self.local_progress.inner_step += 1
-                        self.local_progress.samples_accumulated = 0
+
                         self.running_loss = 0.0
                         self.batch_count = 0
+
+                        self.local_progress.samples_accumulated = 0
 
             scores = score_models(self.model, model_final)
     except Exception as e:

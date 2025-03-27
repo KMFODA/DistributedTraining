@@ -36,7 +36,11 @@ from huggingface_hub.utils import (
     EntryNotFoundError,
 )
 from huggingface_hub.constants import HF_HUB_CACHE
-from transformers import AutoModelForCausalLM, AutoConfig
+from transformers import (
+    AutoModelForCausalLM,
+    AutoConfig,
+    get_cosine_schedule_with_warmup,
+)
 
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import get_global_epoch
@@ -409,7 +413,6 @@ def load_model_optimizer_gradient_averager(
         self.model.parameters(),
         lr=self.learning_rate_maximum,
         betas=(0.9, 0.95),
-        eps=1e-8,
         weight_decay=0.1,
     )
     bt.logging.info(f"Loaded Inner Optimizer")
@@ -443,9 +446,6 @@ def load_model_optimizer_gradient_averager(
             self.inner_optimizer.load_state_dict(
                 optimizer_state["optimizer_state_dict"]
             )
-
-        if "learning_rate" in optimizer_state:
-            self.inner_optimizer.lr = optimizer_state["learning_rate"]
 
         bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
 
@@ -520,9 +520,6 @@ def load_model_optimizer_gradient_averager(
                 optimizer_state["optimizer_state_dict"]
             )
 
-        if "learning_rate" in optimizer_state:
-            self.state_averager.optimizer.lr = optimizer_state["learning_rate"]
-
         bt.logging.info(f"Successfully Loaded Outer Optimizer State For Epoch {epoch}")
 
     except Exception as e:
@@ -546,6 +543,13 @@ def load_model_optimizer_gradient_averager(
         self.grad_averager,
         self.state_averager,
     )
+
+    self.scheduler = get_cosine_schedule_with_warmup(
+        self.inner_optimizer,
+        num_warmup_steps=1000,
+        num_training_steps=88000,
+    )
+    self.scaler = torch.amp.GradScaler(enabled=True)
 
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"

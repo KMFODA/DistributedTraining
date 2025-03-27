@@ -168,7 +168,7 @@ class Miner(BaseMinerNeuron):
 
     def _setup_model_params(self):
         # Optimizer settings
-        self.learning_rate_maximum = 6e-4
+        self.learning_rate_maximum = 4e-4
         self.weight_decay = 0.1
         self.num_inner_steps = 500
         self.offload_optimizer = True
@@ -409,6 +409,7 @@ class Miner(BaseMinerNeuron):
     def pause_training(self):
         """Pauses the continuous training loop"""
         self.training_active.clear()
+        time.sleep(1)
         self.training_status = TrainingStatus.PAUSED
         bt.logging.info(":warning:  Pausing continuous training.")
 
@@ -474,7 +475,7 @@ class Miner(BaseMinerNeuron):
                         batch_size=self.local_progress.samples_accumulated,
                     )
 
-                bt.logging.info(":pages: Fetching fineweb-edu pages")
+                bt.logging.debug(":pages: Fetching fineweb-edu pages")
                 dataset = self.training_loop.run_until_complete(
                     self.fetch_training_data()
                 )
@@ -498,19 +499,18 @@ class Miner(BaseMinerNeuron):
 
         for inputs, labels in dataset:
             if not self.training_active.is_set():
-                self.inner_optimizer.zero_grad()
                 break
 
             # Move to device
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                _, loss = self.model(input_ids=inputs, labels=labels)
-                scaled_loss = loss / self.number_of_local_steps
+                outputs = self.model(input_ids=inputs, labels=labels)
+                loss = outputs[1] / self.number_of_local_steps
 
-            scaled_loss.backward()
+            self.scaler.scale(loss).backward()
 
-            self.running_loss += loss.item()
+            self.running_loss += loss.item() * self.number_of_local_steps
             self.batch_count += 1
             self.local_progress.loss = self.running_loss / self.batch_count
 
@@ -518,21 +518,15 @@ class Miner(BaseMinerNeuron):
 
             if (
                 self.local_progress.samples_accumulated
-                % (self.logging_interval * self.local_batch_size_train)
-                == 0
+                >= self.local_batch_size_train_effective
             ):
                 bt.logging.info(
                     f":training:  Outer Step: {self.local_progress.epoch} | "
                     f"Inner Step: {self.local_progress.inner_step} | "
-                    f"Average Loss: {self.local_progress.loss:.4f} | "
-                    f"Micro Batches: [{self.local_progress.samples_accumulated}/{self.local_batch_size_train_effective}]"
+                    f"Learning Rate: {self.inner_optimizer.param_groups[0]['lr']:.8f} | "
+                    f"Average Loss: {self.local_progress.loss:.2f}"
                 )
 
-            if (
-                self.local_progress.samples_accumulated
-                >= self.local_batch_size_train_effective
-            ):
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.event.update(
                     {
                         "outer_step": self.local_progress.epoch,
@@ -541,14 +535,26 @@ class Miner(BaseMinerNeuron):
                         "samples_accumulated": self.local_progress.samples_accumulated,
                     }
                 )
-                self.inner_optimizer.step()
-                self.inner_optimizer.zero_grad()
-                self.local_progress.inner_step += 1
 
-                self.running_loss = 0.0
-                self.batch_count = 0
+                # Run inner optimizer step
+                self.inner_optimizer_step()
 
-                self.local_progress.samples_accumulated = 0
+    def inner_optimizer_step(self):
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        self.scaler.unscale_(optimizer=self.inner_optimizer)
+        self.scaler.step(self.inner_optimizer)
+        self.scaler.update()
+
+        self.scheduler.step()
+
+        self.inner_optimizer.zero_grad()
+
+        self.local_progress.inner_step += 1
+
+        self.running_loss = 0.0
+        self.batch_count = 0
+
+        self.local_progress.samples_accumulated = 0
 
     async def all_reduce(
         self, synapse: distributed_training.protocol.AllReduce
@@ -565,8 +571,11 @@ class Miner(BaseMinerNeuron):
                     )
                     self.current_upload_future.cancel()
 
-                # # Ensure training is paused
+                # Ensure training is paused
                 self.pause_training()
+
+                # Run inner optimizer step
+                self.inner_optimizer_step()
 
                 try:
                     # Run allreduce with proper timeout
