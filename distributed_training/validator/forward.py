@@ -144,7 +144,6 @@ async def forward(self):
                         self, self.local_progress.epoch, results, self.current_block
                     )
 
-                update_all_reduce_scores(self)
                 update_total_scores(self)
 
             else:

@@ -427,21 +427,18 @@ def benchmark_untested_uids(self):
 def update_all_reduce_scores(self):
     try:
         if self.model.config.all_reduce_scores != {}:
-            for uid in self.allreduce_status_dict.keys():
-                if self.allreduce_status_dict[uid] == "SUCCESS":
-                    self.uid_tracker[int(uid)]["all_reduce_successes"] += 1
-                self.uid_tracker[int(uid)]["all_reduce_counts"] += 1
-                # Update all_reduce_score
-                self.uid_tracker[int(uid)]["all_reduce_score"] = (
-                    self.uid_tracker[int(uid)]["all_reduce_successes"]
-                    / self.uid_tracker[int(uid)]["all_reduce_counts"]
-                )
+            for uid in self.model.config.all_reduce_scores.keys():
+                if self.model.config.all_reduce_scores[uid] == "SUCCESS":
+                    self.uid_tracker[int(uid)]["all_reduce_score"] = 1
+                else:
+                    self.uid_tracker[int(uid)]["all_reduce_score"] = 0
 
     except Exception as e:
         bt.logging.info(f"Error {e} updating all_reduce scores")
 
 
 def update_total_scores(self):
+    update_all_reduce_scores(self)
     # Sort uid tracker
     self.uid_tracker = dict(sorted(self.uid_tracker.items()))
 

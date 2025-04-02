@@ -179,33 +179,15 @@ class BaseMinerNeuron(BaseNeuron):
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
-                        if self.current_block % self.config.neuron.epoch_length == 0:
-                            self.global_progress.epoch = get_global_epoch(self)
-                            if self.local_progress.epoch != self.global_progress.epoch:
-                                bt.logging.info(
-                                    f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-                                )
-                                self.pause_training()
-                                # If there's an ongoing upload, check if it's done
-                                while (
-                                    self.current_upload_future
-                                    and not self.current_upload_future.done()
-                                ):
-                                    bt.logging.info(
-                                        "Previous upload still in progress. Waiting until upload is complete."
-                                    )
-                                    time.sleep(1)
-                                if self.global_progress.epoch == 0:
-                                    load_state_from_peer(
-                                        self, epoch=self.global_progress.epoch
-                                    )
-                                else:
-                                    load_state_from_peer(
-                                        self,
-                                        repo_id=self.config.neuron.local_model_name,
-                                        epoch=self.global_progress.epoch,
-                                    )
-                                self.resume_training()
+                        if (self.last_allreduce_block is not None) and (
+                            (self.last_allreduce_block - self.current_block)
+                            > self.upload_state_duration / 12
+                        ):
+                            self.load_state(reset_last_allreduce_block=True)
+                        elif (self.last_allreduce_block is None) and (
+                            self.current_block % self.config.neuron.epoch_length == 0
+                        ):
+                            self.load_state(reset_last_allreduce_block=False)
 
                     # Wait before checking again.
                     time.sleep(1)
@@ -232,6 +214,31 @@ class BaseMinerNeuron(BaseNeuron):
         # In case of unforeseen errors, the miner will log the error and continue operations.
         except Exception as e:
             bt.logging.error(traceback.format_exc())
+
+    def load_state(self, reset_last_allreduce_block=False):
+        self.global_progress.epoch = get_global_epoch(self)
+        if self.local_progress.epoch != self.global_progress.epoch:
+            bt.logging.info(
+                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+            )
+            self.pause_training()
+            # If there's an ongoing upload, check if it's done
+            while self.current_upload_future and not self.current_upload_future.done():
+                bt.logging.info(
+                    "Previous upload still in progress. Waiting until upload is complete."
+                )
+                time.sleep(1)
+            if self.global_progress.epoch == 0:
+                load_state_from_peer(self, epoch=self.global_progress.epoch)
+            else:
+                load_state_from_peer(
+                    self,
+                    repo_id=self.config.neuron.local_model_name,
+                    epoch=self.global_progress.epoch,
+                )
+            self.resume_training()
+        if reset_last_allreduce_block:
+            self.last_allreduce_block = None
 
     def run_in_background_thread(self):
         """
