@@ -423,56 +423,57 @@ def load_model_optimizer_gradient_averager(
         num_training_steps=88000,
     )
 
-    optimizer_state = None
-    try:
-        if os.path.isfile(
-            os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
-        ):
-            optimizer_state = torch.load(
-                os.path.join(
-                    model_name.split("/")[-1],
-                    "inner_optimizer.pt",
-                ),
-                weights_only=True,
-                map_location="cpu",
-            )
-        else:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=model_name,
-                    filename="inner_optimizer.pt",
-                    revision=str(epoch),
-                ),
-                weights_only=True,
-                map_location="cpu",
+    if epoch != 0:
+        optimizer_state = None
+        try:
+            if os.path.isfile(
+                os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
+            ):
+                optimizer_state = torch.load(
+                    os.path.join(
+                        model_name.split("/")[-1],
+                        "inner_optimizer.pt",
+                    ),
+                    weights_only=True,
+                    map_location="cpu",
+                )
+            else:
+                optimizer_state = torch.load(
+                    hf_hub_download(
+                        repo_id=model_name,
+                        filename="inner_optimizer.pt",
+                        revision=str(epoch),
+                    ),
+                    weights_only=True,
+                    map_location="cpu",
+                )
+
+            # Load optimizer state if available
+            if "optimizer_state_dict" in optimizer_state:
+                self.inner_optimizer.load_state_dict(
+                    optimizer_state["optimizer_state_dict"]
+                )
+            if "learning_rate" in optimizer_state:
+                for group in self.inner_optimizer.param_groups:
+                    group["lr"] = optimizer_state["learning_rate"]
+            if "scheduler_state" in optimizer_state:
+                self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+            bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
+
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
             )
 
-        # Load optimizer state if available
-        if "optimizer_state_dict" in optimizer_state:
-            self.inner_optimizer.load_state_dict(
-                optimizer_state["optimizer_state_dict"]
-            )
-        if "learning_rate" in optimizer_state:
-            for group in self.inner_optimizer.param_groups:
-                group["lr"] = optimizer_state["learning_rate"]
-        if "scheduler_state" in optimizer_state:
-            self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-        bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
-
-    except Exception as e:
-        bt.logging.warning(
-            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-        )
-
-    finally:
-        if isinstance(optimizer_state, dict):
-            keys = list(optimizer_state.keys())
-            for k in keys:
-                del optimizer_state[k]
-                gc.collect()
-        del optimizer_state
-        gc.collect()
-        torch.cuda.empty_cache()
+        finally:
+            if isinstance(optimizer_state, dict):
+                keys = list(optimizer_state.keys())
+                for k in keys:
+                    del optimizer_state[k]
+                    gc.collect()
+            del optimizer_state
+            gc.collect()
+            torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
@@ -512,40 +513,41 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info("Successfully Loaded State Averager")
 
-    optimizer_state = None
-    try:
-        optimizer_state = torch.load(
-            hf_hub_download(
-                repo_id=fall_back_model_name,
-                filename="outer_optimizer.pt",
-                revision=str(epoch),
-            ),
-            weights_only=True,
-            map_location="cpu",
-        )
-
-        # Load optimizer state if available
-        if "optimizer_state_dict" in optimizer_state:
-            self.state_averager.optimizer.load_state_dict(
-                optimizer_state["optimizer_state_dict"]
+    if epoch != 0:
+        optimizer_state = None
+        try:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=fall_back_model_name,
+                    filename="outer_optimizer.pt",
+                    revision=str(epoch),
+                ),
+                weights_only=True,
+                map_location="cpu",
             )
 
-        bt.logging.info(f"Successfully Loaded Outer Optimizer State For Epoch {epoch}")
+            # Load optimizer state if available
+            if "optimizer_state_dict" in optimizer_state:
+                self.state_averager.optimizer.load_state_dict(
+                    optimizer_state["optimizer_state_dict"]
+                )
 
-    except Exception as e:
-        bt.logging.warning(
-            f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-        )
+            bt.logging.info(f"Successfully Loaded Outer Optimizer State For Epoch {epoch}")
 
-    finally:
-        if isinstance(optimizer_state, dict):
-            keys = list(optimizer_state.keys())
-            for k in keys:
-                del optimizer_state[k]
-                gc.collect()
-        del optimizer_state
-        gc.collect()
-        torch.cuda.empty_cache()
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
+
+        finally:
+            if isinstance(optimizer_state, dict):
+                keys = list(optimizer_state.keys())
+                for k in keys:
+                    del optimizer_state[k]
+                    gc.collect()
+            del optimizer_state
+            gc.collect()
+            torch.cuda.empty_cache()
 
     self.avg_handler = AveragingHandler(
         self.model,
