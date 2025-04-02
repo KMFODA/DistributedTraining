@@ -458,7 +458,9 @@ def load_model_optimizer_gradient_averager(
                     group["lr"] = optimizer_state["learning_rate"]
             if "scheduler_state" in optimizer_state:
                 self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-            bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
+            bt.logging.info(
+                f"Successfully Loaded Inner Optimizer State For Epoch {epoch}"
+            )
 
         except Exception as e:
             bt.logging.warning(
@@ -532,7 +534,9 @@ def load_model_optimizer_gradient_averager(
                     optimizer_state["optimizer_state_dict"]
                 )
 
-            bt.logging.info(f"Successfully Loaded Outer Optimizer State For Epoch {epoch}")
+            bt.logging.info(
+                f"Successfully Loaded Outer Optimizer State For Epoch {epoch}"
+            )
 
         except Exception as e:
             bt.logging.warning(
