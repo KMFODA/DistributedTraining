@@ -209,6 +209,7 @@ class Miner(BaseMinerNeuron):
 
         self.running_loss = 0.0
         self.batch_count = 0
+        self.last_allreduce_block = None
 
     def _init_network_components(self):
         """Initialize network and P2P components"""
@@ -284,7 +285,8 @@ class Miner(BaseMinerNeuron):
                 # Save optimizer state
                 optimizer_state = {
                     "optimizer_state_dict": self.inner_optimizer.state_dict(),
-                    "learning_rate": self.learning_rate_maximum,
+                    "learning_rate": self.inner_optimizer.param_groups[0]["lr"],
+                    "scheduler_state": self.scheduler.state_dict(),
                     "epoch": epoch,
                 }
                 torch.save(
@@ -380,12 +382,12 @@ class Miner(BaseMinerNeuron):
 
     def get_miner_info(self):
         return {
-            "block": self.metagraph.block.item(),
-            "stake": self.metagraph.stake[self.uid],
-            "trust": self.metagraph.trust[self.uid],
-            "consensus": self.metagraph.consensus[self.uid],
-            "incentive": self.metagraph.incentive[self.uid],
-            "emissions": self.metagraph.emission[self.uid],
+            "bittensor/block": self.metagraph.block.item(),
+            "bittensor/stake": self.metagraph.stake[self.uid],
+            "bittensor/trust": self.metagraph.trust[self.uid],
+            "bittensor/consensus": self.metagraph.consensus[self.uid],
+            "bittensor/incentive": self.metagraph.incentive[self.uid],
+            "bittensor/emissions": self.metagraph.emission[self.uid],
         }
 
     async def is_alive(
@@ -529,10 +531,13 @@ class Miner(BaseMinerNeuron):
 
                 self.event.update(
                     {
-                        "outer_step": self.local_progress.epoch,
-                        "inner_step": self.local_progress.inner_step,
-                        "loss": self.local_progress.loss,
-                        "samples_accumulated": self.local_progress.samples_accumulated,
+                        "train/outer_step": self.local_progress.epoch,
+                        "train/inner_step": self.local_progress.inner_step,
+                        "train/loss": self.local_progress.loss,
+                        "train/learning_rate": self.inner_optimizer.param_groups[0][
+                            "lr"
+                        ],
+                        "train/total_step": self.scheduler._step_count,
                     }
                 )
 
@@ -602,6 +607,7 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.samples_accumulated = 0
                 self.local_progress.inner_step = 0
                 self.local_progress.epoch += 1
+                self.last_allreduce_block = self.current_block
                 bt.logging.info("AllReduce Operation Finished Succesfully")
                 # Resume training when done
                 self.resume_training()

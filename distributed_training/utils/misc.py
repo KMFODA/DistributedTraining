@@ -161,30 +161,13 @@ def load_wandb(self, config, wallet, neuron_type, peer_id):
 
     tags = [peer_id, self.wallet.hotkey.ss58_address, __version__, __run__]
 
-    # Check for existing run
-    try:
-        api = wandb.Api(timeout=60)
-        run = api.run(
-            f"{config.neuron.wandb_entity}/{config.neuron.wandb_project}/{run_name}"
-        )
-        if (
-            (run.tags[1] != tags[-1])
-            and (run.tags[2] != tags[-2])
-            and (run.tags[3] != tags[3])
-        ):
-            run_id = None
-        else:
-            run_id = run.name
-        bt.logging.info(f"Found existing run ID: {run_name}")
-    except Exception:
-        bt.logging.info(f"Previous run {run_name} not found in WandB, starting new run")
-        run_id = None
+    run_id = "_".join([run_name] + tags[1:]).lower()
 
     wandb_run = wandb.init(
-        id=run_name,
+        id=run_id,
         name=run_name,
         anonymous="allow",
-        resume="must" if run_id else None,
+        resume="allow",
         tags=tags,
         project=config.neuron.wandb_project,
         entity=config.neuron.wandb_entity,
@@ -380,7 +363,7 @@ def get_bandwidth():
     bandwidth_dict = {}
     keys = ["download", "upload", "ping"]
     for key in keys:
-        bandwidth_dict[key] = float(f"{results[key] / 1e6:.2f}")
+        bandwidth_dict[f"all_reduce/{key}"] = float(f"{results[key] / 1e6:.2f}")
 
     return bandwidth_dict
 

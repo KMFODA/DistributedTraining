@@ -417,6 +417,12 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info(f"Loaded Inner Optimizer")
 
+    self.scheduler = get_cosine_schedule_with_warmup(
+        self.inner_optimizer,
+        num_warmup_steps=1000,
+        num_training_steps=88000,
+    )
+
     optimizer_state = None
     try:
         if os.path.isfile(
@@ -446,7 +452,11 @@ def load_model_optimizer_gradient_averager(
             self.inner_optimizer.load_state_dict(
                 optimizer_state["optimizer_state_dict"]
             )
-
+        if "learning_rate" in optimizer_state:
+            for group in self.inner_optimizer.param_groups:
+                group["lr"] = optimizer_state["learning_rate"]
+        if "scheduler_state" in optimizer_state:
+            self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
         bt.logging.info(f"Successfully Loaded Inner Optimizer State For Epoch {epoch}")
 
     except Exception as e:
@@ -544,11 +554,6 @@ def load_model_optimizer_gradient_averager(
         self.state_averager,
     )
 
-    self.scheduler = get_cosine_schedule_with_warmup(
-        self.inner_optimizer,
-        num_warmup_steps=1000,
-        num_training_steps=88000,
-    )
     self.scaler = torch.amp.GradScaler(enabled=True)
 
     bt.logging.debug(
