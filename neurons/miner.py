@@ -313,7 +313,7 @@ class Miner(BaseMinerNeuron):
                     self.config.neuron.local_model_name, repo_type="model"
                 )
                 for tag in refs.tags:
-                    if (tag.name == "None") or (int(tag.name) >= epoch):
+                    if (tag.name == "None") or (int(tag.name.split(".")[0]) >= epoch):
                         # Update tag for this version
                         delete_tag(
                             self.config.neuron.local_model_name,
@@ -325,7 +325,7 @@ class Miner(BaseMinerNeuron):
                 create_tag(
                     self.config.neuron.local_model_name,
                     repo_type="model",
-                    tag=str(epoch),
+                    tag=f"{epoch}.{self.local_progress.inner_step}",
                     tag_message=commit_message,
                 )
                 # Cleanup old cache
@@ -609,6 +609,11 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.epoch += 1
                 self.last_allreduce_block = self.current_block
                 bt.logging.info("AllReduce Operation Finished Succesfully")
+                self.start_background_upload(
+                    epoch=self.local_progress.epoch,
+                    inner_step=self.local_progress.inner_step,
+                    batch_size=self.local_progress.samples_accumulated,
+                )
                 # Resume training when done
                 self.resume_training()
             else:

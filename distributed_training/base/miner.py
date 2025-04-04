@@ -169,12 +169,17 @@ class BaseMinerNeuron(BaseNeuron):
                             bt.logging.info(
                                 f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                             )
-                            load_state_from_peer(self, epoch=self.global_progress.epoch)
+                            load_state_from_peer(
+                                self,
+                                epoch=self.global_progress.epoch,
+                                reload_inner_optimizer=False,
+                            )
                         else:
                             load_state_from_peer(
                                 self,
                                 repo_id=self.config.neuron.local_model_name,
                                 epoch=self.global_progress.epoch,
+                                reload_inner_optimizer=False,
                             )
                         self.resume_training()
                         self.all_reduce_success_status = True

@@ -243,7 +243,11 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
 
 @profile
 def load_model_optimizer_gradient_averager(
-    self, model_name, epoch, use_fast_loader=False
+    self,
+    model_name,
+    epoch,
+    use_fast_loader=False,
+    reload_inner_optimizer=True,
 ):
     """
     Pytorch currently have an ongoing issue with memory leaks:
@@ -320,13 +324,14 @@ def load_model_optimizer_gradient_averager(
         hasattr(self, "inner_optimizer")
         and hasattr(self.inner_optimizer, "mng")
         and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+        and reload_inner_optimizer
     ):
         self.inner_optimizer.mng.module_weight_config_triple = (
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
     # Delete existing inner optimizer
-    if hasattr(self, "inner_optimizer"):
+    if hasattr(self, "inner_optimizer") and reload_inner_optimizer:
         for i in self.inner_optimizer.param_groups[0]["params"]:
             del i
             gc.collect()
@@ -409,73 +414,74 @@ def load_model_optimizer_gradient_averager(
         else 0
     )
 
-    self.inner_optimizer = torch.optim.AdamW(
-        self.model.parameters(),
-        lr=self.learning_rate_maximum,
-        betas=(0.9, 0.95),
-        weight_decay=0.1,
-    )
-    bt.logging.info(f"Loaded Inner Optimizer")
+    if reload_inner_optimizer:
+        self.inner_optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate_maximum,
+            betas=(0.9, 0.95),
+            weight_decay=0.1,
+        )
+        bt.logging.info(f"Loaded Inner Optimizer")
 
-    self.scheduler = get_cosine_schedule_with_warmup(
-        self.inner_optimizer,
-        num_warmup_steps=1000,
-        num_training_steps=88000,
-    )
+        self.scheduler = get_cosine_schedule_with_warmup(
+            self.inner_optimizer,
+            num_warmup_steps=1000,
+            num_training_steps=88000,
+        )
 
-    if epoch != 0:
-        optimizer_state = None
-        try:
-            if os.path.isfile(
-                os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
-            ):
-                optimizer_state = torch.load(
-                    os.path.join(
-                        model_name.split("/")[-1],
-                        "inner_optimizer.pt",
-                    ),
-                    weights_only=True,
-                    map_location="cpu",
+        if epoch != 0:
+            optimizer_state = None
+            try:
+                if os.path.isfile(
+                    os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
+                ):
+                    optimizer_state = torch.load(
+                        os.path.join(
+                            model_name.split("/")[-1],
+                            "inner_optimizer.pt",
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+                else:
+                    optimizer_state = torch.load(
+                        hf_hub_download(
+                            repo_id=model_name,
+                            filename="inner_optimizer.pt",
+                            revision=str(epoch),
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+
+                # Load optimizer state if available
+                if "optimizer_state_dict" in optimizer_state:
+                    self.inner_optimizer.load_state_dict(
+                        optimizer_state["optimizer_state_dict"]
+                    )
+                if "learning_rate" in optimizer_state:
+                    for group in self.inner_optimizer.param_groups:
+                        group["lr"] = optimizer_state["learning_rate"]
+                if "scheduler_state" in optimizer_state:
+                    self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+                bt.logging.info(
+                    f"Successfully Loaded Inner Optimizer State For Epoch {epoch}"
                 )
-            else:
-                optimizer_state = torch.load(
-                    hf_hub_download(
-                        repo_id=model_name,
-                        filename="inner_optimizer.pt",
-                        revision=str(epoch),
-                    ),
-                    weights_only=True,
-                    map_location="cpu",
+
+            except Exception as e:
+                bt.logging.warning(
+                    f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
                 )
 
-            # Load optimizer state if available
-            if "optimizer_state_dict" in optimizer_state:
-                self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
-                )
-            if "learning_rate" in optimizer_state:
-                for group in self.inner_optimizer.param_groups:
-                    group["lr"] = optimizer_state["learning_rate"]
-            if "scheduler_state" in optimizer_state:
-                self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-            bt.logging.info(
-                f"Successfully Loaded Inner Optimizer State For Epoch {epoch}"
-            )
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-
-        finally:
-            if isinstance(optimizer_state, dict):
-                keys = list(optimizer_state.keys())
-                for k in keys:
-                    del optimizer_state[k]
-                    gc.collect()
-            del optimizer_state
-            gc.collect()
-            torch.cuda.empty_cache()
+            finally:
+                if isinstance(optimizer_state, dict):
+                    keys = list(optimizer_state.keys())
+                    for k in keys:
+                        del optimizer_state[k]
+                        gc.collect()
+                del optimizer_state
+                gc.collect()
+                torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
@@ -561,6 +567,8 @@ def load_model_optimizer_gradient_averager(
     )
 
     self.scaler = torch.amp.GradScaler(enabled=True)
+
+    self.state_averager.reset_main_parameters(model_name, f"{epoch}.0")
 
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
@@ -838,7 +846,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 create_tag(
                     self.config.neuron.global_model_name,
                     repo_type="model",
-                    tag=str(epoch),
+                    tag=f"{epoch}.{self.local_progress.inner_step}",
                     tag_message=commit_message,
                 )
 

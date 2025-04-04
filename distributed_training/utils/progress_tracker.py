@@ -29,7 +29,11 @@ class LocalTrainingProgress(BaseModel):
 def get_global_epoch(self):
     try:
         refs = list_repo_refs(self.config.neuron.global_model_name, repo_type="model")
-        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        global_epoch = (
+            max([int(tag.name.split(".")[0]) for tag in refs.tags])
+            if refs.tags
+            else None
+        )
         return global_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_global_epoch: {str(e)}")
@@ -42,7 +46,11 @@ def get_local_epoch(self, repo_id: str = None):
 
     try:
         refs = list_repo_refs(repo_id, repo_type="model")
-        local_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        local_epoch = (
+            max([int(tag.name.split(".")[0]) for tag in refs.tags])
+            if refs.tags
+            else None
+        )
         return local_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
