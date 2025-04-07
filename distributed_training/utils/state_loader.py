@@ -2,6 +2,7 @@ import copy
 import gc
 import os
 import subprocess
+import pytz
 import sys
 import shutil
 import tempfile
@@ -16,6 +17,7 @@ import hivemind
 import psutil
 import torch
 from memory_profiler import profile
+from datetime import datetime
 
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
@@ -45,6 +47,7 @@ from transformers import (
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.averaging.avg_handler import AveragingHandler
+from huggingface_hub import list_repo_commits
 
 hivemind_logger = get_logger(__name__)
 
@@ -412,6 +415,11 @@ def load_model_optimizer_gradient_averager(
         self.model.config.inner_step
         if "inner_step" in self.model.config.__dict__
         else 0
+    )
+    self.allreduce_status_dict = (
+        self.model.config.all_reduce_scores
+        if "all_reduce_scores" in self.model.config.__dict__
+        else {}
     )
 
     if reload_inner_optimizer:
@@ -868,3 +876,34 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
                 raise
     return False
+
+
+def get_top_uid(self):
+    all_reduce_scores_uids = [
+        k
+        for k, v in self.allreduce_status_dict.items()
+        if (v == "SUCCESS")
+        and (self.uid_tracker[int(k)]["model_huggingface_id"] is not None)
+        and (
+            (
+                datetime.now(pytz.utc)
+                - list_repo_commits(
+                    self.uid_tracker[int(k)]["model_huggingface_id"], repo_type="model"
+                )[0].created_at
+            ).seconds
+            < (60 * 60)
+        )
+    ]
+    top_uid_list = [
+        k
+        for k, v in sorted(
+            {
+                u: self.metagraph.incentive[int(u)].item()
+                for u in all_reduce_scores_uids
+            }.items(),
+            key=lambda item: item[1],
+        )
+    ][-1]
+    if top_uid_list != []:
+        top_uid = top_uid_list[-1]
+    return top_uid

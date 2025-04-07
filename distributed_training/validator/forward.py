@@ -26,9 +26,12 @@ from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
+    get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
     upload_new_state,
+    load_state_from_peer,
+    get_top_uid,
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
 from distributed_training.validator.reward import (
@@ -60,6 +63,11 @@ async def forward(self):
     bt.logging.info(
         f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {self.should_all_reduce}"
     )
+    # self.state_averager.main_parameters[-3] = "current"
+    # tensor([-9.0812e-07,  1.0692e-06,  8.5682e-07,  ..., -6.6933e-07,
+    #  3.9241e-07,  9.6525e-07], device='cuda:0', requires_grad=True)
+    # self.state_averager.optimizer.param_groups[0]["params"][-3] = "previous_epoch"
+    # tensor([0., 0., 0.,  ..., 0., 0., 0.], requires_grad=True)
 
     responses = [[]]
     self.miner_uids = []
@@ -102,6 +110,15 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
+            top_uid = get_top_uid(self)
+            load_state_from_peer(
+                self,
+                repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
+                epoch=get_local_epoch(
+                    self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
+                ),
+            )
+
             (
                 all_reduce_success_status,
                 results,
