@@ -21,7 +21,7 @@ import os
 import botocore.config
 
 # Local imports
-from .logging import logger
+import bittensor as bt
 
 
 def load_bucket_secrets():
@@ -88,22 +88,22 @@ def load_bucket_secrets():
     bucket_list = os.environ.get("R2_DATASET_BUCKET_LIST")
     if bucket_list:
         bucket_list_str = bucket_list.strip()
-        logger.debug(f"Raw R2_DATASET_BUCKET_LIST: {bucket_list_str}")
+        bt.logging.debug(f"Raw R2_DATASET_BUCKET_LIST: {bucket_list_str}")
         try:
             dataset_configs = __import__("json").loads(bucket_list_str)
             if isinstance(dataset_configs, list) and len(dataset_configs) > 0:
-                logger.debug(
+                bt.logging.debug(
                     "R2_DATASET_BUCKET_LIST found, using multiple dataset endpoints"
                 )
                 secrets["dataset"] = {"multiple": dataset_configs}
             else:
-                logger.debug(
+                bt.logging.debug(
                     "R2_DATASET_BUCKET_LIST is empty or not a valid list, using default dataset configuration"
                 )
         except Exception as e:
-            logger.warning(f"Error parsing R2_DATASET_BUCKET_LIST: {e}")
+            bt.logging.warning(f"Error parsing R2_DATASET_BUCKET_LIST: {e}")
     else:
-        logger.debug(
+        bt.logging.debug(
             "R2_DATASET_BUCKET_LIST not found, using default dataset configuration"
         )
 
@@ -126,7 +126,7 @@ def load_bucket_secrets():
 
     missing_vars = [var for var in required_vars if not os.environ.get(var)]
     if missing_vars:
-        logger.warning(
+        bt.logging.warning(
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
         raise ImportError(f"Required environment variables missing: {missing_vars}")
