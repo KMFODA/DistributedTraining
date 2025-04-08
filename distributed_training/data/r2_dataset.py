@@ -27,7 +27,7 @@ from functools import lru_cache
 import threading
 import bittensor as bt
 
-from tplr.config import BUCKET_SECRETS
+from data.config import BUCKET_SECRETS
 from data.dataset import DatasetLoader
 
 
