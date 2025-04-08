@@ -25,8 +25,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from functools import lru_cache
 import threading
-import bittensor as bt
 
+import bittensor as bt
 from data.config import BUCKET_SECRETS
 from data.dataset import DatasetLoader
 
