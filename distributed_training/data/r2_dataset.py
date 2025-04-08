@@ -28,7 +28,7 @@ import threading
 import bittensor as bt
 
 from tplr.config import BUCKET_SECRETS
-from tplr.dataset import DatasetLoader
+from data.dataset import DatasetLoader
 
 
 class R2DatasetLoader(DatasetLoader):
