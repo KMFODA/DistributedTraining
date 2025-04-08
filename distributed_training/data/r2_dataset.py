@@ -25,14 +25,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from functools import lru_cache
 import threading
+import bittensor as bt
 
-from tplr.logging import logger
 from tplr.config import BUCKET_SECRETS
 from tplr.dataset import DatasetLoader
-# print(BUCKET_SECRETS)
-
-
-logger.error(f"TEST LOGGER TEMPLAR")
 
 
 class R2DatasetLoader(DatasetLoader):
@@ -214,7 +210,7 @@ class R2DatasetLoader(DatasetLoader):
             return configs_data
 
         except Exception as e:
-            logger.error(f"Error loading dataset configs: {e}")
+            bt.logging.error(f"Error loading dataset configs: {e}")
             raise
 
     @staticmethod
@@ -313,14 +309,14 @@ class R2DatasetLoader(DatasetLoader):
         try:
             # Download and load shard sizes
             if not local_paths["shard_sizes"].exists():
-                logger.info("Downloading shard sizes from R2...")
+                bt.logging.info("Downloading shard sizes from R2...")
                 fs.get(r2_paths["shard_sizes"], str(local_paths["shard_sizes"]))
             with open(local_paths["shard_sizes"]) as f:
                 R2DatasetLoader._shard_sizes = json.load(f)
 
             # Download and load metadata config
             if not local_paths["metadata"].exists():
-                logger.info("Downloading metadata config from R2...")
+                bt.logging.info("Downloading metadata config from R2...")
                 fs.get(r2_paths["metadata"], str(local_paths["metadata"]))
             with open(local_paths["metadata"]) as f:
                 R2DatasetLoader._metadata_config = yaml.safe_load(f)
@@ -331,14 +327,14 @@ class R2DatasetLoader(DatasetLoader):
             )
 
         except Exception as e:
-            logger.error(f"Failed to load R2 metadata: {e}")
+            bt.logging.error(f"Failed to load R2 metadata: {e}")
             raise
 
     @staticmethod
     def _get_fs():
         dataset_config = BUCKET_SECRETS["dataset"]
         # For debugging: log the full dataset configuration to check if 'multiple' is present
-        logger.debug(f"Dataset config loaded: {dataset_config}")
+        bt.logging.debug(f"Dataset config loaded: {dataset_config}")
 
         with R2DatasetLoader._fs_lock:
             # Pick config in round robin if multiple endpoints are supplied
@@ -351,7 +347,7 @@ class R2DatasetLoader(DatasetLoader):
                 selected_config = dataset_config
 
             # Log the selected bucket name for round robin tracing (should show e.g. "dataset-bucket-1" then "dataset-bucket-2")
-            logger.debug(
+            bt.logging.debug(
                 f"Using dataset bucket: {selected_config.get('name', 'default')}"
             )
 
@@ -396,7 +392,7 @@ class R2DatasetLoader(DatasetLoader):
                     break
                 await self._prefetch_queue.put(page)
         except Exception as e:
-            logger.error(f"Prefetch error: {e}")
+            bt.logging.error(f"Prefetch error: {e}")
         finally:
             await self._prefetch_queue.put(None)  # Signal completion
 
@@ -455,12 +451,12 @@ class R2DatasetLoader(DatasetLoader):
                             break
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                logger.warning(
+                                bt.logging.warning(
                                     f"Attempt {attempt + 1} failed to open parquet file {chosen_shard['path']} with error: {e}. Retrying..."
                                 )
                                 await asyncio.sleep(2**attempt)  # Exponential backoff
                             else:
-                                logger.error(
+                                bt.logging.error(
                                     f"Failed to open parquet file {chosen_shard['path']} after {max_retries} attempts: {e}"
                                 )
                                 raise
@@ -509,7 +505,7 @@ class R2DatasetLoader(DatasetLoader):
                 return all_tokens
 
             except Exception as e:
-                logger.error(f"Error processing page {page}: {e}")
+                bt.logging.error(f"Error processing page {page}: {e}")
                 raise
 
     def __iter__(self):
@@ -570,7 +566,7 @@ class R2DatasetLoader(DatasetLoader):
             try:
                 pf_data["file"].close()  # type: ignore
             except Exception as e:
-                logger.debug(f"Error closing parquet file: {e}")
+                bt.logging.debug(f"Error closing parquet file: {e}")
 
         self._parquet_cache.clear()
         self._token_cache.clear()
