@@ -159,7 +159,7 @@ class AsyncDendritePool:
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{neuron_type[0].upper()}{'{:03}'.format(self.uid)}"
 
-    tags = [peer_id, self.wallet.hotkey.ss58_address, __version__, __run__]
+    tags = [peer_id, self.wallet.hotkey.ss58_address, __version__, f"r{__run__}"]
 
     run_id = "_".join([run_name] + tags[1:]).lower()
 

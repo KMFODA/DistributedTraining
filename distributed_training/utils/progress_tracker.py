@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from distributed_training import __run__
 
 import bittensor as bt
 import pandas as pd
@@ -30,7 +31,17 @@ def get_global_epoch(self):
     try:
         refs = list_repo_refs(self.config.neuron.global_model_name, repo_type="model")
         global_epoch = (
-            max([int(tag.name.split(".")[0]) for tag in refs.tags])
+            max(
+                [
+                    int(tag.name.split(".")[1])
+                    if (
+                        (tag.name.split(".") == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                    )
+                    else int(tag.name)
+                    for tag in refs.tags
+                ]
+            )
             if refs.tags
             else None
         )
@@ -47,7 +58,17 @@ def get_local_epoch(self, repo_id: str = None):
     try:
         refs = list_repo_refs(repo_id, repo_type="model")
         local_epoch = (
-            max([int(tag.name.split(".")[0]) for tag in refs.tags])
+            max(
+                [
+                    int(tag.name.split(".")[1])
+                    if (
+                        (tag.name.split(".") == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                    )
+                    else int(tag.name)
+                    for tag in refs.tags
+                ]
+            )
             if refs.tags
             else None
         )

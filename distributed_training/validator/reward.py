@@ -17,7 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import errno
+import math
 import random
 import time
 from typing import List
@@ -217,7 +217,11 @@ async def score_uid(self, uid: int):
                 )
 
         load_state_from_peer(
-            self, repo_id=model_huggingface_id, epoch=commits[0].commit_id
+            self,
+            repo_id=model_huggingface_id,
+            epoch=commits[0].commit_id,
+            reload_inner_optimizer=True,
+            reload_outer_optimizer=False,
         )
 
         config_final_path = hf_hub_download(
@@ -333,7 +337,9 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
     self.uid_tracker[uid]["train_duration"] += time_delta
     self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
-    self.uid_tracker[uid]["train_similarity_score"] += scores
+    self.uid_tracker[uid]["train_similarity_score"] += (
+        0 if math.isnan(scores) else scores
+    )
     self.uid_tracker[uid]["train_validation_count"] += 1
     self.uid_tracker[uid]["loss"] = self.local_progress.loss
 

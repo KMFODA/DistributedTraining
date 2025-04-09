@@ -44,6 +44,7 @@ from transformers import (
     get_cosine_schedule_with_warmup,
 )
 
+from distributed_training import __run__
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
 from distributed_training.utils.progress_tracker import get_global_epoch
 from distributed_training.averaging.avg_handler import AveragingHandler
@@ -251,6 +252,7 @@ def load_model_optimizer_gradient_averager(
     epoch,
     use_fast_loader=False,
     reload_inner_optimizer=True,
+    reload_outer_optimizer=True,
 ):
     """
     Pytorch currently have an ongoing issue with memory leaks:
@@ -284,6 +286,7 @@ def load_model_optimizer_gradient_averager(
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
+        bt.logging.info("Deleted Model")
 
     # Delete Gradient and State Averagers
     if hasattr(self, "state_averager"):
@@ -302,15 +305,15 @@ def load_model_optimizer_gradient_averager(
         while self.state_averager.is_alive():
             time.sleep(1)
 
-        for i in self.state_averager.main_parameters:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+        # for i in self.state_averager.main_parameters:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
-        for i in self.state_averager.optimizer.param_groups[0]["params"]:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+        # for i in self.state_averager.optimizer.param_groups[0]["params"]:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
         del self.state_averager.optimizer.param_groups
         del self.state_averager.optimizer
@@ -335,10 +338,10 @@ def load_model_optimizer_gradient_averager(
 
     # Delete existing inner optimizer
     if hasattr(self, "inner_optimizer") and reload_inner_optimizer:
-        for i in self.inner_optimizer.param_groups[0]["params"]:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+        # for i in self.inner_optimizer.param_groups[0]["params"]:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
         del self.inner_optimizer
         gc.collect()
         torch.cuda.empty_cache()
@@ -529,7 +532,7 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info("Successfully Loaded State Averager")
 
-    if epoch != 0:
+    if reload_outer_optimizer:
         optimizer_state = None
         try:
             optimizer_state = torch.load(
@@ -583,7 +586,13 @@ def load_model_optimizer_gradient_averager(
     )
 
 
-def load_state_from_peer(self, repo_id=None, epoch=None):
+def load_state_from_peer(
+    self,
+    repo_id=None,
+    epoch=None,
+    reload_inner_optimizer=True,
+    reload_outer_optimizer=True,
+):
     try:
         state_loaded = False
         if epoch is None:
@@ -611,7 +620,13 @@ def load_state_from_peer(self, repo_id=None, epoch=None):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    load_model_optimizer_gradient_averager(self, repo_id, epoch)
+                    load_model_optimizer_gradient_averager(
+                        self,
+                        model_name=repo_id,
+                        epoch=epoch,
+                        reload_inner_optimizer=reload_inner_optimizer,
+                        reload_outer_optimizer=reload_outer_optimizer,
+                    )
                     break
 
                 except Exception as e:
@@ -842,7 +857,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
 
                 # Upload everything in one go
-                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
+                commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {self.local_progress.inner_step}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.global_model_name,
@@ -854,7 +869,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 create_tag(
                     self.config.neuron.global_model_name,
                     repo_type="model",
-                    tag=f"{epoch}.{self.local_progress.inner_step}",
+                    tag=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
                     tag_message=commit_message,
                 )
 
@@ -906,4 +921,5 @@ def get_top_uid(self):
     ][-1]
     if top_uid_list != []:
         top_uid = top_uid_list[-1]
+    bt.logging.info(f"Top UID Identified As {top_uid}")
     return top_uid
