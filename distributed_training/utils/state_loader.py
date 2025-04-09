@@ -377,12 +377,16 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-        if not check_model_exists(model_name, revision=str(epoch)):
+        if not check_model_exists(
+            model_name, revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+        ):
             model_name = fall_back_model_name
         try:
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
-                    model_name, revision=str(epoch), trust_remote_code=True
+                    model_name,
+                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                    trust_remote_code=True,
                 )
                 if epoch
                 else AutoModelForCausalLM.from_pretrained(
@@ -401,7 +405,7 @@ def load_model_optimizer_gradient_averager(
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    revision=str(epoch),
+                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
                     trust_remote_code=True,
                 )
                 if epoch
@@ -459,7 +463,7 @@ def load_model_optimizer_gradient_averager(
                         hf_hub_download(
                             repo_id=model_name,
                             filename="inner_optimizer.pt",
-                            revision=str(epoch),
+                            revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
                         ),
                         weights_only=True,
                         map_location="cpu",
@@ -532,14 +536,14 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info("Successfully Loaded State Averager")
 
-    if reload_outer_optimizer:
+    if reload_outer_optimizer and epoch != 0:
         optimizer_state = None
         try:
             optimizer_state = torch.load(
                 hf_hub_download(
                     repo_id=fall_back_model_name,
                     filename="outer_optimizer.pt",
-                    revision=str(epoch),
+                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
                 ),
                 weights_only=True,
                 map_location="cpu",
