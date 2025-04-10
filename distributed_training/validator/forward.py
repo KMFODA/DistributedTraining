@@ -63,11 +63,6 @@ async def forward(self):
     bt.logging.info(
         f"Current block {self.current_block} | Blocks Since Last AllReduce: {blocks_since_allreduce} | Should AllReduce: {self.should_all_reduce}"
     )
-    # self.state_averager.main_parameters[-3] = "current"
-    # tensor([-9.0812e-07,  1.0692e-06,  8.5682e-07,  ..., -6.6933e-07,
-    #  3.9241e-07,  9.6525e-07], device='cuda:0', requires_grad=True)
-    # self.state_averager.optimizer.param_groups[0]["params"][-3] = "previous_epoch"
-    # tensor([0., 0., 0.,  ..., 0., 0., 0.], requires_grad=True)
 
     responses = [[]]
     self.miner_uids = []

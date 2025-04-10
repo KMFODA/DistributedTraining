@@ -42,12 +42,12 @@ def get_global_epoch(self):
                 ]
             )
             if refs.tags
-            else None
+            else 0
         )
         return global_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_global_epoch: {str(e)}")
-        return None
+        return 0
 
 
 def get_local_epoch(self, repo_id: str = None):
@@ -68,12 +68,12 @@ def get_local_epoch(self, repo_id: str = None):
                 ]
             )
             if refs.tags
-            else None
+            else 0
         )
         return local_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
-        return None
+        return 0
 
 
 def get_local_inner_steps(self, repo_id: str = None):
