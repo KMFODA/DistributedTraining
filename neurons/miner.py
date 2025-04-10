@@ -58,6 +58,7 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     get_global_epoch,
     get_local_epoch,
+    get_local_inner_steps,
 )
 from distributed_training.utils.state_loader import (
     FastModelLoader,
@@ -123,6 +124,7 @@ class Miner(BaseMinerNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = get_local_epoch(self)
+        self.local_progress.inner_step = get_local_inner_steps(self)
 
         if self.global_progress.epoch is None:
             bt.logging.error(
@@ -314,10 +316,17 @@ class Miner(BaseMinerNeuron):
                     self.config.neuron.local_model_name, repo_type="model"
                 )
                 for tag in refs.tags:
-                    if (tag.name == "None") or (
-                        (tag.name.split(".") == 3)
-                        and (tag.name.split(".")[0] == __run__)
-                        and (int(tag.name.split(".")[1]) >= epoch)
+                    if (
+                        (tag.name == "None")
+                        or (
+                            (len(tag.name.split(".")) == 3)
+                            and (tag.name.split(".")[0] == __run__)
+                            and (int(tag.name.split(".")[1]) >= epoch)
+                        )
+                        or (
+                            tag.name
+                            == f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+                        )
                     ):
                         # Update tag for this version
                         delete_tag(
