@@ -667,11 +667,11 @@ class DTStateAverager(TrainingStateAverager):
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
 
-    def reset_main_parameters(self, model_name, epoch):
+    def reset_main_parameters(self, model_name, revision):
         """Reset the optimizer parameteres to the parameters at the start of the epoch"""
         try:
             main_parameters = AutoModelForCausalLM.from_pretrained(
-                model_name, revision=str(epoch), trust_remote_code=True
+                model_name, revision=revision, trust_remote_code=True
             )
             opt_parameters = [
                 param
@@ -682,5 +682,5 @@ class DTStateAverager(TrainingStateAverager):
                 tuple(main_parameters.parameters()), opt_parameters
             ):
                 opt_param.data.copy_(main_param.data, non_blocking=True)
-        except:
-            bt.logging.info("Failed to reset optimizer parameters")
+        except Exception as e:
+            bt.logging.info(f"Failed to reset optimizer parameters with error: {e}")
