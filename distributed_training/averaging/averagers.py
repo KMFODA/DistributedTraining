@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 import bittensor as bt
 import hivemind
 import torch
+from transformers import AutoModelForCausalLM
 from hivemind.averaging.allreduce import (
     AllreduceException,
     AllReduceRunner,
@@ -666,10 +667,20 @@ class DTStateAverager(TrainingStateAverager):
             **kwargs
         )  # we specifically don't pass the scheduler here, default TrainingStateAverager would use it with the outer optimizer and we w
 
-    def update_main_param_after_outer_step(self):
-        """Update the main parameters with the inner optimizer step"""
-        opt_parameters = [
-            param for group in self.optimizer.param_groups for param in group["params"]
-        ]
-        for main_param, opt_param in zip(self.main_parameters, opt_parameters):
-            main_param.data.copy_(opt_param.data, non_blocking=True)
+    def reset_main_parameters(self, model_name, revision):
+        """Reset the optimizer parameteres to the parameters at the start of the epoch"""
+        try:
+            main_parameters = AutoModelForCausalLM.from_pretrained(
+                model_name, revision=revision, trust_remote_code=True
+            )
+            opt_parameters = [
+                param
+                for group in self.optimizer.param_groups
+                for param in group["params"]
+            ]
+            for main_param, opt_param in zip(
+                tuple(main_parameters.parameters()), opt_parameters
+            ):
+                opt_param.data.copy_(main_param.data, non_blocking=True)
+        except Exception as e:
+            bt.logging.info(f"Failed to reset optimizer parameters with error: {e}")

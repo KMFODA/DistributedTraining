@@ -26,9 +26,12 @@ from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
+    get_local_epoch,
 )
 from distributed_training.utils.state_loader import (
     upload_new_state,
+    load_state_from_peer,
+    get_top_uid,
 )
 from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
 from distributed_training.validator.reward import (
@@ -102,6 +105,15 @@ async def forward(self):
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
+            top_uid = get_top_uid(self)
+            load_state_from_peer(
+                self,
+                repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
+                epoch=get_local_epoch(
+                    self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
+                ),
+            )
+
             (
                 all_reduce_success_status,
                 results,

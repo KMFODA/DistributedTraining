@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from distributed_training import __run__
 
 import bittensor as bt
 import pandas as pd
@@ -29,11 +30,24 @@ class LocalTrainingProgress(BaseModel):
 def get_global_epoch(self):
     try:
         refs = list_repo_refs(self.config.neuron.global_model_name, repo_type="model")
-        global_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        global_epoch = (
+            max(
+                [
+                    int(tag.name.split(".")[1])
+                    for tag in refs.tags
+                    if (
+                        (len(tag.name.split(".")) == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                    )
+                ]
+            )
+            if refs.tags
+            else 0
+        )
         return global_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_global_epoch: {str(e)}")
-        return None
+        return 0
 
 
 def get_local_epoch(self, repo_id: str = None):
@@ -42,11 +56,51 @@ def get_local_epoch(self, repo_id: str = None):
 
     try:
         refs = list_repo_refs(repo_id, repo_type="model")
-        local_epoch = max([int(tag.name) for tag in refs.tags]) if refs.tags else None
+        local_epoch = (
+            max(
+                [
+                    int(tag.name.split(".")[1])
+                    for tag in refs.tags
+                    if (
+                        (len(tag.name.split(".")) == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                    )
+                ]
+            )
+            if refs.tags
+            else 0
+        )
         return local_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
-        return None
+        return 0
+
+
+def get_local_inner_steps(self, repo_id: str = None):
+    if repo_id is None:
+        repo_id = self.config.neuron.local_model_name
+
+    try:
+        refs = list_repo_refs(repo_id, repo_type="model")
+        local_steps = (
+            max(
+                [
+                    int(tag.name.split(".")[2])
+                    for tag in refs.tags
+                    if (
+                        (len(tag.name.split(".")) == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                        and (tag.name.split(".")[1] == str(self.local_progress.epoch))
+                    )
+                ]
+            )
+            if refs.tags
+            else 0
+        )
+        return local_steps
+    except Exception as e:
+        bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
+        return 0
 
 
 def update_global_tracker_state(self):
