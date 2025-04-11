@@ -46,7 +46,10 @@ from transformers import (
 
 from distributed_training import __run__
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
-from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.utils.progress_tracker import (
+    get_global_epoch,
+    get_local_inner_step,
+)
 from distributed_training.averaging.avg_handler import AveragingHandler
 from huggingface_hub import list_repo_commits
 
@@ -253,6 +256,7 @@ def load_model_optimizer_gradient_averager(
     use_fast_loader=False,
     reload_inner_optimizer=True,
     reload_outer_optimizer=True,
+    revision=None,
 ):
     """
     Pytorch currently have an ongoing issue with memory leaks:
@@ -267,6 +271,11 @@ def load_model_optimizer_gradient_averager(
     self.global_model_config = AutoConfig.from_pretrained(
         fall_back_model_name, trust_remote_code=True
     )
+
+    if (revision is None) and (model_name != fall_back_model_name):
+        revision = f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+    elif (revision is None) and (model_name == fall_back_model_name):
+        revision = f"{__run__}.{epoch}.0"
 
     # Delete existing model
     if hasattr(self, "model"):
@@ -381,11 +390,12 @@ def load_model_optimizer_gradient_averager(
             model_name, revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}"
         ):
             model_name = fall_back_model_name
+            revision = ".".join(revision.split(".")[:-1] + ["0"])
         try:
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                    revision=revision,
                     trust_remote_code=True,
                 )
                 if epoch
@@ -405,7 +415,7 @@ def load_model_optimizer_gradient_averager(
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
                     model_name,
-                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                    revision=revision,
                     trust_remote_code=True,
                 )
                 if epoch
@@ -463,7 +473,7 @@ def load_model_optimizer_gradient_averager(
                         hf_hub_download(
                             repo_id=model_name,
                             filename="inner_optimizer.pt",
-                            revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                            revision=revision,
                         ),
                         weights_only=True,
                         map_location="cpu",
@@ -543,7 +553,7 @@ def load_model_optimizer_gradient_averager(
                 hf_hub_download(
                     repo_id=fall_back_model_name,
                     filename="outer_optimizer.pt",
-                    revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                    revision=revision,
                 ),
                 weights_only=True,
                 map_location="cpu",
@@ -583,7 +593,10 @@ def load_model_optimizer_gradient_averager(
 
     self.scaler = torch.amp.GradScaler(enabled=True)
 
-    self.state_averager.reset_main_parameters(model_name, f"{epoch}.0")
+    if (self.local_progress.inner_step != 0) and ("." in revision):
+        self.state_averager.reset_main_parameters(
+            model_name, revision=".".join(revision.split(".")[:-1] + ["0"])
+        )
 
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
@@ -596,6 +609,7 @@ def load_state_from_peer(
     epoch=None,
     reload_inner_optimizer=True,
     reload_outer_optimizer=True,
+    revision=None,
 ):
     try:
         state_loaded = False
@@ -604,6 +618,7 @@ def load_state_from_peer(
             epoch = self.global_progress.epoch
         if repo_id is None:
             repo_id = self.config.neuron.global_model_name
+        self.local_progress.inner_step = get_local_inner_step(self)
 
         bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
@@ -630,6 +645,7 @@ def load_state_from_peer(
                         epoch=epoch,
                         reload_inner_optimizer=reload_inner_optimizer,
                         reload_outer_optimizer=reload_outer_optimizer,
+                        revision=revision,
                     )
                     break
 

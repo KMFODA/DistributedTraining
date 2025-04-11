@@ -215,15 +215,14 @@ async def score_uid(self, uid: int):
                 raise Exception(
                     f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
-
         load_state_from_peer(
             self,
             repo_id=model_huggingface_id,
-            epoch=commits[0].commit_id,
+            epoch=local_epoch,
             reload_inner_optimizer=True,
             reload_outer_optimizer=False,
+            revision=commits[0].commit_id,
         )
-
         config_final_path = hf_hub_download(
             repo_id=model_huggingface_id,
             filename="config.json",
