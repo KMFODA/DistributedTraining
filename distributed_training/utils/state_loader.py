@@ -496,7 +496,7 @@ def load_model_optimizer_gradient_averager(
                 if "scheduler_state" in optimizer_state:
                     self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
                 bt.logging.info(
-                    f"Successfully Loaded Inner Optimizer State For Epoch {epoch}"
+                    f"Successfully Loaded Inner Optimizer State For Revision {revision}"
                 )
 
             except Exception as e:
@@ -559,7 +559,7 @@ def load_model_optimizer_gradient_averager(
                 hf_hub_download(
                     repo_id=fall_back_model_name,
                     filename="outer_optimizer.pt",
-                    revision=revision,
+                    revision=".".join(revision.split(".")[:-1] + ["0"]),
                 ),
                 weights_only=True,
                 map_location="cpu",
@@ -572,7 +572,7 @@ def load_model_optimizer_gradient_averager(
                 )
 
             bt.logging.info(
-                f"Successfully Loaded Outer Optimizer State For Epoch {epoch}"
+                f"Successfully Loaded Outer Optimizer State For Revision {'.'.join(revision.split('.')[:-1] + ['0'])}"
             )
 
         except Exception as e:
@@ -946,7 +946,7 @@ def get_top_uid(self):
             }.items(),
             key=lambda item: item[1],
         )
-    ][-1]
+    ]
     if top_uid_list != []:
         top_uid = top_uid_list[-1]
     bt.logging.info(f"Top UID Identified As {top_uid}")

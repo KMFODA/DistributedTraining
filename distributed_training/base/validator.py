@@ -339,7 +339,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Log weigths to wandb
         self.event.update(
             {
-                f"weights.uid{processed_weight_uids}": processed_weights
+                f"uid_{processed_weight_uids}.weights": processed_weights
                 for processed_weight_uids, processed_weights in zip(
                     processed_weight_uids, processed_weights
                 )
