@@ -222,7 +222,7 @@ class Miner(BaseMinerNeuron):
     def _sync_with_global_model(self):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.global_model_name,
-            revision=str(self.global_progress.epoch),
+            revision=f"{__run__}.{self.global_progress.epoch}.0",
             trust_remote_code=True,
         )
 

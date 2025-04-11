@@ -810,7 +810,20 @@ def upload_new_state(self, epoch: int, results: dict, block: int = None):
                     self.config.neuron.global_model_name,
                     repo_type="model",
                 )
-                new_tag = max([int(tag.name) for tag in updated_refs.tags])
+                new_tag = (
+                    max(
+                        [
+                            int(tag.name.split(".")[1])
+                            for tag in updated_refs.tags
+                            if (
+                                (len(tag.name.split(".")) == 3)
+                                and (tag.name.split(".")[0] == __run__)
+                            )
+                        ]
+                    )
+                    if updated_refs.tags
+                    else 0
+                )
                 bt.logging.info(f"Successfully pushed new model with tag {new_tag}")
                 # Wait to allow out of sync miners to download new model state
                 time.sleep(self.load_state_timeout)
@@ -885,7 +898,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
 
                 # Upload everything in one go
-                commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {self.local_progress.inner_step}. Peers {len(participating_peers) - len(failed_peers)}."
+                commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {0}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.global_model_name,
@@ -897,7 +910,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 create_tag(
                     self.config.neuron.global_model_name,
                     repo_type="model",
-                    tag=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
+                    tag=f"{__run__}.{epoch}.{0}",
                     tag_message=commit_message,
                 )
 
