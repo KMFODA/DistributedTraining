@@ -99,7 +99,7 @@ def get_local_inner_step(self, repo_id: str = None):
         )
         return local_steps
     except Exception as e:
-        bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
+        bt.logging.warning(f"Error in get_local_inner_step: {str(e)}")
         return 0
 
 
