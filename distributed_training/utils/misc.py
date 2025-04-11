@@ -159,9 +159,9 @@ class AsyncDendritePool:
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{neuron_type[0].upper()}{'{:03}'.format(self.uid)}"
 
-    tags = [peer_id, self.wallet.hotkey.ss58_address, __version__, f"run{__run__}"]
+    tags = [peer_id, __version__, self.wallet.hotkey.ss58_address, f"run{__run__}"]
 
-    run_id = "_".join([run_name] + tags[1:]).lower()
+    run_id = "_".join([run_name] + tags[2:]).lower()
 
     wandb_run = wandb.init(
         id=run_id,

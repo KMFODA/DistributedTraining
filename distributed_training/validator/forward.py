@@ -27,6 +27,7 @@ from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
     get_local_epoch,
+    get_local_inner_step,
 )
 from distributed_training.utils.state_loader import (
     upload_new_state,
@@ -41,6 +42,7 @@ from distributed_training.validator.reward import (
     update_total_scores,
 )
 from distributed_training.utils.uids import map_uid_to_peerid
+from distributed_training import __run__
 
 
 async def forward(self):
@@ -106,12 +108,11 @@ async def forward(self):
 
         try:
             top_uid = get_top_uid(self)
+            top_uid_revision = f"{__run__}.{get_local_epoch(self, repo_id=self.uid_tracker[int(top_uid)]['model_huggingface_id'])}.{get_local_inner_step(self, repo_id=self.uid_tracker[int(top_uid)]['model_huggingface_id'])}"
             load_state_from_peer(
                 self,
                 repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
-                epoch=get_local_epoch(
-                    self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
-                ),
+                revision=top_uid_revision,
             )
 
             (
@@ -123,7 +124,6 @@ async def forward(self):
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
                 master=self.uid == self.master_uid,
-                # bandwidth=bandwidth,
             )
 
             if all_reduce_success_status:

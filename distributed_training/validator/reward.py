@@ -37,7 +37,11 @@ from distributed_training.utils.state_loader import (
     cleanup_old_cache,
     load_state_from_peer,
 )
-from distributed_training.utils.progress_tracker import get_local_epoch
+from distributed_training.utils.progress_tracker import (
+    get_local_epoch,
+    get_local_inner_step,
+)
+from distributed_training import __run__
 
 from datetime import datetime
 import pytz
@@ -156,6 +160,9 @@ async def score_uid(self, uid: int):
     latest_commit = None
     model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
     local_epoch = get_local_epoch(self, model_huggingface_id)
+    self.local_progress.inner_step = get_local_inner_step(self, model_huggingface_id)
+    revision = f"{__run__}.{local_epoch}.{self.local_progress.inner_step}"
+
     accepted_files = [
         "README.md",
         ".gitattributes",
@@ -168,12 +175,11 @@ async def score_uid(self, uid: int):
     ]
     blocks = []
     time_delta = 0
-
     try:
         if model_huggingface_id is None:
             scores = 0
             raise Exception(f"Score 0 for UID {uid}: HuggingFace Repo Id is None")
-        elif not check_model_exists(model_huggingface_id):
+        elif not check_model_exists(model_huggingface_id, revision):
             scores = 0
             raise Exception(
                 f"Score 0 for UID {uid}: HuggingFace Repo Id {self.uid_tracker[uid]['model_huggingface_id']} Doesn't Exist"
@@ -216,14 +222,6 @@ async def score_uid(self, uid: int):
                     f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
 
-        load_state_from_peer(
-            self,
-            repo_id=model_huggingface_id,
-            epoch=commits[0].commit_id,
-            reload_inner_optimizer=True,
-            reload_outer_optimizer=False,
-        )
-
         config_final_path = hf_hub_download(
             repo_id=model_huggingface_id,
             filename="config.json",
@@ -245,18 +243,27 @@ async def score_uid(self, uid: int):
                     f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
                 )
 
-        model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        load_state_from_peer(
+            self,
+            repo_id=model_huggingface_id,
+            epoch=local_epoch,
+            reload_inner_optimizer=True,
+            reload_outer_optimizer=False,
+            revision=commits[0].commit_id,
+            use_fallback_model=False,
         )
-
+        # Only set self.local_progress.epoch if model is correct format
+        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
         self.local_progress.samples_accumulated = 0
         self.local_progress.inner_step = (
             self.model.config.inner_step
             if "inner_step" in self.model.config.__dict__
             else 0
         )
-        # Only set self.local_progress.epoch if model is correct format
-        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
+
+        model_final = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        )
 
         if ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks

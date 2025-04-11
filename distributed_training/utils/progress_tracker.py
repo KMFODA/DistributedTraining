@@ -68,15 +68,15 @@ def get_local_epoch(self, repo_id: str = None):
                 ]
             )
             if refs.tags
-            else 0
+            else None
         )
         return local_epoch
     except Exception as e:
         bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
-        return 0
+        return None
 
 
-def get_local_inner_steps(self, repo_id: str = None):
+def get_local_inner_step(self, repo_id: str = None):
     if repo_id is None:
         repo_id = self.config.neuron.local_model_name
 
@@ -99,7 +99,7 @@ def get_local_inner_steps(self, repo_id: str = None):
         )
         return local_steps
     except Exception as e:
-        bt.logging.warning(f"Error in get_local_epoch: {str(e)}")
+        bt.logging.warning(f"Error in get_local_inner_step: {str(e)}")
         return 0
 
 
