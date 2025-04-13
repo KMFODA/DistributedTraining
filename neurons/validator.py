@@ -25,8 +25,8 @@ import math
 import threading
 
 import bittensor as bt
+from influxdb_client import Point
 from transformers import AutoTokenizer
-
 
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -63,6 +63,41 @@ class Validator(BaseValidatorNeuron):
     def _update_wandb_project(self):
         suffix = "_validators" if self.neuron_type == "ValidatorNeuron" else "_miners"
         self.config.neuron.wandb_project += suffix
+
+    def _report_scoring_metrics(self):
+        """Send validator scoring metrics to InfluxDB"""
+        try:
+            points = []
+
+            for uid, data in self.uid_tracker.items():
+                point = (
+                    Point("miner_scores")
+                    .tag("validator_uid", str(self.uid))
+                    .tag("miner_uid", str(uid))
+                    .field("train_score", float(data["train_score"] or 0))
+                    .field("all_reduce_score", float(data["all_reduce_score"] or 0))
+                    .field("repo_valid_score", float(data["repo_valid_score"] or 0))
+                    .field("total_score", float(data["total_score"] or 0))
+                )
+                points.append(point)
+
+                if "loss" in data:
+                    point = (
+                        Point("miner_loss")
+                        .tag("validator_uid", str(self.uid))
+                        .tag("miner_uid", str(uid))
+                        .field("loss", float(data["loss"] or 0))
+                    )
+                    points.append(point)
+
+            # Write points to InfluxDB
+            self.influx_write_api.write(
+                bucket=self.config.neuron.influxdb_bucket,
+                org=self.config.neuron.influxdb_org,
+                record=points,
+            )
+        except Exception as e:
+            bt.logging.error(f"Error reporting scoring metrics: {e}")
 
     def _init_basic_components(self):
         """Initialize basic validator components"""
