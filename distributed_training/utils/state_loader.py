@@ -348,10 +348,10 @@ def load_model_optimizer_gradient_averager(
 
     # Delete existing inner optimizer
     if hasattr(self, "inner_optimizer") and reload_inner_optimizer:
-        # for i in self.inner_optimizer.param_groups[0]["params"]:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
+        for i in self.inner_optimizer.param_groups[0]["params"]:
+            del i
+            gc.collect()
+            torch.cuda.empty_cache()
         del self.inner_optimizer
         gc.collect()
         torch.cuda.empty_cache()
@@ -886,6 +886,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 inner_optimizer_state = {
                     "optimizer_state_dict": self.inner_optimizer.state_dict(),
                     "learning_rate": self.inner_optimizer.param_groups[0]["lr"],
+                    "scheduler_state": self.scheduler.state_dict(),
                     "epoch": epoch,
                 }
                 torch.save(
