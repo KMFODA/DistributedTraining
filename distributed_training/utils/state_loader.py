@@ -2,6 +2,7 @@ import copy
 import gc
 import os
 import subprocess
+import pytz
 import sys
 import shutil
 import tempfile
@@ -16,6 +17,7 @@ import hivemind
 import psutil
 import torch
 from memory_profiler import profile
+from datetime import datetime
 
 from hivemind.compression import deserialize_torch_tensor
 from hivemind.proto import averaging_pb2
@@ -42,9 +44,14 @@ from transformers import (
     get_cosine_schedule_with_warmup,
 )
 
+from distributed_training import __run__
 from distributed_training.averaging.averagers import DTGradAverager, DTStateAverager
-from distributed_training.utils.progress_tracker import get_global_epoch
+from distributed_training.utils.progress_tracker import (
+    get_global_epoch,
+    get_local_inner_step,
+)
 from distributed_training.averaging.avg_handler import AveragingHandler
+from huggingface_hub import list_repo_commits
 
 hivemind_logger = get_logger(__name__)
 
@@ -241,9 +248,16 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
         return False
 
 
-@profile
+# @profile
 def load_model_optimizer_gradient_averager(
-    self, model_name, epoch, use_fast_loader=False
+    self,
+    model_name,
+    epoch,
+    use_fast_loader=False,
+    reload_inner_optimizer=True,
+    reload_outer_optimizer=True,
+    revision=None,
+    use_fallback_model=True,
 ):
     """
     Pytorch currently have an ongoing issue with memory leaks:
@@ -258,6 +272,11 @@ def load_model_optimizer_gradient_averager(
     self.global_model_config = AutoConfig.from_pretrained(
         fall_back_model_name, trust_remote_code=True
     )
+
+    if (revision is None) and (model_name != fall_back_model_name):
+        revision = f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+    elif (revision is None) and (model_name == fall_back_model_name):
+        revision = f"{__run__}.{epoch}.0"
 
     # Delete existing model
     if hasattr(self, "model"):
@@ -277,6 +296,7 @@ def load_model_optimizer_gradient_averager(
         del self.model
         gc.collect()
         torch.cuda.empty_cache()
+        bt.logging.info("Deleted Model")
 
     # Delete Gradient and State Averagers
     if hasattr(self, "state_averager"):
@@ -295,15 +315,15 @@ def load_model_optimizer_gradient_averager(
         while self.state_averager.is_alive():
             time.sleep(1)
 
-        for i in self.state_averager.main_parameters:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+        # for i in self.state_averager.main_parameters:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
-        for i in self.state_averager.optimizer.param_groups[0]["params"]:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+        # for i in self.state_averager.optimizer.param_groups[0]["params"]:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
         del self.state_averager.optimizer.param_groups
         del self.state_averager.optimizer
@@ -320,17 +340,18 @@ def load_model_optimizer_gradient_averager(
         hasattr(self, "inner_optimizer")
         and hasattr(self.inner_optimizer, "mng")
         and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+        and reload_inner_optimizer
     ):
         self.inner_optimizer.mng.module_weight_config_triple = (
             self.inner_optimizer.mng.module_weight_config_triple[-2:]
         )
 
     # Delete existing inner optimizer
-    if hasattr(self, "inner_optimizer"):
-        for i in self.inner_optimizer.param_groups[0]["params"]:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
+    if hasattr(self, "inner_optimizer") and reload_inner_optimizer:
+        # for i in self.inner_optimizer.param_groups[0]["params"]:
+        #     del i
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
         del self.inner_optimizer
         gc.collect()
         torch.cuda.empty_cache()
@@ -366,12 +387,17 @@ def load_model_optimizer_gradient_averager(
             use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
 
     if not use_fast_loader:
-        if not check_model_exists(model_name, revision=str(epoch)):
+        if not check_model_exists(
+            model_name, revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+        ):
             model_name = fall_back_model_name
+            revision = ".".join(revision.split(".")[:-1] + ["0"])
         try:
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
-                    model_name, revision=str(epoch), trust_remote_code=True
+                    model_name,
+                    revision=revision,
+                    trust_remote_code=True,
                 )
                 if epoch
                 else AutoModelForCausalLM.from_pretrained(
@@ -379,26 +405,30 @@ def load_model_optimizer_gradient_averager(
                 )
             )
             bt.logging.info(
-                f"Successfully Loaded Model From {model_name} With Revision {epoch}"
+                f"Successfully Loaded Model From {model_name} With Revision {revision}"
             )
 
         except Exception as e:
-            bt.logging.warning(f"Failed to load model despite repo existing: {str(e)}")
-
-            bt.logging.info("Fallback to loading from global repo")
-            model_name = fall_back_model_name
-            self.model = (
-                AutoModelForCausalLM.from_pretrained(
-                    model_name,
-                    revision=str(epoch),
-                    trust_remote_code=True,
+            if use_fallback_model:
+                bt.logging.warning(
+                    f"Failed to load model despite repo existing: {str(e)}"
                 )
-                if epoch
-                else AutoModelForCausalLM.from_pretrained(
-                    fall_back_model_name, trust_remote_code=True
+                bt.logging.info("Fallback to loading from global repo")
+                model_name = fall_back_model_name
+                self.model = (
+                    AutoModelForCausalLM.from_pretrained(
+                        model_name,
+                        revision=revision,
+                        trust_remote_code=True,
+                    )
+                    if epoch
+                    else AutoModelForCausalLM.from_pretrained(
+                        fall_back_model_name, trust_remote_code=True
+                    )
                 )
-            )
-            bt.logging.info("Successfully Loaded Global Model")
+                bt.logging.info("Successfully Loaded Global Model")
+            else:
+                raise Exception(f"Failed to load model despite repo existing: {str(e)}")
 
     # Move model to device
     self.model = self.model.to(self.device)
@@ -408,74 +438,81 @@ def load_model_optimizer_gradient_averager(
         if "inner_step" in self.model.config.__dict__
         else 0
     )
+    if (model_name == fall_back_model_name) and (epoch == self.global_progress.epoch):
+        self.allreduce_status_dict = (
+            self.model.config.all_reduce_scores
+            if "all_reduce_scores" in self.model.config.__dict__
+            else {}
+        )
 
-    self.inner_optimizer = torch.optim.AdamW(
-        self.model.parameters(),
-        lr=self.learning_rate_maximum,
-        betas=(0.9, 0.95),
-        weight_decay=0.1,
-    )
-    bt.logging.info(f"Loaded Inner Optimizer")
+    if reload_inner_optimizer:
+        self.inner_optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate_maximum,
+            betas=(0.9, 0.95),
+            weight_decay=0.1,
+        )
+        bt.logging.info(f"Loaded Inner Optimizer")
 
-    self.scheduler = get_cosine_schedule_with_warmup(
-        self.inner_optimizer,
-        num_warmup_steps=1000,
-        num_training_steps=88000,
-    )
+        self.scheduler = get_cosine_schedule_with_warmup(
+            self.inner_optimizer,
+            num_warmup_steps=1000,
+            num_training_steps=88000,
+        )
 
-    if epoch != 0:
-        optimizer_state = None
-        try:
-            if os.path.isfile(
-                os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
-            ):
-                optimizer_state = torch.load(
-                    os.path.join(
-                        model_name.split("/")[-1],
-                        "inner_optimizer.pt",
-                    ),
-                    weights_only=True,
-                    map_location="cpu",
+        if epoch != 0:
+            optimizer_state = None
+            try:
+                if os.path.isfile(
+                    os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
+                ):
+                    optimizer_state = torch.load(
+                        os.path.join(
+                            model_name.split("/")[-1],
+                            "inner_optimizer.pt",
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+                else:
+                    optimizer_state = torch.load(
+                        hf_hub_download(
+                            repo_id=model_name,
+                            filename="inner_optimizer.pt",
+                            revision=revision,
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+
+                # Load optimizer state if available
+                if "optimizer_state_dict" in optimizer_state:
+                    self.inner_optimizer.load_state_dict(
+                        optimizer_state["optimizer_state_dict"]
+                    )
+                if "learning_rate" in optimizer_state:
+                    for group in self.inner_optimizer.param_groups:
+                        group["lr"] = optimizer_state["learning_rate"]
+                if "scheduler_state" in optimizer_state:
+                    self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+                bt.logging.info(
+                    f"Successfully Loaded Inner Optimizer State For Revision {revision}"
                 )
-            else:
-                optimizer_state = torch.load(
-                    hf_hub_download(
-                        repo_id=model_name,
-                        filename="inner_optimizer.pt",
-                        revision=str(epoch),
-                    ),
-                    weights_only=True,
-                    map_location="cpu",
+
+            except Exception as e:
+                bt.logging.warning(
+                    f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
                 )
 
-            # Load optimizer state if available
-            if "optimizer_state_dict" in optimizer_state:
-                self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
-                )
-            if "learning_rate" in optimizer_state:
-                for group in self.inner_optimizer.param_groups:
-                    group["lr"] = optimizer_state["learning_rate"]
-            if "scheduler_state" in optimizer_state:
-                self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-            bt.logging.info(
-                f"Successfully Loaded Inner Optimizer State For Epoch {epoch}"
-            )
-
-        except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
-
-        finally:
-            if isinstance(optimizer_state, dict):
-                keys = list(optimizer_state.keys())
-                for k in keys:
-                    del optimizer_state[k]
-                    gc.collect()
-            del optimizer_state
-            gc.collect()
-            torch.cuda.empty_cache()
+            finally:
+                if isinstance(optimizer_state, dict):
+                    keys = list(optimizer_state.keys())
+                    for k in keys:
+                        del optimizer_state[k]
+                        gc.collect()
+                del optimizer_state
+                gc.collect()
+                torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
@@ -515,14 +552,14 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info("Successfully Loaded State Averager")
 
-    if epoch != 0:
+    if reload_outer_optimizer and epoch != 0:
         optimizer_state = None
         try:
             optimizer_state = torch.load(
                 hf_hub_download(
                     repo_id=fall_back_model_name,
                     filename="outer_optimizer.pt",
-                    revision=str(epoch),
+                    revision=".".join(revision.split(".")[:-1] + ["0"]),
                 ),
                 weights_only=True,
                 map_location="cpu",
@@ -535,7 +572,7 @@ def load_model_optimizer_gradient_averager(
                 )
 
             bt.logging.info(
-                f"Successfully Loaded Outer Optimizer State For Epoch {epoch}"
+                f"Successfully Loaded Outer Optimizer State For Revision {'.'.join(revision.split('.')[:-1] + ['0'])}"
             )
 
         except Exception as e:
@@ -562,12 +599,25 @@ def load_model_optimizer_gradient_averager(
 
     self.scaler = torch.amp.GradScaler(enabled=True)
 
+    if (self.local_progress.inner_step != 0) and ("." in revision):
+        self.state_averager.reset_main_parameters(
+            model_name, revision=".".join(revision.split(".")[:-1] + ["0"])
+        )
+
     bt.logging.debug(
         f"CPU Memory After Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
 
 
-def load_state_from_peer(self, repo_id=None, epoch=None):
+def load_state_from_peer(
+    self,
+    repo_id=None,
+    epoch=None,
+    reload_inner_optimizer=True,
+    reload_outer_optimizer=True,
+    revision=None,
+    use_fallback_model=True,
+):
     try:
         state_loaded = False
         if epoch is None:
@@ -575,6 +625,7 @@ def load_state_from_peer(self, repo_id=None, epoch=None):
             epoch = self.global_progress.epoch
         if repo_id is None:
             repo_id = self.config.neuron.global_model_name
+        self.local_progress.inner_step = get_local_inner_step(self, repo_id)
 
         bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
@@ -595,7 +646,15 @@ def load_state_from_peer(self, repo_id=None, epoch=None):
 
             while attempt < MAX_ATTEMPTS:
                 try:
-                    load_model_optimizer_gradient_averager(self, repo_id, epoch)
+                    load_model_optimizer_gradient_averager(
+                        self,
+                        model_name=repo_id,
+                        epoch=epoch,
+                        reload_inner_optimizer=reload_inner_optimizer,
+                        reload_outer_optimizer=reload_outer_optimizer,
+                        revision=revision,
+                        use_fallback_model=use_fallback_model,
+                    )
                     break
 
                 except Exception as e:
@@ -751,7 +810,20 @@ def upload_new_state(self, epoch: int, results: dict, block: int = None):
                     self.config.neuron.global_model_name,
                     repo_type="model",
                 )
-                new_tag = max([int(tag.name) for tag in updated_refs.tags])
+                new_tag = (
+                    max(
+                        [
+                            int(tag.name.split(".")[1])
+                            for tag in updated_refs.tags
+                            if (
+                                (len(tag.name.split(".")) == 3)
+                                and (tag.name.split(".")[0] == __run__)
+                            )
+                        ]
+                    )
+                    if updated_refs.tags
+                    else 0
+                )
                 bt.logging.info(f"Successfully pushed new model with tag {new_tag}")
                 # Wait to allow out of sync miners to download new model state
                 time.sleep(self.load_state_timeout)
@@ -826,7 +898,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
 
                 # Upload everything in one go
-                commit_message = f"Epoch {epoch}. Batch Size {batch_size}. Peers {len(participating_peers) - len(failed_peers)}."
+                commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {0}. Peers {len(participating_peers) - len(failed_peers)}."
                 upload_folder(
                     folder_path=tmp_folder,
                     repo_id=self.config.neuron.global_model_name,
@@ -838,7 +910,7 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 create_tag(
                     self.config.neuron.global_model_name,
                     repo_type="model",
-                    tag=str(epoch),
+                    tag=f"{__run__}.{epoch}.{0}",
                     tag_message=commit_message,
                 )
 
@@ -860,3 +932,35 @@ def save_and_upload_state(self, epoch: int, results: dict, block: int = None):
                 )
                 raise
     return False
+
+
+def get_top_uid(self):
+    all_reduce_scores_uids = [
+        k
+        for k, v in self.allreduce_status_dict.items()
+        if (v == "SUCCESS")
+        and (self.uid_tracker[int(k)]["model_huggingface_id"] is not None)
+        and (
+            (
+                datetime.now(pytz.utc)
+                - list_repo_commits(
+                    self.uid_tracker[int(k)]["model_huggingface_id"], repo_type="model"
+                )[0].created_at
+            ).seconds
+            < (60 * 60)
+        )
+    ]
+    top_uid_list = [
+        k
+        for k, v in sorted(
+            {
+                u: self.metagraph.incentive[int(u)].item()
+                for u in all_reduce_scores_uids
+            }.items(),
+            key=lambda item: item[1],
+        )
+    ]
+    if top_uid_list != []:
+        top_uid = top_uid_list[-1]
+    bt.logging.info(f"Top UID Identified As {top_uid}")
+    return top_uid

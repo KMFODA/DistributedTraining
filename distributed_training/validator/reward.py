@@ -17,7 +17,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
-import errno
+import math
 import random
 import time
 from typing import List
@@ -35,8 +35,13 @@ from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.state_loader import (
     check_model_exists,
     cleanup_old_cache,
+    load_state_from_peer,
 )
-from distributed_training.utils.progress_tracker import get_local_epoch
+from distributed_training.utils.progress_tracker import (
+    get_local_epoch,
+    get_local_inner_step,
+)
+from distributed_training import __run__
 
 from datetime import datetime
 import pytz
@@ -155,7 +160,11 @@ async def score_uid(self, uid: int):
     latest_commit = None
     model_huggingface_id = self.uid_tracker[uid]["model_huggingface_id"]
     local_epoch = get_local_epoch(self, model_huggingface_id)
+    self.local_progress.inner_step = get_local_inner_step(self, model_huggingface_id)
+    revision = f"{__run__}.{local_epoch}.{self.local_progress.inner_step}"
+
     accepted_files = [
+        "README.md",
         ".gitattributes",
         "config.json",
         "model.safetensors",
@@ -166,12 +175,11 @@ async def score_uid(self, uid: int):
     ]
     blocks = []
     time_delta = 0
-
     try:
         if model_huggingface_id is None:
             scores = 0
             raise Exception(f"Score 0 for UID {uid}: HuggingFace Repo Id is None")
-        elif not check_model_exists(model_huggingface_id):
+        elif not check_model_exists(model_huggingface_id, revision):
             scores = 0
             raise Exception(
                 f"Score 0 for UID {uid}: HuggingFace Repo Id {self.uid_tracker[uid]['model_huggingface_id']} Doesn't Exist"
@@ -214,12 +222,6 @@ async def score_uid(self, uid: int):
                     f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[0].commit_id, trust_remote_code=True
-        )
-        # Move the model to the appropriate device
-        self.model = self.model.to(self.device)
-
         config_final_path = hf_hub_download(
             repo_id=model_huggingface_id,
             filename="config.json",
@@ -241,18 +243,27 @@ async def score_uid(self, uid: int):
                     f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
                 )
 
-        model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        load_state_from_peer(
+            self,
+            repo_id=model_huggingface_id,
+            epoch=local_epoch,
+            reload_inner_optimizer=True,
+            reload_outer_optimizer=False,
+            revision=commits[0].commit_id,
+            use_fallback_model=False,
         )
-
+        # Only set self.local_progress.epoch if model is correct format
+        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
         self.local_progress.samples_accumulated = 0
         self.local_progress.inner_step = (
             self.model.config.inner_step
             if "inner_step" in self.model.config.__dict__
             else 0
         )
-        # Only set self.local_progress.epoch if model is correct format
-        self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
+
+        model_final = AutoModelForCausalLM.from_pretrained(
+            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+        )
 
         if ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
@@ -333,7 +344,9 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
     self.uid_tracker[uid]["train_duration"] += time_delta
     self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
-    self.uid_tracker[uid]["train_similarity_score"] += scores
+    self.uid_tracker[uid]["train_similarity_score"] += (
+        0 if math.isnan(scores) else scores
+    )
     self.uid_tracker[uid]["train_validation_count"] += 1
     self.uid_tracker[uid]["loss"] = self.local_progress.loss
 
@@ -401,6 +414,27 @@ def score_repo(self, repo_id: str) -> bool:
         return False
 
 
+def benchmark_uids(self):
+    for uid in self.uid_tracker:
+        if self.uid_tracker[uid]["model_huggingface_id"] is not None:
+            try:
+                latest_commit = list_repo_commits(
+                    self.uid_tracker[uid]["model_huggingface_id"]
+                )[0]
+
+                if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
+                    self.config.neuron.target_n_blocks * 60 * 3
+                ):
+                    self.uid_tracker[uid]["repo_valid_score"] = 0
+                else:
+                    self.uid_tracker[uid]["repo_valid_score"] = 1
+            except Exception as e:
+                self.uid_tracker[uid]["repo_valid_score"] = 0
+        else:
+            self.uid_tracker[uid]["repo_valid_score"] = 0
+        bt.logging.info(f"{uid} score {self.uid_tracker[uid]['repo_valid_score']}")
+
+
 def benchmark_untested_uids(self):
     for uid in self.uid_tracker:
         try:
@@ -426,9 +460,9 @@ def benchmark_untested_uids(self):
 
 def update_all_reduce_scores(self):
     try:
-        if self.model.config.all_reduce_scores != {}:
-            for uid in self.model.config.all_reduce_scores.keys():
-                if self.model.config.all_reduce_scores[uid] == "SUCCESS":
+        if self.allreduce_status_dict != {}:
+            for uid in self.allreduce_status_dict.keys():
+                if self.allreduce_status_dict[uid] == "SUCCESS":
                     self.uid_tracker[int(uid)]["all_reduce_score"] = 1
                 else:
                     self.uid_tracker[int(uid)]["all_reduce_score"] = 0
@@ -489,7 +523,8 @@ def update_total_scores(self):
             )
         else:
             self.uid_tracker[uid]["total_score"] = (
-                (0.5 * self.uid_tracker[uid]["train_score"]) / train_score_normalised
+                ((0.5 * self.uid_tracker[uid]["train_score"]) / train_score_normalised)
+                # * self.uid_tracker[uid]["repo_valid_score"]
             ) + (
                 (0.5 * self.uid_tracker[uid]["all_reduce_score"])
                 / all_reduce_score_normalised

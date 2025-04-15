@@ -147,7 +147,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.blocks_per_allreduce",
         type=int,
         help="Amount of blocks between each all reduce",
-        default=3600,
+        default=800,
     )
 
     parser.add_argument(
@@ -189,7 +189,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.target_n_blocks",
         type=int,
         help="The hivemind global target_batch_size",
-        default=10,
+        default=5,
     )
 
     parser.add_argument(

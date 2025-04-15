@@ -185,7 +185,6 @@ class BaseValidatorNeuron(BaseNeuron):
                         and (self.global_progress.epoch != current_global_epoch)
                         and (self.should_all_reduce)
                     ):
-                        update_all_reduce_scores(self)
                         update_total_scores(self)
 
                 # Run multiple forwards concurrently.
@@ -296,6 +295,7 @@ class BaseValidatorNeuron(BaseNeuron):
         bt.logging.info(raw_weights)
         bt.logging.info(f"raw_weights: {raw_weights}")
         bt.logging.info(f"raw_weight_uids: {self.metagraph.uids.tolist()}")
+
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,
@@ -339,7 +339,7 @@ class BaseValidatorNeuron(BaseNeuron):
         # Log weigths to wandb
         self.event.update(
             {
-                f"weights.uid{processed_weight_uids}": processed_weights
+                f"uid_{processed_weight_uids}.weights": processed_weights
                 for processed_weight_uids, processed_weights in zip(
                     processed_weight_uids, processed_weights
                 )

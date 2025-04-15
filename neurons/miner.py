@@ -42,6 +42,7 @@ from huggingface_hub import (
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
+from distributed_training import __run__
 from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
 from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
@@ -58,6 +59,7 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     get_global_epoch,
     get_local_epoch,
+    get_local_inner_step,
 )
 from distributed_training.utils.state_loader import (
     FastModelLoader,
@@ -124,6 +126,7 @@ class Miner(BaseMinerNeuron):
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
         self.local_progress.epoch = get_local_epoch(self)
+        self.local_progress.inner_step = get_local_inner_step(self)
 
         if self.global_progress.epoch is None:
             bt.logging.error(
@@ -221,7 +224,7 @@ class Miner(BaseMinerNeuron):
     def _sync_with_global_model(self):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.global_model_name,
-            revision=str(self.global_progress.epoch),
+            revision=f"{__run__}.{self.global_progress.epoch}.0",
             trust_remote_code=True,
         )
 
@@ -302,7 +305,7 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info(
                     f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
                 )
-                commit_message = f"Outer Step {epoch}. Inner Step {inner_step}. Batch Size {batch_size}"
+                commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {self.local_progress.inner_step}."
                 upload_folder(
                     folder_path=os.path.join(
                         self.config.neuron.local_model_name.split("/")[-1]
@@ -315,7 +318,18 @@ class Miner(BaseMinerNeuron):
                     self.config.neuron.local_model_name, repo_type="model"
                 )
                 for tag in refs.tags:
-                    if (tag.name == "None") or (int(tag.name) >= epoch):
+                    if (
+                        (tag.name == "None")
+                        or (
+                            (len(tag.name.split(".")) == 3)
+                            and (tag.name.split(".")[0] == __run__)
+                            and (int(tag.name.split(".")[1]) > epoch)
+                        )
+                        or (
+                            tag.name
+                            == f"{__run__}.{epoch}.{self.model.config.inner_step}"
+                        )
+                    ):
                         # Update tag for this version
                         delete_tag(
                             self.config.neuron.local_model_name,
@@ -327,7 +341,7 @@ class Miner(BaseMinerNeuron):
                 create_tag(
                     self.config.neuron.local_model_name,
                     repo_type="model",
-                    tag=str(epoch),
+                    tag=f"{__run__}.{epoch}.{self.model.config.inner_step}",
                     tag_message=commit_message,
                 )
                 # Cleanup old cache
@@ -611,6 +625,11 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.epoch += 1
                 self.last_allreduce_block = self.current_block
                 bt.logging.info("AllReduce Operation Finished Succesfully")
+                self.start_background_upload(
+                    epoch=self.local_progress.epoch,
+                    inner_step=self.local_progress.inner_step,
+                    batch_size=self.local_progress.samples_accumulated,
+                )
                 # Resume training when done
                 self.resume_training()
             else:
