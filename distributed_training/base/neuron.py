@@ -125,7 +125,7 @@ class BaseNeuron(ABC):
             for uid in self.metagraph.uids.tolist()
         }
         self.allreduce_timeout = 540
-        self.upload_state_duration = 150
+        self.upload_state_duration = 300
         self.all_reduce_success_status = True
         self.should_all_reduce = False
         self.retry_limit = 1000
