@@ -147,7 +147,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.blocks_per_allreduce",
         type=int,
         help="Amount of blocks between each all reduce",
-        default=800,
+        default=1800,
     )
 
     parser.add_argument(
@@ -168,7 +168,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.min_group_size",
         type=int,
         help="The minimum group size for an all reduce",
-        default=50,
+        default=20,
     )
 
     parser.add_argument(
@@ -196,7 +196,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.local_batch_size_train_effective",
         type=int,
         help="Amount of micro batches for gradient accumulation",
-        default=512,
+        default=2048,
     )
 
     parser.add_argument(

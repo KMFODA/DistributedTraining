@@ -76,9 +76,11 @@ def get_local_epoch(self, repo_id: str = None):
         return None
 
 
-def get_local_inner_step(self, repo_id: str = None):
+def get_local_inner_step(self, repo_id: str = None, epoch: int = None):
     if repo_id is None:
         repo_id = self.config.neuron.local_model_name
+    if epoch is None:
+        epoch = self.local_progress.epoch
 
     try:
         refs = list_repo_refs(repo_id, repo_type="model")
@@ -90,7 +92,7 @@ def get_local_inner_step(self, repo_id: str = None):
                     if (
                         (len(tag.name.split(".")) == 3)
                         and (tag.name.split(".")[0] == __run__)
-                        and (tag.name.split(".")[1] == str(self.local_progress.epoch))
+                        and (tag.name.split(".")[1] == str(epoch))
                     )
                 ]
             )
