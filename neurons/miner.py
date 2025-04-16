@@ -123,7 +123,7 @@ class Miner(BaseMinerNeuron):
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
         self.global_progress.epoch = get_global_epoch(self)
-        self.local_progress.epoch = get_local_epoch(self)
+        self.local_progress.epoch = self.global_progress.epoch
         self.local_progress.inner_step = get_local_inner_step(self)
 
         if self.global_progress.epoch is None:

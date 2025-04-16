@@ -625,7 +625,9 @@ def load_state_from_peer(
             epoch = self.global_progress.epoch
         if repo_id is None:
             repo_id = self.config.neuron.global_model_name
-        self.local_progress.inner_step = get_local_inner_step(self, repo_id)
+        self.local_progress.inner_step = get_local_inner_step(
+            self, repo_id, epoch=self.global_progress.epoch
+        )
 
         bt.logging.debug("Model Weights Before Loading State")
         current_model_weights_sample = copy.copy(
