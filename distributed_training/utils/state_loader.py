@@ -475,7 +475,7 @@ def load_model_optimizer_gradient_averager(
                 except:
                     optimizer_state = torch.load(
                         hf_hub_download(
-                            repo_id=model_name,
+                            repo_id=model,
                             filename="inner_optimizer.pt",
                             revision=revision,
                         ),
