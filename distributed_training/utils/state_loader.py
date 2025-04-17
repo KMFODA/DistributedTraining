@@ -460,21 +460,19 @@ def load_model_optimizer_gradient_averager(
             num_training_steps=88000,
         )
 
-        if epoch != 0:
+        for model in [model_name, fall_back_model_name]:
             optimizer_state = None
             try:
-                if os.path.isfile(
-                    os.path.join(model_name.split("/")[-1], "inner_optimizer.pt")
-                ):
+                try:
                     optimizer_state = torch.load(
                         os.path.join(
-                            model_name.split("/")[-1],
+                            model.split("/")[-1],
                             "inner_optimizer.pt",
                         ),
                         weights_only=True,
                         map_location="cpu",
                     )
-                else:
+                except:
                     optimizer_state = torch.load(
                         hf_hub_download(
                             repo_id=model_name,
