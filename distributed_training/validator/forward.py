@@ -108,13 +108,18 @@ async def forward(self):
 
         try:
             top_uid = get_top_uid(self)
-            top_uid_revision = f"{__run__}.{get_local_epoch(self, repo_id=self.uid_tracker[int(top_uid)]['model_huggingface_id'])}.{get_local_inner_step(self, repo_id=self.uid_tracker[int(top_uid)]['model_huggingface_id'])}"
+            self.local_progress.epoch = get_local_epoch(
+                self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
+            )
+            self.local_progress.inner_step = get_local_inner_step(
+                self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
+            )
+            top_uid_revision = f"{__run__}.{self.local_progress.epoch}.{self.local_progress.inner_step}"
             load_state_from_peer(
                 self,
                 repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
                 revision=top_uid_revision,
             )
-
             (
                 all_reduce_success_status,
                 results,

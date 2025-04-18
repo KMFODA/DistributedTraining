@@ -165,28 +165,26 @@ class BaseMinerNeuron(BaseNeuron):
                         time.sleep(wait_time)
                         # Check if master validator has failed to all_reduce
                         self.global_progress.epoch = get_global_epoch(self)
-                        if self.local_progress.epoch != self.global_progress.epoch:
+                        if self.local_progress.epoch > self.global_progress.epoch:
                             bt.logging.info(
                                 f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
                             )
                             load_state_from_peer(
                                 self,
                                 epoch=self.global_progress.epoch,
-                                reload_inner_optimizer=False,
                             )
                         else:
                             load_state_from_peer(
                                 self,
                                 repo_id=self.config.neuron.local_model_name,
                                 epoch=self.global_progress.epoch,
-                                reload_inner_optimizer=False,
                             )
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
                         if (self.last_allreduce_block is not None) and (
-                            (self.last_allreduce_block - self.current_block)
-                            > self.upload_state_duration / 12
+                            (time.perf_counter() - self.all_reduce_start_time)
+                            > (self.allreduce_timeout + self.upload_state_duration)
                         ):
                             self.load_state(reset_last_allreduce_block=True)
                         elif (self.last_allreduce_block is None) and (
