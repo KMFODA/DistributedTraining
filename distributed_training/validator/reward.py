@@ -219,7 +219,7 @@ async def score_uid(self, uid: int):
         ):
             if file not in accepted_files:
                 raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
+                    f"Score 0 for UID {uid}: File {file} for commit {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
 
         config_final_path = hf_hub_download(
@@ -285,6 +285,9 @@ async def score_uid(self, uid: int):
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
                         loss = outputs[1] / self.number_of_local_steps
+
+                    if math.isnan(loss.item()):
+                        raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
 
                     self.scaler.scale(loss).backward()
 
