@@ -251,7 +251,7 @@ def check_model_exists(repo_id: str, revision: Optional[str] = None) -> bool:
 # @profile
 def load_model_optimizer_gradient_averager(
     self,
-    model_name,
+    local_model_name,
     epoch,
     use_fast_loader=False,
     reload_inner_optimizer=True,
@@ -268,14 +268,18 @@ def load_model_optimizer_gradient_averager(
     bt.logging.debug(
         f"CPU Memory Before Loading State {psutil.virtual_memory().available / 10**9} GB"
     )
-    fall_back_model_name = self.config.neuron.global_model_name
+    global_model_name = self.config.neuron.global_model_name
     self.global_model_config = AutoConfig.from_pretrained(
-        fall_back_model_name, trust_remote_code=True
+        global_model_name, trust_remote_code=True
     )
+    if use_fallback_model:
+        model_name_list = [local_model_name, global_model_name]
+    else:
+        model_name_list = [local_model_name]
 
-    if (revision is None) and (model_name != fall_back_model_name):
+    if (revision is None) and (local_model_name != global_model_name):
         revision = f"{__run__}.{epoch}.{self.local_progress.inner_step}"
-    elif (revision is None) and (model_name == fall_back_model_name):
+    elif (revision is None) and (local_model_name == global_model_name):
         revision = f"{__run__}.{epoch}.0"
 
     # Delete existing model
@@ -368,29 +372,12 @@ def load_model_optimizer_gradient_averager(
         torch.cuda.empty_cache()
         bt.logging.info("Deleted Average Handler")
 
-    if use_fast_loader:
-        try:
-            # Load both model and optimizer states
-            model_state, optimizer_state = self.loader.load_model_and_optimizer(
-                epoch=epoch
-            )
-
-            # Create model instance and load state
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, state_dict=model_state, trust_remote_code=True
-            )
-
-        except Exception as e:
-            bt.logging.error(
-                f"Fast loader failed: {str(e)}. Falling back to standard loading."
-            )
-            use_fast_loader = False  # TODO Set up fall back on using already downloaded model_state/opt_state, if either are missing
-
-    if not use_fast_loader:
+    for model_name in model_name_list:
         if not check_model_exists(
-            model_name, revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}"
+            local_model_name,
+            revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
         ):
-            model_name = fall_back_model_name
+            local_model_name = global_model_name
             revision = ".".join(revision.split(".")[:-1] + ["0"])
         try:
             self.model = (
@@ -407,28 +394,10 @@ def load_model_optimizer_gradient_averager(
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
             )
+            break
 
         except Exception as e:
-            if use_fallback_model:
-                bt.logging.warning(
-                    f"Failed to load model despite repo existing: {str(e)}"
-                )
-                bt.logging.info("Fallback to loading from global repo")
-                model_name = fall_back_model_name
-                self.model = (
-                    AutoModelForCausalLM.from_pretrained(
-                        model_name,
-                        revision=revision,
-                        trust_remote_code=True,
-                    )
-                    if epoch
-                    else AutoModelForCausalLM.from_pretrained(
-                        fall_back_model_name, trust_remote_code=True
-                    )
-                )
-                bt.logging.info("Successfully Loaded Global Model")
-            else:
-                raise Exception(f"Failed to load model despite repo existing: {str(e)}")
+            raise Exception(f"Failed to load model despite repo existing: {str(e)}")
 
     # Move model to device
     self.model = self.model.to(self.device)
@@ -438,7 +407,7 @@ def load_model_optimizer_gradient_averager(
         if "inner_step" in self.model.config.__dict__
         else 0
     )
-    if (model_name == fall_back_model_name) and (epoch == self.global_progress.epoch):
+    if (model_name == global_model_name) and (epoch == self.global_progress.epoch):
         self.allreduce_status_dict = (
             self.model.config.all_reduce_scores
             if "all_reduce_scores" in self.model.config.__dict__
@@ -460,57 +429,56 @@ def load_model_optimizer_gradient_averager(
             num_training_steps=88000,
         )
 
-        for model in [model_name, fall_back_model_name]:
-            optimizer_state = None
-            try:
-                try:
-                    optimizer_state = torch.load(
-                        os.path.join(
-                            model.split("/")[-1],
-                            "inner_optimizer.pt",
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
-                except:
-                    optimizer_state = torch.load(
-                        hf_hub_download(
-                            repo_id=model,
-                            filename="inner_optimizer.pt",
-                            revision=revision,
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
+        optimizer_state = None
+        try:
+            optimizer_state = torch.load(
+                os.path.join(
+                    model_name.split("/")[-1],
+                    "inner_optimizer.pt",
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
+        except:
+            optimizer_state = torch.load(
+                hf_hub_download(
+                    repo_id=model_name,
+                    filename="inner_optimizer.pt",
+                    revision=revision,
+                ),
+                weights_only=True,
+                map_location="cpu",
+            )
 
-                # Load optimizer state if available
-                if "optimizer_state_dict" in optimizer_state:
-                    self.inner_optimizer.load_state_dict(
-                        optimizer_state["optimizer_state_dict"]
-                    )
-                if "learning_rate" in optimizer_state:
-                    for group in self.inner_optimizer.param_groups:
-                        group["lr"] = optimizer_state["learning_rate"]
-                if "scheduler_state" in optimizer_state:
-                    self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-                bt.logging.info(
-                    f"Successfully Loaded Inner Optimizer State For Revision {revision}"
+        try:
+            # Load optimizer state if available
+            if "optimizer_state_dict" in optimizer_state:
+                self.inner_optimizer.load_state_dict(
+                    optimizer_state["optimizer_state_dict"]
                 )
+            if "learning_rate" in optimizer_state:
+                for group in self.inner_optimizer.param_groups:
+                    group["lr"] = optimizer_state["learning_rate"]
+            if "scheduler_state" in optimizer_state:
+                self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+            bt.logging.info(
+                f"Successfully Loaded Inner Optimizer State For Revision {revision}"
+            )
 
-            except Exception as e:
-                bt.logging.warning(
-                    f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-                )
+        except Exception as e:
+            bt.logging.warning(
+                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
+            )
 
-            finally:
-                if isinstance(optimizer_state, dict):
-                    keys = list(optimizer_state.keys())
-                    for k in keys:
-                        del optimizer_state[k]
-                        gc.collect()
-                del optimizer_state
-                gc.collect()
-                torch.cuda.empty_cache()
+        finally:
+            if isinstance(optimizer_state, dict):
+                keys = list(optimizer_state.keys())
+                for k in keys:
+                    del optimizer_state[k]
+                    gc.collect()
+            del optimizer_state
+            gc.collect()
+            torch.cuda.empty_cache()
 
     # Set outer optimizer
     self.outer_optimizer = partial(torch.optim.SGD, lr=0.7, momentum=0.9, nesterov=True)
@@ -550,12 +518,12 @@ def load_model_optimizer_gradient_averager(
     )
     bt.logging.info("Successfully Loaded State Averager")
 
-    if reload_outer_optimizer and epoch != 0:
+    if reload_outer_optimizer:
         optimizer_state = None
         try:
             optimizer_state = torch.load(
                 hf_hub_download(
-                    repo_id=fall_back_model_name,
+                    repo_id=global_model_name,
                     filename="outer_optimizer.pt",
                     revision=".".join(revision.split(".")[:-1] + ["0"]),
                 ),
@@ -648,7 +616,7 @@ def load_state_from_peer(
                 try:
                     load_model_optimizer_gradient_averager(
                         self,
-                        model_name=repo_id,
+                        local_model_name=repo_id,
                         epoch=epoch,
                         reload_inner_optimizer=reload_inner_optimizer,
                         reload_outer_optimizer=reload_outer_optimizer,
