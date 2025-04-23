@@ -49,6 +49,7 @@ from distributed_training.averaging.averagers import DTGradAverager, DTStateAver
 from distributed_training.utils.progress_tracker import (
     get_global_epoch,
     get_local_inner_step,
+    get_min_local_inner_Step,
 )
 from distributed_training.averaging.avg_handler import AveragingHandler
 from huggingface_hub import list_repo_commits
@@ -308,17 +309,6 @@ def load_model_optimizer_gradient_averager(
         torch.cuda.empty_cache()
         bt.logging.info("Deleted State Averager and Gradient Averager")
 
-    # # Delete any historic model references in GlobalOptimManager
-    # if (
-    #     hasattr(self, "inner_optimizer")
-    #     and hasattr(self.inner_optimizer, "mng")
-    #     and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
-    #     and reload_inner_optimizer
-    # ):
-    #     self.inner_optimizer.mng.module_weight_config_triple = (
-    #         self.inner_optimizer.mng.module_weight_config_triple[-2:]
-    #     )
-
     # Delete existing averag handler
     if hasattr(self, "avg_handler"):
         del self.avg_handler.model
@@ -362,16 +352,10 @@ def load_model_optimizer_gradient_averager(
                 torch.cuda.empty_cache()
                 bt.logging.info("Deleted Model")
 
-            self.model = (
-                AutoModelForCausalLM.from_pretrained(
-                    model_name,
-                    revision=revision,
-                    trust_remote_code=True,
-                )
-                if epoch
-                else AutoModelForCausalLM.from_pretrained(
-                    model_name, trust_remote_code=True
-                )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                revision=revision,
+                trust_remote_code=True,
             )
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
@@ -559,7 +543,11 @@ def load_model_optimizer_gradient_averager(
 
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(
-            model_name, revision=".".join(revision.split(".")[:-1] + ["0"])
+            model_name,
+            revision=".".join(
+                revision.split(".")[:-1]
+                + [str(get_min_local_inner_Step(self, model_name, epoch=epoch))]
+            ),
         )
 
     bt.logging.debug(
