@@ -253,7 +253,6 @@ def load_model_optimizer_gradient_averager(
     self,
     local_model_name,
     epoch,
-    use_fast_loader=False,
     reload_inner_optimizer=True,
     reload_outer_optimizer=True,
     revision=None,
@@ -282,26 +281,6 @@ def load_model_optimizer_gradient_averager(
     elif (revision is None) and (local_model_name == global_model_name):
         revision = f"{__run__}.{epoch}.0"
 
-    # Delete existing model
-    if hasattr(self, "model"):
-        transformer = self.model.model.transformer
-        for component in ["wte", "wpe"]:
-            if hasattr(transformer, component):
-                comp = getattr(transformer, component)
-                if hasattr(comp, "weight"):
-                    del comp.weight
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                if hasattr(comp, "norm"):
-                    del comp.norm
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                delattr(transformer, component)
-        del self.model
-        gc.collect()
-        torch.cuda.empty_cache()
-        bt.logging.info("Deleted Model")
-
     # Delete Gradient and State Averagers
     if hasattr(self, "state_averager"):
         self.grad_averager.shutdown()
@@ -319,16 +298,6 @@ def load_model_optimizer_gradient_averager(
         while self.state_averager.is_alive():
             time.sleep(1)
 
-        # for i in self.state_averager.main_parameters:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-
-        # for i in self.state_averager.optimizer.param_groups[0]["params"]:
-        #     del i
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-
         del self.state_averager.optimizer.param_groups
         del self.state_averager.optimizer
         del self.state_averager.main_parameters
@@ -339,27 +308,16 @@ def load_model_optimizer_gradient_averager(
         torch.cuda.empty_cache()
         bt.logging.info("Deleted State Averager and Gradient Averager")
 
-    # Delete any historic model references in GlobalOptimManager
-    if (
-        hasattr(self, "inner_optimizer")
-        and hasattr(self.inner_optimizer, "mng")
-        and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
-        and reload_inner_optimizer
-    ):
-        self.inner_optimizer.mng.module_weight_config_triple = (
-            self.inner_optimizer.mng.module_weight_config_triple[-2:]
-        )
-
-    # Delete existing inner optimizer
-    if hasattr(self, "inner_optimizer") and reload_inner_optimizer:
-        for i in self.inner_optimizer.param_groups[0]["params"]:
-            del i
-            gc.collect()
-            torch.cuda.empty_cache()
-        del self.inner_optimizer
-        gc.collect()
-        torch.cuda.empty_cache()
-        bt.logging.info("Deleted Inner Optimizer")
+    # # Delete any historic model references in GlobalOptimManager
+    # if (
+    #     hasattr(self, "inner_optimizer")
+    #     and hasattr(self.inner_optimizer, "mng")
+    #     and (len(self.inner_optimizer.mng.module_weight_config_triple) > 2)
+    #     and reload_inner_optimizer
+    # ):
+    #     self.inner_optimizer.mng.module_weight_config_triple = (
+    #         self.inner_optimizer.mng.module_weight_config_triple[-2:]
+    #     )
 
     # Delete existing averag handler
     if hasattr(self, "avg_handler"):
@@ -373,13 +331,37 @@ def load_model_optimizer_gradient_averager(
         bt.logging.info("Deleted Average Handler")
 
     for model_name in model_name_list:
-        if not check_model_exists(
-            local_model_name,
-            revision=f"{__run__}.{epoch}.{self.local_progress.inner_step}",
-        ):
-            local_model_name = global_model_name
-            revision = ".".join(revision.split(".")[:-1] + ["0"])
+        optimizer_state = None
+        # Load Model & Inner Optimizer
         try:
+            if model_name == global_model_name:
+                revision = ".".join(revision.split(".")[:-1] + ["0"])
+            if not check_model_exists(
+                model_name,
+                revision=revision,
+            ):
+                continue
+
+            # Delete existing model
+            if hasattr(self, "model"):
+                transformer = self.model.model.transformer
+                for component in ["wte", "wpe"]:
+                    if hasattr(transformer, component):
+                        comp = getattr(transformer, component)
+                        if hasattr(comp, "weight"):
+                            del comp.weight
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                        if hasattr(comp, "norm"):
+                            del comp.norm
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                        delattr(transformer, component)
+                del self.model
+                gc.collect()
+                torch.cuda.empty_cache()
+                bt.logging.info("Deleted Model")
+
             self.model = (
                 AutoModelForCausalLM.from_pretrained(
                     model_name,
@@ -394,81 +376,91 @@ def load_model_optimizer_gradient_averager(
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
             )
-            break
 
-        except Exception as e:
-            raise Exception(f"Failed to load model despite repo existing: {str(e)}")
-
-    # Move model to device
-    self.model = self.model.to(self.device)
-    self.model.config.block_list = []
-    self.local_progress.inner_step = (
-        self.model.config.inner_step
-        if "inner_step" in self.model.config.__dict__
-        else 0
-    )
-    if (model_name == global_model_name) and (epoch == self.global_progress.epoch):
-        self.allreduce_status_dict = (
-            self.model.config.all_reduce_scores
-            if "all_reduce_scores" in self.model.config.__dict__
-            else {}
-        )
-
-    if reload_inner_optimizer:
-        self.inner_optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.learning_rate_maximum,
-            betas=(0.9, 0.95),
-            weight_decay=0.1,
-        )
-        bt.logging.info(f"Loaded Inner Optimizer")
-
-        self.scheduler = get_cosine_schedule_with_warmup(
-            self.inner_optimizer,
-            num_warmup_steps=1000,
-            num_training_steps=88000,
-        )
-
-        optimizer_state = None
-        try:
-            optimizer_state = torch.load(
-                os.path.join(
-                    model_name.split("/")[-1],
-                    "inner_optimizer.pt",
-                ),
-                weights_only=True,
-                map_location="cpu",
+            # Move model to device
+            self.model = self.model.to(self.device)
+            self.model.config.block_list = []
+            self.local_progress.inner_step = (
+                self.model.config.inner_step
+                if "inner_step" in self.model.config.__dict__
+                else 0
             )
-        except:
-            optimizer_state = torch.load(
-                hf_hub_download(
-                    repo_id=model_name,
-                    filename="inner_optimizer.pt",
-                    revision=revision,
-                ),
-                weights_only=True,
-                map_location="cpu",
-            )
-
-        try:
-            # Load optimizer state if available
-            if "optimizer_state_dict" in optimizer_state:
-                self.inner_optimizer.load_state_dict(
-                    optimizer_state["optimizer_state_dict"]
+            if (model_name == global_model_name) and (
+                epoch == self.global_progress.epoch
+            ):
+                self.allreduce_status_dict = (
+                    self.model.config.all_reduce_scores
+                    if "all_reduce_scores" in self.model.config.__dict__
+                    else {}
                 )
-            if "learning_rate" in optimizer_state:
-                for group in self.inner_optimizer.param_groups:
-                    group["lr"] = optimizer_state["learning_rate"]
-            if "scheduler_state" in optimizer_state:
-                self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-            bt.logging.info(
-                f"Successfully Loaded Inner Optimizer State For Revision {revision}"
-            )
+
+            if reload_inner_optimizer:
+                # Delete existing inner optimizer
+                if hasattr(self, "inner_optimizer"):
+                    for i in self.inner_optimizer.param_groups[0]["params"]:
+                        del i
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                    del self.inner_optimizer
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    bt.logging.info("Deleted Inner Optimizer")
+
+                self.inner_optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=self.learning_rate_maximum,
+                    betas=(0.9, 0.95),
+                    weight_decay=0.1,
+                )
+                bt.logging.info(f"Loaded Inner Optimizer")
+
+                self.scheduler = get_cosine_schedule_with_warmup(
+                    self.inner_optimizer,
+                    num_warmup_steps=1000,
+                    num_training_steps=88000,
+                )
+
+                try:
+                    optimizer_state = torch.load(
+                        os.path.join(
+                            model_name.split("/")[-1],
+                            "inner_optimizer.pt",
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+                except:
+                    optimizer_state = torch.load(
+                        hf_hub_download(
+                            repo_id=model_name,
+                            filename="inner_optimizer.pt",
+                            revision=revision,
+                        ),
+                        weights_only=True,
+                        map_location="cpu",
+                    )
+
+                # Load optimizer state if available
+                if "optimizer_state_dict" in optimizer_state:
+                    self.inner_optimizer.load_state_dict(
+                        optimizer_state["optimizer_state_dict"]
+                    )
+                if "learning_rate" in optimizer_state:
+                    for group in self.inner_optimizer.param_groups:
+                        group["lr"] = optimizer_state["learning_rate"]
+                if "scheduler_state" in optimizer_state:
+                    self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+                bt.logging.info(
+                    f"Successfully Loaded Inner Optimizer State From {model_name} For Revision {revision}"
+                )
+
+                break
 
         except Exception as e:
-            bt.logging.warning(
-                f"No optimizer state found or failed to load: {str(e)}. Initializing fresh optimizer."
-            )
+            if model_name == model_name_list[-1]:
+                raise Exception(f"Failed to load model despite repo existing: {str(e)}")
+            else:
+                bt.logging.info(f"Failed to load model despite repo existing: {str(e)}")
 
         finally:
             if isinstance(optimizer_state, dict):
@@ -538,7 +530,7 @@ def load_model_optimizer_gradient_averager(
                 )
 
             bt.logging.info(
-                f"Successfully Loaded Outer Optimizer State For Revision {'.'.join(revision.split('.')[:-1] + ['0'])}"
+                f"Successfully Loaded Outer Optimizer State From {global_model_name} For Revision {'.'.join(revision.split('.')[:-1] + ['0'])}"
             )
 
         except Exception as e:

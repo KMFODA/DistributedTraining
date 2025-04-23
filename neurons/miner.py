@@ -365,7 +365,7 @@ class Miner(BaseMinerNeuron):
                 )
 
                 bt.logging.info(
-                    f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.local_model_name}"
+                    f"Successfully pushed new model state with tag {__run__}.{epoch}.{self.model.config.inner_step} to repo: {self.config.neuron.local_model_name}"
                 )
 
                 # Reset block_list
