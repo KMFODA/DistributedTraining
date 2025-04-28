@@ -616,6 +616,7 @@ class Miner(BaseMinerNeuron):
                         synapse,
                         self.local_progress,
                         self.all_reduce_start_time,
+                        self.current_block,
                         # bandwidth
                     )
                     if not synapse.completion:

@@ -344,10 +344,10 @@ async def score_uid(self, uid: int):
             )
 
     self.uid_tracker[uid]["last_commit"] = latest_commit
-    self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
-    self.uid_tracker[uid]["train_duration"] += time_delta
+    self.uid_tracker[uid]["train_number_of_blocks"] = len(blocks)
+    self.uid_tracker[uid]["train_duration"] = time_delta
     self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
-    self.uid_tracker[uid]["train_similarity_score"] += (
+    self.uid_tracker[uid]["train_similarity_score"] = (
         0 if math.isnan(scores) else scores
     )
     self.uid_tracker[uid]["train_validation_count"] += 1

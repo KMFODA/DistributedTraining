@@ -537,6 +537,13 @@ def load_model_optimizer_gradient_averager(
         self.inner_optimizer,
         self.grad_averager,
         self.state_averager,
+        self.retry_limit,
+        self.retry_delay,
+        self.uid,
+        self.config.neuron.local_batch_size_train,
+        self.config.neuron.local_batch_size_train_effective,
+        self.tokenizer,
+        self.device,
     )
 
     self.scaler = torch.amp.GradScaler(enabled=True)
