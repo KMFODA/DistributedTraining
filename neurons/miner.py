@@ -76,6 +76,7 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
 from multiprocessing import Process
+import subprocess
 
 
 class Miner(BaseMinerNeuron):
@@ -187,6 +188,7 @@ class Miner(BaseMinerNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.local_model_name, self.local_progress.epoch
         )
+        self.model.config.block_list = []
         cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
 
         # Setup upload executor
@@ -254,16 +256,6 @@ class Miner(BaseMinerNeuron):
             gc.collect()
             torch.cuda.empty_cache()
 
-    def upload_folder(self, commit_message):
-        upload_folder(
-            folder_path=os.path.join(
-                self.config.neuron.local_model_name.split("/")[-1]
-            ),
-            repo_id=self.config.neuron.local_model_name,
-            repo_type="model",
-            commit_message=commit_message,
-        )
-
     def upload_model(self, epoch):
         """Unified function to save and upload both model and optimizer state"""
         if not repo_exists(self.config.neuron.local_model_name, repo_type="model"):
@@ -295,6 +287,10 @@ class Miner(BaseMinerNeuron):
                 self.model.config.inner_step = self.local_progress.inner_step
                 self.model.save_pretrained(os.path.join(self.output_dir))
 
+                # Reset model blocklist & keep local copy in case upload fails
+                block_list = self.model.config.block_list
+                self.model.config.block_list = []
+
                 # Save optimizer state
                 optimizer_state = {
                     "optimizer_state_dict": self.inner_optimizer.state_dict(),
@@ -314,18 +310,30 @@ class Miner(BaseMinerNeuron):
                     f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
                 )
                 commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {self.local_progress.inner_step}."
-                self.upload_process = Process(
-                    target=self.upload_folder, args=(commit_message,)
+                self.upload_process = subprocess.Popen(
+                    [
+                        "python",
+                        os.path.abspath(__file__).replace(
+                            "neurons/miner.py",
+                            "distributed_training/utils/upload_worker.py",
+                        ),
+                        self.config.neuron.local_model_name,
+                        self.output_dir,
+                        commit_message,
+                    ]
                 )
-                self.upload_process.start()
-                while self.upload_process.is_alive():
+                while self.upload_process.poll() is None:
                     if not self.training_active.is_set():
                         self.upload_process.kill()
-                        self.upload_process.join()
                         bt.logging.info(
                             "Cancelling Ongoing Model Upload For AllReduce Operation"
                         )
+                        self.model.config.block_list = (
+                            block_list + self.model.config.block_list
+                        )
                         return False
+                    else:
+                        time.sleep(5)
 
                 refs = list_repo_refs(
                     self.config.neuron.local_model_name, repo_type="model"
@@ -368,9 +376,6 @@ class Miner(BaseMinerNeuron):
                     f"Successfully pushed new model state with tag {__run__}.{epoch}.{self.model.config.inner_step} to repo: {self.config.neuron.local_model_name}"
                 )
 
-                # Reset block_list
-                self.model.config.block_list = []
-
                 return True
 
             except Exception as e:
@@ -383,6 +388,9 @@ class Miner(BaseMinerNeuron):
                 else:
                     bt.logging.error(
                         "Maximum retry limit reached. Unable to upload state to HF Hub."
+                    )
+                    self.model.config.block_list = (
+                        block_list + self.model.config.block_list
                     )
                     raise
 
@@ -514,7 +522,6 @@ class Miner(BaseMinerNeuron):
                 self.training_active.wait()
 
                 self.model.config.block_list.append(self.current_block)
-
                 self._process_training_batch(dataset)
             except Exception as e:
                 bt.logging.warning(f"Training Loop Failed with error: {e}")

@@ -258,6 +258,7 @@ def load_model_optimizer_gradient_averager(
     reload_outer_optimizer=True,
     revision=None,
     use_fallback_model=True,
+    reset_block_list=True,
 ):
     """
     Pytorch currently have an ongoing issue with memory leaks:
