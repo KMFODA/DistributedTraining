@@ -129,6 +129,7 @@ async def forward(self):
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
                 master=self.uid == self.master_uid,
+                block=self.current_block,
             )
 
             if all_reduce_success_status:
