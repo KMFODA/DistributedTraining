@@ -531,4 +531,4 @@ def update_total_scores(self):
             )
 
     # Add metrics reporting
-    self._report_scoring_metrics()
+    self.report_scoring_metrics()
