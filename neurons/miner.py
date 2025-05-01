@@ -647,8 +647,6 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info("AllReduce Operation Finished Succesfully")
                 self.start_background_upload(
                     epoch=self.local_progress.epoch,
-                    inner_step=self.local_progress.inner_step,
-                    batch_size=self.local_progress.samples_accumulated,
                 )
                 # Resume training when done
                 self.resume_training()
