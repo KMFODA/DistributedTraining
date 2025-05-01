@@ -179,6 +179,7 @@ class BaseMinerNeuron(BaseNeuron):
                                 repo_id=self.config.neuron.local_model_name,
                                 epoch=self.global_progress.epoch,
                             )
+                        self.model.config.block_list = []
                         self.resume_training()
                         self.all_reduce_success_status = True
                     else:
@@ -239,6 +240,7 @@ class BaseMinerNeuron(BaseNeuron):
                     repo_id=self.config.neuron.local_model_name,
                     epoch=self.global_progress.epoch,
                 )
+            self.model.config.block_list = []
             self.resume_training()
         if reset_last_allreduce_block:
             self.last_allreduce_block = None

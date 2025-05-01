@@ -219,7 +219,7 @@ async def score_uid(self, uid: int):
         ):
             if file not in accepted_files:
                 raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commi {commits[0].commit_id} not in list of accepted files {accepted_files}"
+                    f"Score 0 for UID {uid}: File {file} for commit {commits[0].commit_id} not in list of accepted files {accepted_files}"
                 )
 
         config_final_path = hf_hub_download(
@@ -286,6 +286,9 @@ async def score_uid(self, uid: int):
                         outputs = self.model(input_ids=inputs, labels=labels)
                         loss = outputs[1] / self.number_of_local_steps
 
+                    if math.isnan(loss.item()):
+                        raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
+
                     self.scaler.scale(loss).backward()
 
                     self.running_loss += loss.item() * self.number_of_local_steps
@@ -341,10 +344,10 @@ async def score_uid(self, uid: int):
             )
 
     self.uid_tracker[uid]["last_commit"] = latest_commit
-    self.uid_tracker[uid]["train_number_of_blocks"] += len(blocks)
-    self.uid_tracker[uid]["train_duration"] += time_delta
+    self.uid_tracker[uid]["train_number_of_blocks"] = len(blocks)
+    self.uid_tracker[uid]["train_duration"] = time_delta
     self.uid_tracker[uid]["train_similarity_score_last_updated"] = time.time()
-    self.uid_tracker[uid]["train_similarity_score"] += (
+    self.uid_tracker[uid]["train_similarity_score"] = (
         0 if math.isnan(scores) else scores
     )
     self.uid_tracker[uid]["train_validation_count"] += 1

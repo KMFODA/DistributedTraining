@@ -48,7 +48,6 @@ from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
-    get_bandwidth,
     init_dht,
     load_wandb,
     setup_logging,
@@ -75,6 +74,9 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
+
+from multiprocessing import Process
+import subprocess
 
 
 class Miner(BaseMinerNeuron):
@@ -137,12 +139,10 @@ class Miner(BaseMinerNeuron):
         self.stop_event = threading.Event()
 
         # Training control
-        self.training_thread = None
         self.training_active = threading.Event()
         self.training_active.set()
 
         # Queue and executor
-        self.training_queue = queue.Queue()
         self.training_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="training_worker"
         )
@@ -188,6 +188,7 @@ class Miner(BaseMinerNeuron):
         load_model_optimizer_gradient_averager(
             self, self.config.neuron.local_model_name, self.local_progress.epoch
         )
+        self.model.config.block_list = []
         cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
 
         # Setup upload executor
@@ -195,6 +196,7 @@ class Miner(BaseMinerNeuron):
             max_workers=1, thread_name_prefix="model_upload"
         )
         self.current_upload_future = None
+        self.upload_process = None
 
         # Sync and initialize handlers
         self._sync_with_global_model()
@@ -247,14 +249,14 @@ class Miner(BaseMinerNeuron):
             torch.cuda.empty_cache()
             load_state_from_peer(self, epoch=self.global_progress.epoch)
             self.start_background_upload(
-                epoch=self.global_progress.epoch, inner_step=0, batch_size=0
+                epoch=self.global_progress.epoch,
             )
         else:
             del global_model
             gc.collect()
             torch.cuda.empty_cache()
 
-    def upload_model(self, epoch, inner_step, batch_size):
+    def upload_model(self, epoch):
         """Unified function to save and upload both model and optimizer state"""
         if not repo_exists(self.config.neuron.local_model_name, repo_type="model"):
             try:
@@ -285,6 +287,10 @@ class Miner(BaseMinerNeuron):
                 self.model.config.inner_step = self.local_progress.inner_step
                 self.model.save_pretrained(os.path.join(self.output_dir))
 
+                # Reset model blocklist & keep local copy in case upload fails
+                block_list = self.model.config.block_list
+                self.model.config.block_list = []
+
                 # Save optimizer state
                 optimizer_state = {
                     "optimizer_state_dict": self.inner_optimizer.state_dict(),
@@ -304,14 +310,31 @@ class Miner(BaseMinerNeuron):
                     f":upload: Uploading model and optimizer states to repo: {self.config.neuron.local_model_name}"
                 )
                 commit_message = f"Run {__run__}. Outer Step {epoch}. Inner Step {self.local_progress.inner_step}."
-                upload_folder(
-                    folder_path=os.path.join(
-                        self.config.neuron.local_model_name.split("/")[-1]
-                    ),
-                    repo_id=self.config.neuron.local_model_name,
-                    repo_type="model",
-                    commit_message=commit_message,
+                self.upload_process = subprocess.Popen(
+                    [
+                        "python",
+                        os.path.abspath(__file__).replace(
+                            "neurons/miner.py",
+                            "distributed_training/utils/upload_worker.py",
+                        ),
+                        self.config.neuron.local_model_name,
+                        self.output_dir,
+                        commit_message,
+                    ]
                 )
+                while self.upload_process.poll() is None:
+                    if not self.training_active.is_set():
+                        self.upload_process.kill()
+                        bt.logging.info(
+                            "Cancelling Ongoing Model Upload For AllReduce Operation"
+                        )
+                        self.model.config.block_list = (
+                            block_list + self.model.config.block_list
+                        )
+                        return False
+                    else:
+                        time.sleep(5)
+
                 refs = list_repo_refs(
                     self.config.neuron.local_model_name, repo_type="model"
                 )
@@ -350,11 +373,8 @@ class Miner(BaseMinerNeuron):
                 )
 
                 bt.logging.info(
-                    f"Successfully pushed new model state with tag {epoch} to repo: {self.config.neuron.local_model_name}"
+                    f"Successfully pushed new model state with tag {__run__}.{epoch}.{self.model.config.inner_step} to repo: {self.config.neuron.local_model_name}"
                 )
-
-                # Reset block_list
-                self.model.config.block_list = []
 
                 return True
 
@@ -369,10 +389,14 @@ class Miner(BaseMinerNeuron):
                     bt.logging.error(
                         "Maximum retry limit reached. Unable to upload state to HF Hub."
                     )
+                    self.model.config.block_list = (
+                        block_list + self.model.config.block_list
+                    )
                     raise
+
         return False
 
-    def start_background_upload(self, epoch, inner_step, batch_size):
+    def start_background_upload(self, epoch):
         """Starts a background upload of the model state, managing ongoing uploads."""
         # If there's an ongoing upload, check if it's done
         if self.current_upload_future and not self.current_upload_future.done():
@@ -381,14 +405,14 @@ class Miner(BaseMinerNeuron):
 
         # Start new upload
         self.current_upload_future = self.upload_executor.submit(
-            self.upload_model, epoch, inner_step, batch_size
+            self.upload_model, epoch
         )
 
         # Optional: Add callback to handle completion
         def upload_completed(future):
             try:
-                future.result()  # This will raise any exceptions that occurred
-                bt.logging.info("Model state upload completed successfully")
+                result = future.result()  # This will raise any exceptions that occurred
+                bt.logging.info(f"Model state upload completed with result: {result}")
             except Exception as e:
                 bt.logging.error(f"Model state upload failed: {str(e)}")
 
@@ -487,8 +511,6 @@ class Miner(BaseMinerNeuron):
                 ):
                     self.start_background_upload(
                         epoch=self.local_progress.epoch,
-                        inner_step=self.local_progress.inner_step,
-                        batch_size=self.local_progress.samples_accumulated,
                     )
 
                 bt.logging.debug(":pages: Fetching fineweb-edu pages")
@@ -500,7 +522,6 @@ class Miner(BaseMinerNeuron):
                 self.training_active.wait()
 
                 self.model.config.block_list.append(self.current_block)
-
                 self._process_training_batch(dataset)
             except Exception as e:
                 bt.logging.warning(f"Training Loop Failed with error: {e}")
@@ -602,6 +623,7 @@ class Miner(BaseMinerNeuron):
                         synapse,
                         self.local_progress,
                         self.all_reduce_start_time,
+                        self.current_block,
                         # bandwidth
                     )
                     if not synapse.completion:
@@ -625,8 +647,6 @@ class Miner(BaseMinerNeuron):
                 bt.logging.info("AllReduce Operation Finished Succesfully")
                 self.start_background_upload(
                     epoch=self.local_progress.epoch,
-                    inner_step=self.local_progress.inner_step,
-                    batch_size=self.local_progress.samples_accumulated,
                 )
                 # Resume training when done
                 self.resume_training()

@@ -105,6 +105,35 @@ def get_local_inner_step(self, repo_id: str = None, epoch: int = None):
         return 0
 
 
+def get_min_local_inner_Step(self, repo_id: str = None, epoch: int = None):
+    if repo_id is None:
+        repo_id = self.config.neuron.local_model_name
+    if epoch is None:
+        epoch = self.local_progress.epoch
+
+    try:
+        refs = list_repo_refs(repo_id, repo_type="model")
+        local_steps = (
+            min(
+                [
+                    int(tag.name.split(".")[2])
+                    for tag in refs.tags
+                    if (
+                        (len(tag.name.split(".")) == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                        and (tag.name.split(".")[1] == str(epoch))
+                    )
+                ]
+            )
+            if refs.tags
+            else 0
+        )
+        return local_steps
+    except Exception as e:
+        bt.logging.warning(f"Error in get_local_inner_step: {str(e)}")
+        return 0
+
+
 def update_global_tracker_state(self):
     try:
         runs = wandb.Api().runs(
