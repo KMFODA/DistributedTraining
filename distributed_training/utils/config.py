@@ -243,20 +243,6 @@ def add_args(cls, parser, prefix=None):
         )
 
         parser.add_argument(
-            "--neuron.training_examples_per_miner",
-            type=int,
-            help="The number of rows to train on per miner",
-            default=1024,
-        )
-
-        parser.add_argument(
-            "--neuron.upload_interval",
-            type=int,
-            help="The number of steps before uploading the model",
-            default=900,
-        )
-
-        parser.add_argument(
             "--neuron.num_concurrent_forwards",
             type=int,
             help="The number of concurrent forwards running at any time.",
