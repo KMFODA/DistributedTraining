@@ -198,10 +198,16 @@ class AveragingHandler:
 
                 # Update state_avgs main params with inner optimizer params
                 self.update_main_param_after_outer_step()
+                
+                # Zero grads of outer optimizer
+                self.state_averager.optimizer.zero_grad()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
+                
+                # Clip gradients again
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 # Validate weight updates
                 await self._validate_weight_update(initial_weights, block)
@@ -392,11 +398,19 @@ class AveragingHandler:
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
+                
+                # Update state_avgs main params with inner optimizer params
                 self.update_main_param_after_outer_step()
+                
+                # Zero grads of outer optimizer
+                self.state_averager.optimizer.zero_grad()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
+                
+                # Clip gradients again
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 # Validate weight updates
                 await self._validate_weight_update(initial_weights, block)
