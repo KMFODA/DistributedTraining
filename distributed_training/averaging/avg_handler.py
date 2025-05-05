@@ -443,4 +443,4 @@ class AveragingHandler:
         for local_model_param, avg_param in zip(
             opt_parameters, self.state_averager.main_parameters
         ):
-            local_model_param.data.copy_(avg_param.data.to(model_param.device), non_blocking=True)
+            local_model_param.data.copy_(avg_param.data.to(local_model_param.device), non_blocking=True)
