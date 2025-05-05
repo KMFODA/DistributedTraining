@@ -545,7 +545,7 @@ class Miner(BaseMinerNeuron):
                 outputs = self.model(input_ids=inputs, labels=labels)
                 loss = outputs[1] / self.number_of_local_steps
 
-            self.scaler.scale(loss).backward()
+            loss.backward()
 
             self.running_loss += loss.item() * self.number_of_local_steps
             self.batch_count += 1
@@ -581,9 +581,8 @@ class Miner(BaseMinerNeuron):
 
     def inner_optimizer_step(self):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.scaler.unscale_(optimizer=self.inner_optimizer)
-        self.scaler.step(self.inner_optimizer)
-        self.scaler.update()
+        
+        self.inner_optimizer.step()
 
         self.scheduler.step()
 
