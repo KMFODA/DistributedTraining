@@ -129,7 +129,8 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Starting training thread
         self.start_continuous_training()
-
+        import distributed_training
+        loop = asyncio.new_event_loop()
         # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:
@@ -151,47 +152,54 @@ class BaseMinerNeuron(BaseNeuron):
                             self.wandb.log(self.event)
                             self.event = {}
 
-                    if not self.all_reduce_success_status:
-                        wait_time = (
-                            self.allreduce_timeout
-                            + self.upload_state_duration
-                            - time.perf_counter()
-                            + self.all_reduce_start_time
-                        )
-                        bt.logging.info(
-                            f"Waiting {int(wait_time)} seconds until validator complete the all_reduce"
-                        )
-                        # Wait for the master validator to upload new global model
-                        time.sleep(wait_time)
-                        # Check if master validator has failed to all_reduce
-                        self.global_progress.epoch = get_global_epoch(self)
-                        if self.local_progress.epoch > self.global_progress.epoch:
-                            bt.logging.info(
-                                f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
-                            )
-                            load_state_from_peer(
-                                self,
-                                epoch=self.global_progress.epoch,
-                            )
-                        else:
-                            load_state_from_peer(
-                                self,
-                                repo_id=self.config.neuron.local_model_name,
-                                epoch=self.global_progress.epoch,
-                            )
-                        self.model.config.block_list = []
+                    if (self.local_progress.inner_step != 0) and (self.local_progress.inner_step % 20 == 0):
+                        # breakpoint()
+                        loop.run_until_complete(self.all_reduce(distributed_training.protocol.AllReduce(min_group_size=1, timeout = 420)))
+                        # breakpoint()
                         self.resume_training()
-                        self.all_reduce_success_status = True
-                    else:
-                        if (self.last_allreduce_block is not None) and (
-                            (time.perf_counter() - self.all_reduce_start_time)
-                            > (self.allreduce_timeout + self.upload_state_duration)
-                        ):
-                            self.load_state(reset_last_allreduce_block=True)
-                        elif (self.last_allreduce_block is None) and (
-                            self.current_block % self.config.neuron.epoch_length == 0
-                        ):
-                            self.load_state(reset_last_allreduce_block=False)
+                        time.sleep(120)
+
+                    # if not self.all_reduce_success_status:
+                    #     wait_time = (
+                    #         self.allreduce_timeout
+                    #         + self.upload_state_duration
+                    #         - time.perf_counter()
+                    #         + self.all_reduce_start_time
+                    #     )
+                    #     bt.logging.info(
+                    #         f"Waiting {int(wait_time)} seconds until validator complete the all_reduce"
+                    #     )
+                    #     # Wait for the master validator to upload new global model
+                    #     time.sleep(wait_time)
+                    #     # Check if master validator has failed to all_reduce
+                    #     self.global_progress.epoch = get_global_epoch(self)
+                    #     if self.local_progress.epoch > self.global_progress.epoch:
+                    #         bt.logging.info(
+                    #             f"Local Epoch {self.local_progress.epoch} Behind Global Epoch {self.global_progress.epoch}. Loading Latest Model State."
+                    #         )
+                    #         load_state_from_peer(
+                    #             self,
+                    #             epoch=self.global_progress.epoch,
+                    #         )
+                    #     else:
+                    #         load_state_from_peer(
+                    #             self,
+                    #             repo_id=self.config.neuron.local_model_name,
+                    #             epoch=self.global_progress.epoch,
+                    #         )
+                    #     self.model.config.block_list = []
+                    #     self.resume_training()
+                    #     self.all_reduce_success_status = True
+                    # else:
+                    #     if (self.last_allreduce_block is not None) and (
+                    #         (time.perf_counter() - self.all_reduce_start_time)
+                    #         > (self.allreduce_timeout + self.upload_state_duration)
+                    #     ):
+                    #         self.load_state(reset_last_allreduce_block=True)
+                    #     elif (self.last_allreduce_block is None) and (
+                    #         self.current_block % self.config.neuron.epoch_length == 0
+                    #     ):
+                    #         self.load_state(reset_last_allreduce_block=False)
 
                     # Wait before checking again.
                     time.sleep(1)

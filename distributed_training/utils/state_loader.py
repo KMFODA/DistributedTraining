@@ -333,25 +333,25 @@ def load_model_optimizer_gradient_averager(
             ):
                 continue
 
-            # Delete existing model
-            if hasattr(self, "model"):
-                transformer = self.model.model.transformer
-                for component in ["wte", "wpe"]:
-                    if hasattr(transformer, component):
-                        comp = getattr(transformer, component)
-                        if hasattr(comp, "weight"):
-                            del comp.weight
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        if hasattr(comp, "norm"):
-                            del comp.norm
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        delattr(transformer, component)
-                del self.model
-                gc.collect()
-                torch.cuda.empty_cache()
-                bt.logging.info("Deleted Model")
+            # # Delete existing model
+            # if hasattr(self, "model"):
+            #     transformer = self.model.model.transformer
+            #     for component in ["wte", "wpe"]:
+            #         if hasattr(transformer, component):
+            #             comp = getattr(transformer, component)
+            #             if hasattr(comp, "weight"):
+            #                 del comp.weight
+            #                 gc.collect()
+            #                 torch.cuda.empty_cache()
+            #             if hasattr(comp, "norm"):
+            #                 del comp.norm
+            #                 gc.collect()
+            #                 torch.cuda.empty_cache()
+            #             delattr(transformer, component)
+            #     del self.model
+            #     gc.collect()
+            #     torch.cuda.empty_cache()
+            #     bt.logging.info("Deleted Model")
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
@@ -405,39 +405,39 @@ def load_model_optimizer_gradient_averager(
                     num_training_steps=88000,
                 )
 
-                try:
-                    optimizer_state = torch.load(
-                        os.path.join(
-                            model_name.split("/")[-1],
-                            "inner_optimizer.pt",
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
-                except:
-                    optimizer_state = torch.load(
-                        hf_hub_download(
-                            repo_id=model_name,
-                            filename="inner_optimizer.pt",
-                            revision=revision,
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
+                # try:
+                #     optimizer_state = torch.load(
+                #         os.path.join(
+                #             model_name.split("/")[-1],
+                #             "inner_optimizer.pt",
+                #         ),
+                #         weights_only=True,
+                #         map_location="cpu",
+                #     )
+                # except:
+                #     optimizer_state = torch.load(
+                #         hf_hub_download(
+                #             repo_id=model_name,
+                #             filename="inner_optimizer.pt",
+                #             revision=revision,
+                #         ),
+                #         weights_only=True,
+                #         map_location="cpu",
+                #     )
 
-                # Load optimizer state if available
-                if "optimizer_state_dict" in optimizer_state:
-                    self.inner_optimizer.load_state_dict(
-                        optimizer_state["optimizer_state_dict"]
-                    )
-                if "learning_rate" in optimizer_state:
-                    for group in self.inner_optimizer.param_groups:
-                        group["lr"] = optimizer_state["learning_rate"]
-                if "scheduler_state" in optimizer_state:
-                    self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
-                bt.logging.info(
-                    f"Successfully Loaded Inner Optimizer State From {model_name} For Revision {revision}"
-                )
+                # # Load optimizer state if available
+                # if "optimizer_state_dict" in optimizer_state:
+                #     self.inner_optimizer.load_state_dict(
+                #         optimizer_state["optimizer_state_dict"]
+                #     )
+                # if "learning_rate" in optimizer_state:
+                #     for group in self.inner_optimizer.param_groups:
+                #         group["lr"] = optimizer_state["learning_rate"]
+                # if "scheduler_state" in optimizer_state:
+                #     self.scheduler.load_state_dict(optimizer_state["scheduler_state"])
+                # bt.logging.info(
+                #     f"Successfully Loaded Inner Optimizer State From {model_name} For Revision {revision}"
+                # )
 
                 break
 
@@ -547,7 +547,7 @@ def load_model_optimizer_gradient_averager(
         self.device,
     )
 
-    self.scaler = torch.amp.GradScaler(enabled=True)
+    # self.scaler = torch.amp.GradScaler(enabled=True)
 
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(
