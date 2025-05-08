@@ -108,7 +108,7 @@ class AveragingHandler:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[1] / self.number_of_local_steps
+                loss = outputs[0] / self.number_of_local_steps
 
         return math.isnan(loss.item())
 
@@ -191,6 +191,7 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 bt.logging.info("Performing Outer Optimizer Step..")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
@@ -388,6 +389,7 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 bt.logging.info("Performing Outer Optimizer Step")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
