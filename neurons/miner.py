@@ -166,7 +166,9 @@ class Miner(BaseMinerNeuron):
         self._setup_training_params()
 
     def _init_tokenizer(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.global_model_name, use_fast=False)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config.neuron.global_model_name, use_fast=False
+        )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def _setup_model_params(self):
@@ -186,7 +188,7 @@ class Miner(BaseMinerNeuron):
 
         # Load model and components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.local_model_name
+            self, self.config.neuron.local_model_name, self.local_progress.epoch
         )
         self.model.config.block_list = []
         cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
