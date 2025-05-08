@@ -166,7 +166,7 @@ class Miner(BaseMinerNeuron):
         self._setup_training_params()
 
     def _init_tokenizer(self):
-        self.tokenizer = AutoTokenizer.from_pretrained("PrimeIntellect/llama-1b-fresh", use_fast=False)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.config.neuron.global_model_name, use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def _setup_model_params(self):
@@ -186,10 +186,10 @@ class Miner(BaseMinerNeuron):
 
         # Load model and components
         load_model_optimizer_gradient_averager(
-            self, self.config.neuron.local_model_name, self.local_progress.epoch, revision="06865cbf88f84cd80804e2787eeaff84df6b9711"
+            self, self.config.neuron.local_model_name
         )
         self.model.config.block_list = []
-        # cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
+        cleanup_old_cache(self, repo_id=self.config.neuron.local_model_name)
 
         # Setup upload executor
         self.upload_executor = ThreadPoolExecutor(
@@ -643,9 +643,9 @@ class Miner(BaseMinerNeuron):
                 self.local_progress.epoch += 1
                 self.last_allreduce_block = self.current_block
                 bt.logging.info("AllReduce Operation Finished Succesfully")
-                # self.start_background_upload(
-                #     epoch=self.local_progress.epoch,
-                # )
+                self.start_background_upload(
+                    epoch=self.local_progress.epoch,
+                )
                 # Resume training when done
                 self.resume_training()
             else:
