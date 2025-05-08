@@ -124,13 +124,9 @@ class Miner(BaseMinerNeuron):
             loss=0.0,
         )
         self.global_progress = GlobalTrainingProgress(epoch=0, samples_accumulated=0)
-        # self.global_progress.epoch = get_global_epoch(self)
-        # self.local_progress.epoch = self.global_progress.epoch
-        # self.local_progress.inner_step = get_local_inner_step(self)
-        # 6,7 should be NaNs
-        self.global_progress.epoch = 0
-        self.local_progress.epoch = 0
-        self.local_progress.inner_step = 0
+        self.global_progress.epoch = get_global_epoch(self)
+        self.local_progress.epoch = self.global_progress.epoch
+        self.local_progress.inner_step = get_local_inner_step(self)
 
         if self.global_progress.epoch is None:
             bt.logging.error(
@@ -247,18 +243,18 @@ class Miner(BaseMinerNeuron):
             )
         )
         self.model.to(self.device)
-        # if should_sync_model:
-        #     del global_model
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-        #     load_state_from_peer(self, epoch=self.global_progress.epoch)
-        #     # self.start_background_upload(
-        #     #     epoch=self.global_progress.epoch,
-        #     # )
-        # else:
-        #     del global_model
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
+        if should_sync_model:
+            del global_model
+            gc.collect()
+            torch.cuda.empty_cache()
+            load_state_from_peer(self, epoch=self.global_progress.epoch)
+            self.start_background_upload(
+                epoch=self.global_progress.epoch,
+            )
+        else:
+            del global_model
+            gc.collect()
+            torch.cuda.empty_cache()
 
     def upload_model(self, epoch):
         """Unified function to save and upload both model and optimizer state"""
@@ -369,12 +365,12 @@ class Miner(BaseMinerNeuron):
                     tag=f"{__run__}.{epoch}.{self.model.config.inner_step}",
                     tag_message=commit_message,
                 )
-                # # Cleanup old cache
-                # cleanup_old_cache(
-                #     self,
-                #     repo_id=self.config.neuron.local_model_name,
-                #     current_revision=None,
-                # )
+                # Cleanup old cache
+                cleanup_old_cache(
+                    self,
+                    repo_id=self.config.neuron.local_model_name,
+                    current_revision=None,
+                )
 
                 bt.logging.info(
                     f"Successfully pushed new model state with tag {__run__}.{epoch}.{self.model.config.inner_step} to repo: {self.config.neuron.local_model_name}"
@@ -508,14 +504,14 @@ class Miner(BaseMinerNeuron):
                 # Wait if training is paused
                 self.training_active.wait()
 
-                # # Periodic model upload
-                # if (
-                #     len(self.model.config.block_list)
-                #     >= self.config.neuron.target_n_blocks
-                # ):
-                #     self.start_background_upload(
-                #         epoch=self.local_progress.epoch,
-                #     )
+                # Periodic model upload
+                if (
+                    len(self.model.config.block_list)
+                    >= self.config.neuron.target_n_blocks
+                ):
+                    self.start_background_upload(
+                        epoch=self.local_progress.epoch,
+                    )
 
                 bt.logging.debug(":pages: Fetching fineweb-edu pages")
                 dataset = self.training_loop.run_until_complete(
@@ -545,16 +541,10 @@ class Miner(BaseMinerNeuron):
             # Move to device
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
-            # breakpoint()    
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                # breakpoint()
                 loss = outputs[0] / self.number_of_local_steps
-            # breakpoint()
-            # outputs = self.model(input_ids=inputs, labels=labels)
-            # loss = outputs[1] / self.number_of_local_steps
 
-            # self.scaler.scale(loss).backward()
             loss.backward()
 
             self.running_loss += loss.item() * self.number_of_local_steps
@@ -591,9 +581,6 @@ class Miner(BaseMinerNeuron):
 
     def inner_optimizer_step(self):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        # self.scaler.unscale_(optimizer=self.inner_optimizer)
-        # self.scaler.step(self.inner_optimizer)
-        # self.scaler.update()
         self.inner_optimizer.step()
 
         self.scheduler.step()

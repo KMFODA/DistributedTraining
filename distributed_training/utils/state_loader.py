@@ -547,8 +547,6 @@ def load_model_optimizer_gradient_averager(
         self.device,
     )
 
-    # self.scaler = torch.amp.GradScaler(enabled=True)
-
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(
             model_name,
