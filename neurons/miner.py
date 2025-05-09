@@ -124,6 +124,7 @@ class Miner(BaseMinerNeuron):
             url=self.config.neuron.influxdb_url,
             token=self.config.neuron.influxdb_token,
             org=self.config.neuron.influxdb_org,
+            bucket=self.config.neuron.influxdb_bucket,
         )
         self.influx_write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
 

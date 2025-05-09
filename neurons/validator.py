@@ -123,6 +123,16 @@ class Validator(BaseValidatorNeuron):
             )
         except Exception as e:
             bt.logging.error(f"Error reporting scoring metrics: {e}")
+            
+    def _init_metrics_collection(self):
+        # Initialize InfluxDB client
+        self.influx_client = InfluxDBClient(
+            url=self.config.neuron.influxdb_url,
+            token=self.config.neuron.influxdb_token,
+            org=self.config.neuron.influxdb_org,
+            bucket=self.config.neuron.influxdb_bucket,
+        )
+        self.influx_write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
 
     def _init_basic_components(self):
         """Initialize basic validator components"""
@@ -144,6 +154,9 @@ class Validator(BaseValidatorNeuron):
             self.wandb = load_wandb(
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
+        
+        # Tracking metrics
+        self._init_metrics_collection()
 
     def _init_progress_tracking(self):
         self.local_progress = LocalTrainingProgress(
