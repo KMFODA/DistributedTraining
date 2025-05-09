@@ -140,7 +140,7 @@ class Miner(BaseMinerNeuron):
                 self._report_current_metrics()
             except Exception as e:
                 bt.logging.error(f"Error reporting metrics: {e}")
-            time.sleep(15)  # Report every 15 seconds
+            time.sleep(30)  # Report every 30 seconds
 
     def _report_current_metrics(self):
         """Send current miner metrics to InfluxDB"""

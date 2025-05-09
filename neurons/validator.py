@@ -25,7 +25,8 @@ import math
 import threading
 
 import bittensor as bt
-from influxdb_client import Point
+from influxdb_client import InfluxDBClient, Point
+
 from transformers import AutoTokenizer
 
 from distributed_training.base.validator import BaseValidatorNeuron
