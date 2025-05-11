@@ -74,7 +74,7 @@ class AveragingHandler:
             try:
                 pages = await DatasetLoader.next_pages(
                     offset=block,
-                    n_pages=5,
+                    n_pages=35,
                     seed=self.uid,
                 )
                 random.seed(self.uid)
@@ -95,7 +95,7 @@ class AveragingHandler:
                     f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
                 )
                 if attempt < self.retry_limit:
-                    time.sleep(self.retry_delay)  # Wait before the next retry
+                    time.sleep(self.retry_delay * attempt)  # Wait before the next retry
                 else:
                     bt.logging.error(
                         "Maximum retry limit reached. Unable to fetch data."

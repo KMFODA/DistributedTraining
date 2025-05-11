@@ -135,7 +135,7 @@ async def fetch_training_data(self, block, miner_uid):
     try:
         pages = await DatasetLoader.next_pages(
             offset=block,
-            n_pages=5,
+            n_pages=35,
             seed=miner_uid,
         )
         random.seed(miner_uid)
