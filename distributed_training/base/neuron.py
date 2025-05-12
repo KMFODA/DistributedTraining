@@ -128,7 +128,7 @@ class BaseNeuron(ABC):
         self.upload_state_duration = 360
         self.all_reduce_success_status = True
         self.should_all_reduce = False
-        self.retry_limit = 1000
+        self.retry_limit = 100
         self.retry_delay = 60
 
     # @abstractmethod # miner is not using this anymore
