@@ -144,7 +144,7 @@ async def forward(self):
                     self.allreduce_scores,
                     self.allreduce_status_dict,
                     self.event,
-                    succes_rate,
+                    successful_peers_count,
                 ) = self.avg_handler.calculate_allreduce_scores(
                     participating_peers=results["participating_peers"],
                     failed_peers=results["failed_peers"],
@@ -164,15 +164,29 @@ async def forward(self):
                     )
 
                 update_total_scores(self)
-
+                
+                # ---- Report allreduce metrics to dashboard ---
+                participating_count = len(results["participating_peers"])
+                success_rate = 0.0
+                if participating_count > 0:
+                    success_rate = successful_peers_count / participating_count
+                
+                avg_bandwidth = None
+                if results["bandwidths"]:
+                    valid_bandwidths = [b for b in results["bandwidths"] if b is not None]
+                    if valid_bandwidths:
+                        avg_bandwidth = sum(valid_bandwidths) / len(valid_bandwidths)
+                
                 self.report_allreduce_operation(
                     op_id=self.current_block,
                     epoch=self.local_progress.epoch,
-                    succes_rate=succes_rate,
+                    validator_uid=self.uid,
+                    success_rate=success_rate,
                     duration=results["duration"],
-                    participating_miners=results["participating_peers"],
-                    bandwidth=results["bandwidths"]
+                    participating_miners=len(results["participating_peers"]),
+                    bandwidth=avg_bandwidth
                 )
+                # -------
 
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")

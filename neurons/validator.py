@@ -26,6 +26,7 @@ import threading
 
 import bittensor as bt
 from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 
 from transformers import AutoTokenizer
 
@@ -65,31 +66,33 @@ class Validator(BaseValidatorNeuron):
         suffix = "_validators" if self.neuron_type == "ValidatorNeuron" else "_miners"
         self.config.neuron.wandb_project += suffix
 
-    def report_allreduce_operation(self, op_id, epoch, success_rate, duration, participating_miners, bandwidth=None):
+    def report_allreduce_operation(
+        self, op_id, epoch, validator_uid, success_rate, duration, participating_miners_count, bandwidth=None
+    ):
         """Report AllReduce operation metrics to InfluxDB"""
         try:
             point = (
                 Point("allreduce_operations")
                 .tag("operation_id", str(op_id))
                 .tag("epoch", str(epoch))
+                .tag("validator_uid", str(validator_uid))
                 .field("success_rate", float(success_rate))
                 .field("duration", float(duration))
-                .field("participating_miners", int(participating_miners))
+                .field("participating_miners", int(participating_miners_count))
             )
-            
+
             if bandwidth is not None:
                 point = point.field("bandwidth", float(bandwidth))
-            
+
             self.influx_write_api.write(
                 bucket=self.config.neuron.influxdb_bucket,
                 org=self.config.neuron.influxdb_org,
                 record=point,
             )
-            
-            bt.logging.info(f"Reported AllReduce operation {op_id} metrics to InfluxDB")
+            bt.logging.info(f"Validator {validator_uid} reported AllReduce operation {op_id} metrics to InfluxDB")
         except Exception as e:
             bt.logging.error(f"Error reporting AllReduce metrics: {e}")
-    
+
     def report_scoring_metrics(self):
         """Send validator scoring metrics to InfluxDB"""
         try:
@@ -124,7 +127,7 @@ class Validator(BaseValidatorNeuron):
             )
         except Exception as e:
             bt.logging.error(f"Error reporting scoring metrics: {e}")
-            
+
     def _init_metrics_collection(self):
         # Initialize InfluxDB client
         self.influx_client = InfluxDBClient(
@@ -155,7 +158,7 @@ class Validator(BaseValidatorNeuron):
             self.wandb = load_wandb(
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
-        
+
         # Tracking metrics
         self._init_metrics_collection()
 
