@@ -238,7 +238,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.influxdb_url",
         type=str,
         help="The influxdb url",
-        default="http:/13.51.162.187:8086",
+        default="http://13.51.162.187:8086",
     )
     
     parser.add_argument(
