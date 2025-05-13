@@ -230,7 +230,7 @@ def add_args(cls, parser, prefix=None):
     parser.add_argument(
         "--neuron.influxdb_bucket",
         type=str,
-        help="The influxdb url",
+        help="The influxdb bucket",
         default="distributed-training-metrics",
     )
     
@@ -238,7 +238,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.influxdb_url",
         type=str,
         help="The influxdb url",
-        default="http://16.171.145.35:8086",
+        default="http:/13.51.162.187:8086",
     )
     
     parser.add_argument(
