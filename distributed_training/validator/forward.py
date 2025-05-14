@@ -183,7 +183,7 @@ async def forward(self):
                     validator_uid=self.uid,
                     success_rate=success_rate,
                     duration=results["duration"],
-                    participating_miners=len(results["participating_peers"]),
+                    participating_miners_count=len(results["participating_peers"]),
                     bandwidth=avg_bandwidth
                 )
                 # -------
