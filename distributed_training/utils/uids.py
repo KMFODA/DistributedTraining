@@ -361,7 +361,7 @@ def map_uid_to_peerid(self):
 
         hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
     except Exception as e:
-        bt.loggin.info(f"Error {e} when querying UID commitments")
+        bt.logging.info(f"Error {e} when querying UID commitments")
 
     for key, value in result:
         try:
