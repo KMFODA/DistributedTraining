@@ -129,29 +129,38 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
     return scores
 
 
-async def fetch_training_data(self, block, miner_uid):
+async def fetch_training_data(self, block):
     """Async function to fetch training data"""
+    attempt = 0
+    while attempt < self.retry_limit:
+        try:
+            pages = await DatasetLoader.next_pages(
+                offset=block,
+                n_pages=35,
+                seed=self.uid,
+            )
+            random.seed(self.uid)
+            random.shuffle(pages)
 
-    try:
-        pages = await DatasetLoader.next_pages(
-            offset=block,
-            n_pages=35,
-            seed=miner_uid,
-        )
-        random.seed(miner_uid)
-        random.shuffle(pages)
+            dataset = await DatasetLoader.create(
+                batch_size=self.local_batch_size_train,
+                sequence_length=1024,
+                pages_info=pages,
+                tokenizer=self.tokenizer,
+            )
 
-        dataset = await DatasetLoader.create(
-            batch_size=self.config.neuron.local_batch_size_train,
-            sequence_length=1024,
-            pages_info=pages,
-            tokenizer=self.tokenizer,
-        )
-
-        return dataset
-    except Exception as e:
-        bt.logging.error(f"Error fetching training data: {str(e)}")
-        raise
+            return dataset
+        except Exception as e:
+            bt.logging.error(f"Error fetching training data: {str(e)}")
+            attempt += 1
+            bt.logging.warning(
+                f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
+            )
+            if attempt < self.retry_limit:
+                time.sleep(self.retry_delay * attempt)  # Wait before the next retry
+            else:
+                bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
+                raise
 
 
 async def score_uid(self, uid: int):

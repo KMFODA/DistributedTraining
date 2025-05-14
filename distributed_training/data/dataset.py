@@ -381,7 +381,9 @@ class DatasetLoader(SubsetLoader):
                 # Handle HTTP client errors with a retry mechanism
                 attempt += 1
                 if attempt < retry_limit:
-                    await asyncio.sleep(self.retry_delay*attempt)  # Wait before retrying
+                    await asyncio.sleep(
+                        self.retry_delay * attempt
+                    )  # Wait before retrying
                 else:
                     raise Exception(
                         f"Maximum retry attempts exceeded for page {page}"
