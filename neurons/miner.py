@@ -227,7 +227,7 @@ class Miner(BaseMinerNeuron):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.global_model_name,
             revision=f"{__run__}.{self.global_progress.epoch}.0",
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
 
         if self.config.neuron.global_model_name == self.config.neuron.local_model_name:

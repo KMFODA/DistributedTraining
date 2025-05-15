@@ -350,6 +350,7 @@ def decode_metadata(encoded_ss58: tuple, metadata: dict) -> tuple[str, str]:
 
 
 def map_uid_to_peerid(self):
+    result = {}
     try:
         subtensor = bt.subtensor(config=self.config)
         result = subtensor.substrate.query_map(
