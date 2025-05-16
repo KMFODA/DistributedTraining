@@ -154,7 +154,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.global_model_name",
         type=str,
         help="The model to be trained",
-        default="distributed/optimized-gpt2-1b",
+        default="distributed/llama-1b",
     )
 
     parser.add_argument(
@@ -189,7 +189,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.target_n_blocks",
         type=int,
         help="The hivemind global target_batch_size",
-        default=5,
+        default=2,
     )
 
     parser.add_argument(

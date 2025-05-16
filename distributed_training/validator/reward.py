@@ -129,29 +129,38 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
     return scores
 
 
-async def fetch_training_data(self, block, miner_uid):
+async def fetch_training_data(self, block, uid):
     """Async function to fetch training data"""
+    attempt = 0
+    while attempt < self.retry_limit:
+        try:
+            pages = await DatasetLoader.next_pages(
+                offset=block,
+                n_pages=35,
+                seed=uid,
+            )
+            random.seed(uid)
+            random.shuffle(pages)
 
-    try:
-        pages = await DatasetLoader.next_pages(
-            offset=block,
-            n_pages=5,
-            seed=miner_uid,
-        )
-        random.seed(miner_uid)
-        random.shuffle(pages)
+            dataset = await DatasetLoader.create(
+                batch_size=self.local_batch_size_train,
+                sequence_length=1024,
+                pages_info=pages,
+                tokenizer=self.tokenizer,
+            )
 
-        dataset = await DatasetLoader.create(
-            batch_size=self.config.neuron.local_batch_size_train,
-            sequence_length=1024,
-            pages_info=pages,
-            tokenizer=self.tokenizer,
-        )
-
-        return dataset
-    except Exception as e:
-        bt.logging.error(f"Error fetching training data: {str(e)}")
-        raise
+            return dataset
+        except Exception as e:
+            bt.logging.error(f"Error fetching training data: {str(e)}")
+            attempt += 1
+            bt.logging.warning(
+                f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
+            )
+            if attempt < self.retry_limit:
+                time.sleep(self.retry_delay * attempt)  # Wait before the next retry
+            else:
+                bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
+                raise
 
 
 async def score_uid(self, uid: int):
@@ -163,16 +172,6 @@ async def score_uid(self, uid: int):
     self.local_progress.inner_step = get_local_inner_step(self, model_huggingface_id)
     revision = f"{__run__}.{local_epoch}.{self.local_progress.inner_step}"
 
-    accepted_files = [
-        "README.md",
-        ".gitattributes",
-        "config.json",
-        "model.safetensors",
-        "inner_optimizer.pt",
-        "inner_optimizer.npz",
-        "outer_optimizer.pt",
-        "outer_optimizer.npz",
-    ]
     blocks = []
     time_delta = 0
     try:
@@ -198,50 +197,8 @@ async def score_uid(self, uid: int):
 
         commits = list_repo_commits(model_huggingface_id, repo_type="model")[:2]
         latest_commit = commits[0].commit_id
+        previous_commit = commits[1].commit_id
         time_delta = (commits[0].created_at - commits[1].created_at).seconds
-
-        # Check current model configs haven't been altered
-        config_path = hf_hub_download(
-            repo_id=model_huggingface_id,
-            filename="config.json",
-            revision=commits[0].commit_id,
-        )
-        with open(config_path) as config_data:
-            config = json.load(config_data)
-
-        if config["auto_map"] != self.global_model_config.auto_map:
-            raise Exception(
-                f"Score 0 for UID {uid}: Commit {commits[0].commit_id} config differs from the global model config"
-            )
-
-        for file in list_repo_files(
-            repo_id=model_huggingface_id, revision=commits[0].commit_id
-        ):
-            if file not in accepted_files:
-                raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commit {commits[0].commit_id} not in list of accepted files {accepted_files}"
-                )
-
-        config_final_path = hf_hub_download(
-            repo_id=model_huggingface_id,
-            filename="config.json",
-            revision=commits[1].commit_id,
-        )
-        with open(config_final_path) as config_final_data:
-            config_final = json.load(config_final_data)
-
-        if config_final["auto_map"] != self.global_model_config.auto_map:
-            raise Exception(
-                f"Score 0 for UID {uid}: Commit {commits[1].commit_id} config differs from the global model config"
-            )
-
-        for file in list_repo_files(
-            repo_id=model_huggingface_id, revision=commits[1].commit_id
-        ):
-            if file not in accepted_files:
-                raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
-                )
 
         load_state_from_peer(
             self,
@@ -249,7 +206,7 @@ async def score_uid(self, uid: int):
             epoch=local_epoch,
             reload_inner_optimizer=True,
             reload_outer_optimizer=False,
-            revision=commits[0].commit_id,
+            revision=previous_commit,
             use_fallback_model=False,
         )
         # Only set self.local_progress.epoch if model is correct format
@@ -262,7 +219,7 @@ async def score_uid(self, uid: int):
         )
 
         model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+            model_huggingface_id, revision=latest_commit, trust_remote_code=False
         )
 
         if ("block_list" in self.model.config.__dict__) and (
@@ -284,12 +241,12 @@ async def score_uid(self, uid: int):
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs[1] / self.number_of_local_steps
+                        loss = outputs.loss / self.number_of_local_steps
 
                     if math.isnan(loss.item()):
                         raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
 
-                    self.scaler.scale(loss).backward()
+                    loss.backward()
 
                     self.running_loss += loss.item() * self.number_of_local_steps
                     self.batch_count += 1
@@ -312,9 +269,7 @@ async def score_uid(self, uid: int):
                         )
 
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                        self.scaler.unscale_(optimizer=self.inner_optimizer)
-                        self.scaler.step(self.inner_optimizer)
-                        self.scaler.update()
+                        self.inner_optimizer.step()
 
                         self.scheduler.step()
 
@@ -399,7 +354,7 @@ def score_models(model_1, model_2):
 
 def score_repo(self, repo_id: str) -> bool:
     try:
-        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
+        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=False)
         if (
             (self.global_model_config.n_embd != local_config.n_embd)
             or (self.global_model_config.n_head != local_config.n_head)

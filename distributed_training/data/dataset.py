@@ -21,6 +21,8 @@ import typing
 import aiohttp
 import numpy as np
 import torch
+import time
+import bittensor as bt
 from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
 
@@ -214,8 +216,8 @@ class DatasetLoader(SubsetLoader):
     rows_base_url: str = "https://datasets-server.huggingface.co/rows"
     size_base_url: str = "https://datasets-server.huggingface.co/size"
 
-    retry_limit: int = 10  # Number of retries
-    retry_delay: int = 5  # Seconds to wait between retries
+    retry_limit: int = 5  # Number of retries
+    retry_delay: int = 60  # Seconds to wait between retries
     num_rows_per_page: int = 100
 
     @staticmethod
@@ -379,7 +381,9 @@ class DatasetLoader(SubsetLoader):
                 # Handle HTTP client errors with a retry mechanism
                 attempt += 1
                 if attempt < retry_limit:
-                    await asyncio.sleep(self.retry_delay)  # Wait before retrying
+                    await asyncio.sleep(
+                        self.retry_delay * attempt
+                    )  # Wait before retrying
                 else:
                     raise Exception(
                         f"Maximum retry attempts exceeded for page {page}"

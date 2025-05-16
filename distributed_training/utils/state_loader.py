@@ -271,7 +271,7 @@ def load_model_optimizer_gradient_averager(
     )
     global_model_name = self.config.neuron.global_model_name
     self.global_model_config = AutoConfig.from_pretrained(
-        global_model_name, trust_remote_code=True
+        global_model_name, trust_remote_code=False
     )
     if use_fallback_model:
         model_name_list = [local_model_name, global_model_name]
@@ -333,30 +333,30 @@ def load_model_optimizer_gradient_averager(
             ):
                 continue
 
-            # Delete existing model
-            if hasattr(self, "model"):
-                transformer = self.model.model.transformer
-                for component in ["wte", "wpe"]:
-                    if hasattr(transformer, component):
-                        comp = getattr(transformer, component)
-                        if hasattr(comp, "weight"):
-                            del comp.weight
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        if hasattr(comp, "norm"):
-                            del comp.norm
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        delattr(transformer, component)
-                del self.model
-                gc.collect()
-                torch.cuda.empty_cache()
-                bt.logging.info("Deleted Model")
+            # # Delete existing model
+            # if hasattr(self, "model"):
+            #     transformer = self.model.model.transformer
+            #     for component in ["wte", "wpe"]:
+            #         if hasattr(transformer, component):
+            #             comp = getattr(transformer, component)
+            #             if hasattr(comp, "weight"):
+            #                 del comp.weight
+            #                 gc.collect()
+            #                 torch.cuda.empty_cache()
+            #             if hasattr(comp, "norm"):
+            #                 del comp.norm
+            #                 gc.collect()
+            #                 torch.cuda.empty_cache()
+            #             delattr(transformer, component)
+            #     del self.model
+            #     gc.collect()
+            #     torch.cuda.empty_cache()
+            #     bt.logging.info("Deleted Model")
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 revision=revision,
-                trust_remote_code=True,
+                trust_remote_code=False,
             )
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
@@ -547,8 +547,6 @@ def load_model_optimizer_gradient_averager(
         self.device,
     )
 
-    self.scaler = torch.amp.GradScaler(enabled=True)
-
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(
             model_name,
@@ -700,41 +698,54 @@ def cleanup_old_cache(self, repo_id=None, current_revision=None):
         current_revision = self.model.config._commit_hash
 
     cache_info = scan_cache_dir()
+    broken_cache_list = [str(warning) for warning in cache_info.warnings]
+    cache_dir = HF_HUB_CACHE
+    cache_dir = Path(cache_dir).expanduser().resolve()
     bt.logging.info("Cache clearing warnings:")
     bt.logging.info(f"{cache_info.warnings}")
 
     # Delete cache using preferred huggingface cache clearing method
-    for repo in cache_info.repos:
-        if repo.repo_id == repo_id:
-            revisions = sorted(
-                repo.revisions, key=lambda r: r.last_modified, reverse=True
-            )
+    if current_revision is None:
+        for cache in cache_dir.iterdir():
+            if repo_id.replace("/", "--") in str(cache):
+                bt.logging.info(f"Deleting the entire cache folder for repo {repo_id}.")
+                try:
+                    shutil.rmtree(str(cache))
+                except OSError as e:
+                    bt.logging.info(
+                        "Error: %s - %s deleting the entire cache folder for the repo: %s"
+                        % (e.filename, e.strerror, repo_id)
+                    )
 
-            bt.logging.info(
-                f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
-            )
-            for revision in revisions:
-                if (current_revision is not None) and (
-                    revision.commit_hash == current_revision
-                ):
-                    bt.logging.info(
-                        f"Skipping cache for current revision {revision.commit_hash}"
-                    )
-                    continue
-                else:
-                    bt.logging.info(
-                        f"Deleting cache for revision {revision.commit_hash}"
-                    )
-                    cache_info.delete_revisions(revision.commit_hash).execute()
-            break
+    else:
+        for repo in cache_info.repos:
+            if repo.repo_id == repo_id:
+                revisions = sorted(
+                    repo.revisions, key=lambda r: r.last_modified, reverse=True
+                )
+
+                bt.logging.info(
+                    f"Found {len(revisions)} model revisions in .cache folder. Proceeding to delete all non-current revision."
+                )
+                for revision in revisions:
+                    if (current_revision is not None) and (
+                        revision.commit_hash == current_revision
+                    ):
+                        bt.logging.info(
+                            f"Skipping cache for current revision {revision.commit_hash}"
+                        )
+                        continue
+                    else:
+                        bt.logging.info(
+                            f"Deleting cache for revision {revision.commit_hash}"
+                        )
+                        cache_info.delete_revisions(revision.commit_hash).execute()
+                break
 
     # Forcefully remove the entire cache folder for a model if it's corrupted
-    repo_folder_name = repo_id.replace("/", "--")
-    if sum([repo_folder_name in str(warning) for warning in cache_info.warnings]) > 0:
-        cache_dir = HF_HUB_CACHE
-        cache_dir = Path(cache_dir).expanduser().resolve()
+    if len(broken_cache_list) > 1:
         for cache in cache_dir.iterdir():
-            if repo_folder_name in str(cache):
+            if str(cache) in str(broken_cache_list):
                 bt.logging.info(
                     f"Found repo {repo_id} in HF cache warning message. Proceeding to delete the entire cache folder."
                 )
