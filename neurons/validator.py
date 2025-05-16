@@ -131,7 +131,7 @@ class Validator(BaseValidatorNeuron):
 
     def _init_tokenizer(self):
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.neuron.global_model_name, use_fast=False
+            self.config.neuron.global_model_name, use_fast=True
         )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 

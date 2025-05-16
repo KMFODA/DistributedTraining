@@ -167,7 +167,7 @@ class Miner(BaseMinerNeuron):
 
     def _init_tokenizer(self):
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.neuron.global_model_name, use_fast=False
+            self.config.neuron.global_model_name, use_fast=True
         )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -545,7 +545,7 @@ class Miner(BaseMinerNeuron):
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[0] / self.number_of_local_steps
+                loss = outputs.loss / self.number_of_local_steps
 
             loss.backward()
 

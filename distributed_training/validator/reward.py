@@ -197,6 +197,7 @@ async def score_uid(self, uid: int):
 
         commits = list_repo_commits(model_huggingface_id, repo_type="model")[:2]
         latest_commit = commits[0].commit_id
+        previous_commit = commits[1].commit_id
         time_delta = (commits[0].created_at - commits[1].created_at).seconds
 
         load_state_from_peer(
@@ -205,7 +206,7 @@ async def score_uid(self, uid: int):
             epoch=local_epoch,
             reload_inner_optimizer=True,
             reload_outer_optimizer=False,
-            revision=commits[0].commit_id,
+            revision=previous_commit,
             use_fallback_model=False,
         )
         # Only set self.local_progress.epoch if model is correct format
@@ -218,7 +219,7 @@ async def score_uid(self, uid: int):
         )
 
         model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=False
+            model_huggingface_id, revision=latest_commit, trust_remote_code=False
         )
 
         if ("block_list" in self.model.config.__dict__) and (
@@ -240,7 +241,7 @@ async def score_uid(self, uid: int):
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs[0] / self.number_of_local_steps
+                        loss = outputs.loss / self.number_of_local_steps
 
                     if math.isnan(loss.item()):
                         raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
