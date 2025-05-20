@@ -309,30 +309,27 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["loss"] = self.local_progress.loss
 
     bt.logging.info(f"UID {uid} Current Train Score: {scores}")
-    update_total_score(self, uid, target_blocks)
+    update_individual_scores(self, uid, target_blocks)
 
 
-def update_total_score(self, uid, target_blocks):
-    miner_uid_tracker = self.uid_tracker[uid]
+def update_individual_scores(self, uid, target_blocks):
+    uid_data = self.uid_tracker[uid]
 
-    if miner_uid_tracker["train_duration"] != 0:
-        miner_uid_tracker["train_score"] = (
-            miner_uid_tracker["train_similarity_score"]
-            * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
-        ) / miner_uid_tracker["train_duration"]
-
-    if miner_uid_tracker["all_reduce_counts"] != 0:
-        miner_uid_tracker["all_reduce_score"] = (
-            miner_uid_tracker["all_reduce_successes"]
-            / miner_uid_tracker["all_reduce_counts"]
+    if uid_data.get("train_duration", 0) != 0:
+        uid_data["train_score"] = (
+            uid_data["train_similarity_score"]
+            * min(uid_data["train_number_of_blocks"], target_blocks)
+        ) / uid_data["train_duration"]
+    else:
+        uid_data["train_score"] = 0.0
+        
+    if uid_data.get("all_reduce_counts", 0) > 0:
+        uid_data["all_reduce_score"] = (
+            uid_data["all_reduce_successes"]
+            / uid_data["all_reduce_counts"]
         )
-
-    miner_uid_tracker["total_score"] = (
-        0.5 * miner_uid_tracker["train_score"]
-        + 0.5 * miner_uid_tracker["all_reduce_score"]
-    )
-
-    self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+    else:
+        uid_data["all_reduce_score"] = 0.0
 
 
 def score_models(model_1, model_2):
@@ -416,74 +413,86 @@ def benchmark_untested_uids(self):
             )
 
 
-def update_all_reduce_scores(self):
+def update_all_reduce_stats(self):
     try:
-        if self.allreduce_status_dict != {}:
-            for uid in self.allreduce_status_dict.keys():
-                if self.allreduce_status_dict[uid] == "SUCCESS":
-                    self.uid_tracker[int(uid)]["all_reduce_score"] = 1
+        if hasattr(self, 'allreduce_status_dict') and self.allreduce_status_dict:
+            for uid_str, status in self.allreduce_status_dict.items():
+                uid = int(uid_str)
+                if uid in self.uid_tracker:
+                    self.uid_tracker[uid]["all_reduce_counts"] += 1
+                    if status == "SUCCESS":
+                        self.uid_tracker[uid]["all_reduce_successes"] += 1
                 else:
-                    self.uid_tracker[int(uid)]["all_reduce_score"] = 0
+                    bt.logging.warning(f"UID {uid} from allreduce_status_dict not found in uid_tracker.")
+            self.allreduce_status_dict = {}
+        else:
+            bt.logging.info("No AllReduce status to update or allreduce_status_dict not found.")
 
     except Exception as e:
-        bt.logging.info(f"Error {e} updating all_reduce scores")
+        bt.logging.error(f"Error updating all_reduce stats: {e}")
 
 
 def update_total_scores(self):
-    update_all_reduce_scores(self)
+    # Update AllReduce stats from the latest round
+    update_all_reduce_stats(self)
+
+    # Recalculate individual scores
+    for uid_key in self.uid_tracker:
+        uid_data = self.uid_tracker[uid_key]
+        if uid_data["all_reduce_counts"] > 0:
+            uid_data["all_reduce_score"] = (
+                uid_data["all_reduce_successes"]
+                / uid_data["all_reduce_counts"]
+            )
+        else:
+            uid_data["all_reduce_score"] = 0.0
+            
     # Sort uid tracker
     self.uid_tracker = dict(sorted(self.uid_tracker.items()))
 
     # Normalise each type of reward
-    train_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["train_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
-    ).item()
-    all_reduce_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["all_reduce_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
-    ).item()
-    repo_valid_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["repo_valid_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
-    ).item()
+    all_train_scores = [
+        self.uid_tracker[uid].get("train_score", 0.0) for uid in self.uid_tracker
+    ]
+    all_all_reduce_scores = [
+        self.uid_tracker[uid].get("all_reduce_score", 0.0) for uid in self.uid_tracker
+    ]
+    all_repo_valid_scores = [
+        self.uid_tracker[uid].get("repo_valid_score", 0.0) for uid in self.uid_tracker
+    ]
 
-    # Check if any norms are zero or contains NaN values
-    if np.any(train_score_normalised == 0) or np.isnan(train_score_normalised).any():
-        train_score_normalised = np.ones_like(train_score_normalised).item()
+    train_score_norm = (
+        np.linalg.norm(all_train_scores, ord=1) if any(all_train_scores) else 1.0
+    )
+    all_reduce_score_norm = (
+        np.linalg.norm(all_all_reduce_scores, ord=1)
+        if any(all_all_reduce_scores)
+        else 1.0
+    )
+    repo_valid_score_norm = (
+        np.linalg.norm(all_repo_valid_scores, ord=1)
+        if any(all_repo_valid_scores)
+        else 1.0
+    )
 
-    if (
-        np.any(all_reduce_score_normalised == 0)
-        or np.isnan(all_reduce_score_normalised).any()
-    ):
-        all_reduce_score_normalised = np.ones_like(all_reduce_score_normalised).item()
-
-    if (
-        np.any(repo_valid_score_normalised == 0)
-        or np.isnan(repo_valid_score_normalised).any()
-    ):
-        repo_valid_score_normalised = np.ones_like(repo_valid_score_normalised).item()
+    if train_score_norm == 0:
+        train_score_norm = 1.0
+    if all_reduce_score_norm == 0:
+        all_reduce_score_norm = 1.0
+    if repo_valid_score_norm == 0:
+        repo_valid_score_norm = 1.0
 
     # Update total scores with repo_valid_score if train_score or all_reduce_score are 0
     # Otherwise score using weighted train_score and all_reduce_score
-    for uid in self.uid_tracker:
-        if (self.uid_tracker[uid]["all_reduce_score"] == 0) and (
-            self.uid_tracker[uid]["train_score"] == 0
-        ):
-            self.uid_tracker[uid]["total_score"] = (
-                self.uid_tracker[uid]["repo_valid_score"] / repo_valid_score_normalised
-            )
+    for uid_key in self.uid_tracker:
+        uid_data = self.uid_tracker[uid_key]
+        train_s = uid_data.get("train_score", 0.0) # using .get for safety
+        all_reduce_s = uid_data.get("all_reduce_score", 0.0)
+        repo_valid_s = uid_data.get("repo_valid_score", 0.0)
+
+        if train_s == 0 and all_reduce_s == 0:
+            uid_data["total_score"] = repo_valid_s / repo_valid_score_norm
         else:
-            self.uid_tracker[uid]["total_score"] = (
-                ((0.5 * self.uid_tracker[uid]["train_score"]) / train_score_normalised)
-                # * self.uid_tracker[uid]["repo_valid_score"]
-            ) + (
-                (0.5 * self.uid_tracker[uid]["all_reduce_score"])
-                / all_reduce_score_normalised
-            )
+            normalized_train_score = (0.5 * train_s) / train_score_norm
+            normalized_all_reduce_score = (0.5 * all_reduce_s) / all_reduce_score_norm
+            uid_data["total_score"] = normalized_train_score + normalized_all_reduce_score
