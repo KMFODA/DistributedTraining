@@ -131,7 +131,7 @@ class Validator(BaseValidatorNeuron):
         self.failed_is_alive_counter_threshold = 10
 
     def _init_tokenizer(self):
-        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=True)
+        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=False)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def _setup_model_state(self):
