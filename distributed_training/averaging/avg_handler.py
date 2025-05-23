@@ -108,7 +108,7 @@ class AveragingHandler:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs.loss / self.number_of_local_steps
+                loss = outputs[1] / self.number_of_local_steps
 
         return math.isnan(loss.item())
 

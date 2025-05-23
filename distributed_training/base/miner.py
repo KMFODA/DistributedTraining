@@ -129,6 +129,7 @@ class BaseMinerNeuron(BaseNeuron):
 
         # Starting training thread
         self.start_continuous_training()
+
         # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:

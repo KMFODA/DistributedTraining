@@ -227,7 +227,7 @@ class Miner(BaseMinerNeuron):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.global_model_name,
             revision=f"{__run__}.{self.global_progress.epoch}.0",
-            trust_remote_code=False,
+            trust_remote_code=True,
         )
 
         if self.config.neuron.global_model_name == self.config.neuron.local_model_name:
@@ -545,7 +545,7 @@ class Miner(BaseMinerNeuron):
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs.loss / self.number_of_local_steps
+                loss = outputs[1] / self.number_of_local_steps
 
             loss.backward()
 
@@ -583,7 +583,9 @@ class Miner(BaseMinerNeuron):
 
     def inner_optimizer_step(self):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.inner_optimizer.step()
+        self.scaler.unscale_(optimizer=self.inner_optimizer)
+        self.scaler.step(self.inner_optimizer)
+        self.scaler.update()
 
         self.scheduler.step()
 

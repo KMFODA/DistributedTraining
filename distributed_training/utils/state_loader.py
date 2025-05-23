@@ -271,7 +271,7 @@ def load_model_optimizer_gradient_averager(
     )
     global_model_name = self.config.neuron.global_model_name
     self.global_model_config = AutoConfig.from_pretrained(
-        global_model_name, trust_remote_code=False
+        global_model_name, trust_remote_code=True
     )
     if use_fallback_model:
         model_name_list = [local_model_name, global_model_name]
@@ -356,7 +356,7 @@ def load_model_optimizer_gradient_averager(
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 revision=revision,
-                trust_remote_code=False,
+                trust_remote_code=True,
             )
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
@@ -547,6 +547,8 @@ def load_model_optimizer_gradient_averager(
         self.device,
     )
 
+    self.scaler = torch.amp.GradScaler(enabled=True)
+
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(
             model_name,
@@ -635,7 +637,7 @@ def load_state_from_peer(
 
             # Clean up old cache
             try:
-                cleanup_old_cache(self)
+                cleanup_old_cache(self, repo_id, revision)
             except Exception as e:
                 bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 

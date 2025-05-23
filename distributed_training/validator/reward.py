@@ -172,6 +172,17 @@ async def score_uid(self, uid: int):
     self.local_progress.inner_step = get_local_inner_step(self, model_huggingface_id)
     revision = f"{__run__}.{local_epoch}.{self.local_progress.inner_step}"
 
+    accepted_files = [
+        "README.md",
+        ".gitattributes",
+        "config.json",
+        "model.safetensors",
+        "inner_optimizer.pt",
+        "inner_optimizer.npz",
+        "outer_optimizer.pt",
+        "outer_optimizer.npz",
+    ]
+
     blocks = []
     time_delta = 0
     try:
@@ -200,6 +211,49 @@ async def score_uid(self, uid: int):
         previous_commit = commits[1].commit_id
         time_delta = (commits[0].created_at - commits[1].created_at).seconds
 
+        # Check current model configs haven't been altered
+        config_path = hf_hub_download(
+            repo_id=model_huggingface_id,
+            filename="config.json",
+            revision=commits[0].commit_id,
+        )
+        with open(config_path) as config_data:
+            config = json.load(config_data)
+
+        if config["auto_map"] != self.global_model_config.auto_map:
+            raise Exception(
+                f"Score 0 for UID {uid}: Commit {commits[0].commit_id} config differs from the global model config"
+            )
+
+        for file in list_repo_files(
+            repo_id=model_huggingface_id, revision=commits[0].commit_id
+        ):
+            if file not in accepted_files:
+                raise Exception(
+                    f"Score 0 for UID {uid}: File {file} for commit {commits[0].commit_id} not in list of accepted files {accepted_files}"
+                )
+
+        config_final_path = hf_hub_download(
+            repo_id=model_huggingface_id,
+            filename="config.json",
+            revision=commits[1].commit_id,
+        )
+        with open(config_final_path) as config_final_data:
+            config_final = json.load(config_final_data)
+
+        if config_final["auto_map"] != self.global_model_config.auto_map:
+            raise Exception(
+                f"Score 0 for UID {uid}: Commit {commits[1].commit_id} config differs from the global model config"
+            )
+
+        for file in list_repo_files(
+            repo_id=model_huggingface_id, revision=commits[1].commit_id
+        ):
+            if file not in accepted_files:
+                raise Exception(
+                    f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
+                )
+
         load_state_from_peer(
             self,
             repo_id=model_huggingface_id,
@@ -219,9 +273,8 @@ async def score_uid(self, uid: int):
         )
 
         model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=latest_commit, trust_remote_code=False
+            model_huggingface_id, revision=latest_commit, trust_remote_code=True
         )
-
         if ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
         ):
@@ -231,22 +284,24 @@ async def score_uid(self, uid: int):
             )
         else:
             blocks = model_final.config.block_list
+            self.running_loss = 0.0
+            self.batch_count = 0
+            self.local_progress.samples_accumulated = 0
             for block in blocks:
                 bt.logging.debug(":pages: Fetching fineweb-edu pages")
                 dataset = await fetch_training_data(self, block, uid)
-
                 for inputs, labels in dataset:
                     # Move to device
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs.loss / self.number_of_local_steps
+                        loss = outputs[1] / self.number_of_local_steps
 
                     if math.isnan(loss.item()):
                         raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
 
-                    loss.backward()
+                    self.scaler.scale(loss).backward()
 
                     self.running_loss += loss.item() * self.number_of_local_steps
                     self.batch_count += 1
@@ -269,7 +324,9 @@ async def score_uid(self, uid: int):
                         )
 
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                        self.inner_optimizer.step()
+                        self.scaler.unscale_(optimizer=self.inner_optimizer)
+                        self.scaler.step(self.inner_optimizer)
+                        self.scaler.update()
 
                         self.scheduler.step()
 
@@ -322,11 +379,10 @@ def update_individual_scores(self, uid, target_blocks):
         ) / uid_data["train_duration"]
     else:
         uid_data["train_score"] = 0.0
-        
+
     if uid_data.get("all_reduce_counts", 0) > 0:
         uid_data["all_reduce_score"] = (
-            uid_data["all_reduce_successes"]
-            / uid_data["all_reduce_counts"]
+            uid_data["all_reduce_successes"] / uid_data["all_reduce_counts"]
         )
     else:
         uid_data["all_reduce_score"] = 0.0
@@ -351,7 +407,7 @@ def score_models(model_1, model_2):
 
 def score_repo(self, repo_id: str) -> bool:
     try:
-        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=False)
+        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
         if (
             (self.global_model_config.n_embd != local_config.n_embd)
             or (self.global_model_config.n_head != local_config.n_head)
@@ -415,7 +471,7 @@ def benchmark_untested_uids(self):
 
 def update_all_reduce_stats(self):
     try:
-        if hasattr(self, 'allreduce_status_dict') and self.allreduce_status_dict:
+        if hasattr(self, "allreduce_status_dict") and self.allreduce_status_dict:
             for uid_str, status in self.allreduce_status_dict.items():
                 uid = int(uid_str)
                 if uid in self.uid_tracker:
@@ -423,10 +479,14 @@ def update_all_reduce_stats(self):
                     if status == "SUCCESS":
                         self.uid_tracker[uid]["all_reduce_successes"] += 1
                 else:
-                    bt.logging.warning(f"UID {uid} from allreduce_status_dict not found in uid_tracker.")
+                    bt.logging.warning(
+                        f"UID {uid} from allreduce_status_dict not found in uid_tracker."
+                    )
             self.allreduce_status_dict = {}
         else:
-            bt.logging.info("No AllReduce status to update or allreduce_status_dict not found.")
+            bt.logging.info(
+                "No AllReduce status to update or allreduce_status_dict not found."
+            )
 
     except Exception as e:
         bt.logging.error(f"Error updating all_reduce stats: {e}")
@@ -441,12 +501,11 @@ def update_total_scores(self):
         uid_data = self.uid_tracker[uid_key]
         if uid_data["all_reduce_counts"] > 0:
             uid_data["all_reduce_score"] = (
-                uid_data["all_reduce_successes"]
-                / uid_data["all_reduce_counts"]
+                uid_data["all_reduce_successes"] / uid_data["all_reduce_counts"]
             )
         else:
             uid_data["all_reduce_score"] = 0.0
-            
+
     # Sort uid tracker
     self.uid_tracker = dict(sorted(self.uid_tracker.items()))
 
@@ -486,7 +545,7 @@ def update_total_scores(self):
     # Otherwise score using weighted train_score and all_reduce_score
     for uid_key in self.uid_tracker:
         uid_data = self.uid_tracker[uid_key]
-        train_s = uid_data.get("train_score", 0.0) # using .get for safety
+        train_s = uid_data.get("train_score", 0.0)  # using .get for safety
         all_reduce_s = uid_data.get("all_reduce_score", 0.0)
         repo_valid_s = uid_data.get("repo_valid_score", 0.0)
 
@@ -495,4 +554,6 @@ def update_total_scores(self):
         else:
             normalized_train_score = (0.5 * train_s) / train_score_norm
             normalized_all_reduce_score = (0.5 * all_reduce_s) / all_reduce_score_norm
-            uid_data["total_score"] = normalized_train_score + normalized_all_reduce_score
+            uid_data["total_score"] = (
+                normalized_train_score + normalized_all_reduce_score
+            )
