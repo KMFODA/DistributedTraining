@@ -266,11 +266,12 @@ async def score_uid(self, uid: int):
         # Only set self.local_progress.epoch if model is correct format
         self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
         self.local_progress.samples_accumulated = 0
-        self.local_progress.inner_step = (
+        inner_step_t0 = (
             self.model.config.inner_step
             if "inner_step" in self.model.config.__dict__
             else 0
         )
+        self.local_progress.inner_step = inner_step_t0
 
         model_final = AutoModelForCausalLM.from_pretrained(
             model_huggingface_id, revision=latest_commit, trust_remote_code=True
@@ -340,6 +341,8 @@ async def score_uid(self, uid: int):
                         self.local_progress.samples_accumulated = 0
 
             scores = score_models(self.model, model_final)
+            if self.local_progress.inner_step == inner_step_t0:
+                scores = 0
     except Exception as e:
         # TODO if OSError and e.rrno == errno.ENOSPC score as 1
         scores = 0.0
