@@ -180,8 +180,7 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(f"Succesfully deleted tag {tag_name}")
                 except Exception as e:
                     bt.logging.info(f"Failed to delete tag {tag_name} with error {e}")
-                    breakpoint()
-                time.sleep(1)
+                time.sleep(30)
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
