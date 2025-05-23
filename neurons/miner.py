@@ -27,6 +27,7 @@ import typing
 os.environ["NEST_ASYNCIO"] = "0"
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 import bittensor as bt
 import torch
@@ -157,6 +158,29 @@ class Miner(BaseMinerNeuron):
 
         # Save directory
         self.output_dir = self.config.neuron.local_model_name.split("/")[-1]
+
+        # Create Tag Deletion Queue & Thread
+        self.tag_deletion_queue = Queue()
+        self.tag_deletion_thread = threading.Thread(target=self.delete_tags)
+        self.tag_deletion_thread.start()
+
+    def delete_tags(self):
+        while True:
+            if self.tag_deletion_queue.qsize() <= 0:
+                time.sleep(60)
+            else:
+                tag_name = self.tag_deletion_queue.get()
+                try:
+                    # Update tag for this version
+                    delete_tag(
+                        self.config.neuron.local_model_name,
+                        repo_type="model",
+                        tag=tag_name,
+                    )
+                    bt.logging.info(f"Succesfully deleted tag {tag_name}")
+                except Exception as e:
+                    bt.logging.info(f"Failed to delete tag {tag_name} with error {e}")
+                time.sleep(30)
 
     def _init_model_components(self):
         """Initialize model-related components including tokenizer and optimizer settings."""
@@ -339,17 +363,8 @@ class Miner(BaseMinerNeuron):
                     self.config.neuron.local_model_name, repo_type="model"
                 )
                 for tag in refs.tags:
-                    if (
-                        (tag.name == "None")
-                        or (
-                            (len(tag.name.split(".")) == 3)
-                            and (tag.name.split(".")[0] == __run__)
-                            and (int(tag.name.split(".")[1]) > epoch)
-                        )
-                        or (
-                            tag.name
-                            == f"{__run__}.{epoch}.{self.model.config.inner_step}"
-                        )
+                    if (tag.name == "None") or (
+                        tag.name == f"{__run__}.{epoch}.{self.model.config.inner_step}"
                     ):
                         # Update tag for this version
                         delete_tag(
@@ -357,7 +372,13 @@ class Miner(BaseMinerNeuron):
                             repo_type="model",
                             tag=tag.name,
                         )
-                        time.sleep(5)
+                        time.sleep(30)
+                    elif (
+                        (len(tag.name.split(".")) == 3)
+                        and (tag.name.split(".")[0] == __run__)
+                        and (int(tag.name.split(".")[1]) > epoch)
+                    ):
+                        self.tag_deletion_queue.put(tag.name)
                 # Create new tag for this version
                 create_tag(
                     self.config.neuron.local_model_name,
@@ -466,7 +487,7 @@ class Miner(BaseMinerNeuron):
             try:
                 pages = await DatasetLoader.next_pages(
                     offset=self.current_block,
-                    n_pages=5,
+                    n_pages=35,
                     seed=self.uid,
                 )
                 random.seed(self.uid)
@@ -487,7 +508,7 @@ class Miner(BaseMinerNeuron):
                     f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
                 )
                 if attempt < self.retry_limit:
-                    time.sleep(self.retry_delay)  # Wait before the next retry
+                    time.sleep(self.retry_delay * attempt)  # Wait before the next retry
                 else:
                     bt.logging.error(
                         "Maximum retry limit reached. Unable to fetch data."

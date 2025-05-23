@@ -21,6 +21,7 @@ import os
 import time
 
 os.environ["NEST_ASYNCIO"] = "0"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import math
 import threading
 

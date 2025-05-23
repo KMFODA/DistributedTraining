@@ -350,6 +350,7 @@ def decode_metadata(encoded_ss58: tuple, metadata: dict) -> tuple[str, str]:
 
 
 def map_uid_to_peerid(self):
+    result = {}
     try:
         subtensor = bt.subtensor(config=self.config)
         result = subtensor.substrate.query_map(
@@ -361,7 +362,7 @@ def map_uid_to_peerid(self):
 
         hotkey_to_uid = dict(zip(self.metagraph.hotkeys, self.metagraph.uids.tolist()))
     except Exception as e:
-        bt.loggin.info(f"Error {e} when querying UID commitments")
+        bt.logging.info(f"Error {e} when querying UID commitments")
 
     for key, value in result:
         try:

@@ -318,8 +318,8 @@ class BaseValidatorNeuron(BaseNeuron):
             uids=processed_weight_uids, weights=processed_weights
         )
 
-        bt.logging.debug(f"uint_weights: {uint_weights}")
-        bt.logging.debug(f"uint_uids: {uint_uids}")
+        bt.logging.info(f"uint_weights: {uint_weights}")
+        bt.logging.info(f"uint_uids: {uint_uids}")
 
         # Set the weights on chain via our subtensor connection.
         result, msg = self.subtensor.set_weights(
