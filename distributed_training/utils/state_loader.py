@@ -333,25 +333,25 @@ def load_model_optimizer_gradient_averager(
             ):
                 continue
 
-            # # Delete existing model
-            # if hasattr(self, "model"):
-            #     transformer = self.model.model.transformer
-            #     for component in ["wte", "wpe"]:
-            #         if hasattr(transformer, component):
-            #             comp = getattr(transformer, component)
-            #             if hasattr(comp, "weight"):
-            #                 del comp.weight
-            #                 gc.collect()
-            #                 torch.cuda.empty_cache()
-            #             if hasattr(comp, "norm"):
-            #                 del comp.norm
-            #                 gc.collect()
-            #                 torch.cuda.empty_cache()
-            #             delattr(transformer, component)
-            #     del self.model
-            #     gc.collect()
-            #     torch.cuda.empty_cache()
-            #     bt.logging.info("Deleted Model")
+            # Delete existing model
+            if hasattr(self, "model"):
+                transformer = self.model.model.transformer
+                for component in ["wte", "wpe"]:
+                    if hasattr(transformer, component):
+                        comp = getattr(transformer, component)
+                        if hasattr(comp, "weight"):
+                            del comp.weight
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                        if hasattr(comp, "norm"):
+                            del comp.norm
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                        delattr(transformer, component)
+                del self.model
+                gc.collect()
+                torch.cuda.empty_cache()
+                bt.logging.info("Deleted Model")
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,

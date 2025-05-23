@@ -166,9 +166,7 @@ class Miner(BaseMinerNeuron):
         self._setup_training_params()
 
     def _init_tokenizer(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.neuron.global_model_name, use_fast=True
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=True)
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def _setup_model_params(self):
