@@ -16,7 +16,6 @@ import bittensor as bt
 import hivemind
 import psutil
 import torch
-from memory_profiler import profile
 from datetime import datetime
 
 from hivemind.compression import deserialize_torch_tensor
@@ -32,11 +31,7 @@ from huggingface_hub import (
     scan_cache_dir,
     upload_folder,
 )
-from huggingface_hub.utils import (
-    HfHubHTTPError,
-    RepositoryNotFoundError,
-    EntryNotFoundError,
-)
+from huggingface_hub.utils import HfHubHTTPError
 from huggingface_hub.constants import HF_HUB_CACHE
 from transformers import (
     AutoModelForCausalLM,
@@ -546,8 +541,6 @@ def load_model_optimizer_gradient_averager(
         self.tokenizer,
         self.device,
     )
-
-    self.scaler = torch.amp.GradScaler(enabled=True)
 
     if (self.local_progress.inner_step != 0) and ("." in revision):
         self.state_averager.reset_main_parameters(

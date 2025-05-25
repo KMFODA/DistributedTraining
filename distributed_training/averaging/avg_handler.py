@@ -198,11 +198,17 @@ class AveragingHandler:
                 )
 
                 # Update state_avgs main params with inner optimizer params
-                self.update_main_param_after_outer_step()
+                self.update_local_model_after_outer_step()
+                
+                # Zero grads of outer optimizer
+                self.state_averager.optimizer.zero_grad()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
+                
+                # Clip gradients again
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 # Validate weight updates
                 await self._validate_weight_update(initial_weights, block)
@@ -394,11 +400,19 @@ class AveragingHandler:
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
                 )
-                self.update_main_param_after_outer_step()
+                
+                # Update state_avgs main params with inner optimizer params
+                self.update_local_model_after_outer_step()
+                
+                # Zero grads of outer optimizer
+                self.state_averager.optimizer.zero_grad()
 
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Outer Optimizer Step."
                 )
+                
+                # Clip gradients again
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 # Validate weight updates
                 await self._validate_weight_update(initial_weights, block)
@@ -421,14 +435,14 @@ class AveragingHandler:
                 bt.logging.success("Averaging Round Finished Succesfully")
             return synapse
 
-    def update_main_param_after_outer_step(self):
+    def update_local_model_after_outer_step(self):
         """Update the main parameters with the inner optimizer step"""
         opt_parameters = [
             param
             for group in self.inner_optimizer.param_groups
             for param in group["params"]
         ]
-        for main_param, opt_param in zip(
-            self.state_averager.main_parameters, opt_parameters
+        for local_model_param, avg_param in zip(
+            opt_parameters, self.state_averager.main_parameters
         ):
-            main_param.data.copy_(opt_param.data, non_blocking=True)
+            local_model_param.data.copy_(avg_param.data.to(local_model_param.device), non_blocking=True)
