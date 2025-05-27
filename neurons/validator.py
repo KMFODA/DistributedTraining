@@ -130,13 +130,27 @@ class Validator(BaseValidatorNeuron):
 
     def _init_metrics_collection(self):
         # Initialize InfluxDB client
-        self.influx_client = InfluxDBClient(
-            url=self.config.neuron.influxdb_url,
-            token=self.config.neuron.influxdb_token,
-            org=self.config.neuron.influxdb_org,
-            bucket=self.config.neuron.influxdb_bucket,
-        )
-        self.influx_write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+        self.influx_client = None
+        self.influx_write_api = None
+        try:
+            bt.logging.info("Attempting to initialize InfluxDB client for metrics collection...")
+            self.influx_client = InfluxDBClient(
+                url=self.config.neuron.influxdb_url,
+                token=self.config.neuron.influxdb_token,
+                org=self.config.neuron.influxdb_org,
+            )
+            self.influx_write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+            bt.logging.info("InfluxDB client and write_api initialized successfully.")
+
+        except Exception as e:
+            bt.logging.error(f"Failed to initialize InfluxDB client: {e}. Metrics collection will be disabled.")
+            if self.influx_client:
+                try:
+                    self.influx_client.close()
+                except Exception as close_e:
+                    bt.logging.error(f"Error closing InfluxDB client during cleanup: {close_e}")
+            self.influx_client = None
+            self.influx_write_api = None
 
     def _init_basic_components(self):
         """Initialize basic validator components"""
