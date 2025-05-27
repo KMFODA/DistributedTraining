@@ -22,7 +22,6 @@ import math
 import random
 import time
 from datetime import datetime
-from typing import List
 
 import base58
 import bittensor as bt
@@ -125,29 +124,38 @@ def score_failed_senders(self, uids, failed_peers, participating_peers):
     return scores
 
 
-async def fetch_training_data(self, block, miner_uid):
+async def fetch_training_data(self, block, uid):
     """Async function to fetch training data"""
+    attempt = 0
+    while attempt < self.retry_limit:
+        try:
+            pages = await DatasetLoader.next_pages(
+                offset=block,
+                n_pages=35,
+                seed=uid,
+            )
+            random.seed(uid)
+            random.shuffle(pages)
 
-    try:
-        pages = await DatasetLoader.next_pages(
-            offset=block,
-            n_pages=5,
-            seed=miner_uid,
-        )
-        random.seed(miner_uid)
-        random.shuffle(pages)
+            dataset = await DatasetLoader.create(
+                batch_size=self.local_batch_size_train,
+                sequence_length=1024,
+                pages_info=pages,
+                tokenizer=self.tokenizer,
+            )
 
-        dataset = await DatasetLoader.create(
-            batch_size=self.config.neuron.local_batch_size_train,
-            sequence_length=1024,
-            pages_info=pages,
-            tokenizer=self.tokenizer,
-        )
-
-        return dataset
-    except Exception as e:
-        bt.logging.error(f"Error fetching training data: {str(e)}")
-        raise
+            return dataset
+        except Exception as e:
+            bt.logging.error(f"Error fetching training data: {str(e)}")
+            attempt += 1
+            bt.logging.warning(
+                f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
+            )
+            if attempt < self.retry_limit:
+                time.sleep(self.retry_delay * attempt)  # Wait before the next retry
+            else:
+                bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
+                raise
 
 
 async def score_uid(self, uid: int):
@@ -169,6 +177,7 @@ async def score_uid(self, uid: int):
         "outer_optimizer.pt",
         "outer_optimizer.npz",
     ]
+
     blocks = []
     time_delta = 0
     try:
@@ -194,6 +203,7 @@ async def score_uid(self, uid: int):
 
         commits = list_repo_commits(model_huggingface_id, repo_type="model")[:2]
         latest_commit = commits[0].commit_id
+        previous_commit = commits[1].commit_id
         time_delta = (commits[0].created_at - commits[1].created_at).seconds
 
         # Check current model configs haven't been altered
@@ -245,22 +255,22 @@ async def score_uid(self, uid: int):
             epoch=local_epoch,
             reload_inner_optimizer=True,
             reload_outer_optimizer=False,
-            revision=commits[0].commit_id,
+            revision=previous_commit,
             use_fallback_model=False,
         )
         # Only set self.local_progress.epoch if model is correct format
         self.local_progress.epoch = get_local_epoch(self, model_huggingface_id)
         self.local_progress.samples_accumulated = 0
-        self.local_progress.inner_step = (
+        inner_step_t0 = (
             self.model.config.inner_step
             if "inner_step" in self.model.config.__dict__
             else 0
         )
+        self.local_progress.inner_step = inner_step_t0
 
         model_final = AutoModelForCausalLM.from_pretrained(
-            model_huggingface_id, revision=commits[1].commit_id, trust_remote_code=True
+            model_huggingface_id, revision=latest_commit, trust_remote_code=True
         )
-
         if ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
         ):
@@ -270,10 +280,12 @@ async def score_uid(self, uid: int):
             )
         else:
             blocks = model_final.config.block_list
+            self.running_loss = 0.0
+            self.batch_count = 0
+            self.local_progress.samples_accumulated = 0
             for block in blocks:
                 bt.logging.debug(":pages: Fetching fineweb-edu pages")
                 dataset = await fetch_training_data(self, block, uid)
-
                 for inputs, labels in dataset:
                     # Move to device
                     inputs, labels = inputs.to(self.device), labels.to(self.device)
@@ -324,6 +336,8 @@ async def score_uid(self, uid: int):
                         self.local_progress.samples_accumulated = 0
 
             scores = score_models(self.model, model_final)
+            if self.local_progress.inner_step == inner_step_t0:
+                scores = 0
     except Exception as e:
         # TODO if OSError and e.rrno == errno.ENOSPC score as 1
         scores = 0.0
@@ -350,30 +364,19 @@ async def score_uid(self, uid: int):
     self.uid_tracker[uid]["loss"] = self.local_progress.loss
 
     bt.logging.info(f"UID {uid} Current Train Score: {scores}")
-    update_total_score(self, uid, target_blocks)
+    update_individual_scores(self, uid, target_blocks)
 
 
-def update_total_score(self, uid, target_blocks):
-    miner_uid_tracker = self.uid_tracker[uid]
+def update_individual_scores(self, uid, target_blocks):
+    uid_data = self.uid_tracker[uid]
 
-    if miner_uid_tracker["train_duration"] != 0:
-        miner_uid_tracker["train_score"] = (
-            miner_uid_tracker["train_similarity_score"]
-            * min(miner_uid_tracker["train_number_of_blocks"], target_blocks)
-        ) / miner_uid_tracker["train_duration"]
-
-    if miner_uid_tracker["all_reduce_counts"] != 0:
-        miner_uid_tracker["all_reduce_score"] = (
-            miner_uid_tracker["all_reduce_successes"]
-            / miner_uid_tracker["all_reduce_counts"]
-        )
-
-    miner_uid_tracker["total_score"] = (
-        0.5 * miner_uid_tracker["train_score"]
-        + 0.5 * miner_uid_tracker["all_reduce_score"]
-    )
-
-    self.uid_tracker = dict(sorted(self.uid_tracker.items()))
+    if uid_data.get("train_duration", 0) != 0:
+        uid_data["train_score"] = (
+            uid_data["train_similarity_score"]
+            * min(uid_data["train_number_of_blocks"], target_blocks)
+        ) / uid_data["train_duration"]
+    else:
+        uid_data["train_score"] = 0.0
 
 
 def score_models(model_1, model_2):
@@ -409,7 +412,7 @@ def score_repo(self, repo_id: str) -> bool:
         ):
             return False
         return True
-    except Exception as e:
+    except Exception:
         return False
 
 
@@ -427,7 +430,7 @@ def benchmark_uids(self):
                     self.uid_tracker[uid]["repo_valid_score"] = 0
                 else:
                     self.uid_tracker[uid]["repo_valid_score"] = 1
-            except Exception as e:
+            except Exception:
                 self.uid_tracker[uid]["repo_valid_score"] = 0
         else:
             self.uid_tracker[uid]["repo_valid_score"] = 0
@@ -471,63 +474,64 @@ def update_all_reduce_scores(self):
 
 
 def update_total_scores(self):
+    # Update AllReduce stats from the latest round
     update_all_reduce_scores(self)
+
     # Sort uid tracker
     self.uid_tracker = dict(sorted(self.uid_tracker.items()))
 
     # Normalise each type of reward
-    train_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["train_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
+    train_scores = [
+        self.uid_tracker[uid].get("train_score", 0.0) for uid in self.uid_tracker
+    ]
+    all_reduce_scores = [
+        self.uid_tracker[uid].get("all_reduce_score", 0.0) for uid in self.uid_tracker
+    ]
+    repo_valid_scores = [
+        self.uid_tracker[uid].get("repo_valid_score", 0.0) for uid in self.uid_tracker
+    ]
+
+    train_scores_normalised = (
+        np.linalg.norm(train_scores, ord=1, axis=0, keepdims=True)
+        if any(train_scores)
+        else 1.0
     ).item()
-    all_reduce_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["all_reduce_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
+    all_reduce_scores_normalised = (
+        np.linalg.norm(all_reduce_scores, ord=1, axis=0, keepdims=True)
+        if any(all_reduce_scores)
+        else 1.0
     ).item()
-    repo_valid_score_normalised = np.linalg.norm(
-        [self.uid_tracker[uid]["repo_valid_score"] for uid in self.uid_tracker],
-        ord=1,
-        axis=0,
-        keepdims=True,
+    repo_valid_scores_normalised = (
+        np.linalg.norm(repo_valid_scores, ord=1, axis=0, keepdims=True)
+        if any(repo_valid_scores)
+        else 1.0
     ).item()
 
-    # Check if any norms are zero or contains NaN values
-    if np.any(train_score_normalised == 0) or np.isnan(train_score_normalised).any():
-        train_score_normalised = np.ones_like(train_score_normalised).item()
-
-    if (
-        np.any(all_reduce_score_normalised == 0)
-        or np.isnan(all_reduce_score_normalised).any()
-    ):
-        all_reduce_score_normalised = np.ones_like(all_reduce_score_normalised).item()
-
-    if (
-        np.any(repo_valid_score_normalised == 0)
-        or np.isnan(repo_valid_score_normalised).any()
-    ):
-        repo_valid_score_normalised = np.ones_like(repo_valid_score_normalised).item()
+    # Catch 0 and NaN norms to avoid division by zero
+    if (train_scores_normalised == 0) or np.isnan(train_scores_normalised):
+        train_scores_normalised = 1.0
+    if all_reduce_scores_normalised == 0 or np.isnan(all_reduce_scores_normalised):
+        all_reduce_scores_normalised = 1.0
+    if repo_valid_scores_normalised == 0 or np.isnan(repo_valid_scores_normalised):
+        repo_valid_scores_normalised = 1.0
 
     # Update total scores with repo_valid_score if train_score or all_reduce_score are 0
     # Otherwise score using weighted train_score and all_reduce_score
-    for uid in self.uid_tracker:
-        if (self.uid_tracker[uid]["all_reduce_score"] == 0) and (
-            self.uid_tracker[uid]["train_score"] == 0
-        ):
-            self.uid_tracker[uid]["total_score"] = (
-                self.uid_tracker[uid]["repo_valid_score"] / repo_valid_score_normalised
-            )
+    for uid_key in self.uid_tracker:
+        uid_data = self.uid_tracker[uid_key]
+        train_score = uid_data.get("train_score", 0.0)  # using .get for safety
+        all_reduce_score = uid_data.get("all_reduce_score", 0.0)
+        repo_valid_score = uid_data.get("repo_valid_score", 0.0)
+
+        if train_score == 0 and all_reduce_score == 0:
+            uid_data["total_score"] = repo_valid_score / repo_valid_scores_normalised
         else:
-            self.uid_tracker[uid]["total_score"] = (
-                ((0.5 * self.uid_tracker[uid]["train_score"]) / train_score_normalised)
-                # * self.uid_tracker[uid]["repo_valid_score"]
-                + (
-                    (0.5 * self.uid_tracker[uid]["all_reduce_score"])
-                    / all_reduce_score_normalised
-                )
+            normalized_train_score = (0.5 * train_score) / train_scores_normalised
+            normalized_all_reduce_score = (
+                0.5 * all_reduce_score
+            ) / all_reduce_scores_normalised
+            uid_data["total_score"] = (
+                normalized_train_score + normalized_all_reduce_score
             )
 
     # Add metrics reporting

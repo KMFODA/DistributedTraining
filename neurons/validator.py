@@ -18,16 +18,15 @@
 
 
 import os
-import time
 
 os.environ["NEST_ASYNCIO"] = "0"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import math
 import threading
 
 import bittensor as bt
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
-
 from transformers import AutoTokenizer
 
 from distributed_training.base.validator import BaseValidatorNeuron
@@ -67,7 +66,14 @@ class Validator(BaseValidatorNeuron):
         self.config.neuron.wandb_project += suffix
 
     def report_allreduce_operation(
-        self, op_id, epoch, validator_uid, success_rate, duration, participating_miners_count, bandwidth=None
+        self,
+        op_id,
+        epoch,
+        validator_uid,
+        success_rate,
+        duration,
+        participating_miners_count,
+        bandwidth=None,
     ):
         """Report AllReduce operation metrics to InfluxDB"""
         try:
@@ -89,7 +95,9 @@ class Validator(BaseValidatorNeuron):
                 org=self.config.neuron.influxdb_org,
                 record=point,
             )
-            bt.logging.info(f"Validator {validator_uid} reported AllReduce operation {op_id} metrics to InfluxDB")
+            bt.logging.info(
+                f"Validator {validator_uid} reported AllReduce operation {op_id} metrics to InfluxDB"
+            )
         except Exception as e:
             bt.logging.error(f"Error reporting AllReduce metrics: {e}")
 
@@ -133,22 +141,30 @@ class Validator(BaseValidatorNeuron):
         self.influx_client = None
         self.influx_write_api = None
         try:
-            bt.logging.info("Attempting to initialize InfluxDB client for metrics collection...")
+            bt.logging.info(
+                "Attempting to initialize InfluxDB client for metrics collection..."
+            )
             self.influx_client = InfluxDBClient(
                 url=self.config.neuron.influxdb_url,
                 token=self.config.neuron.influxdb_token,
                 org=self.config.neuron.influxdb_org,
             )
-            self.influx_write_api = self.influx_client.write_api(write_options=SYNCHRONOUS)
+            self.influx_write_api = self.influx_client.write_api(
+                write_options=SYNCHRONOUS
+            )
             bt.logging.info("InfluxDB client and write_api initialized successfully.")
 
         except Exception as e:
-            bt.logging.error(f"Failed to initialize InfluxDB client: {e}. Metrics collection will be disabled.")
+            bt.logging.error(
+                f"Failed to initialize InfluxDB client: {e}. Metrics collection will be disabled."
+            )
             if self.influx_client:
                 try:
                     self.influx_client.close()
                 except Exception as close_e:
-                    bt.logging.error(f"Error closing InfluxDB client during cleanup: {close_e}")
+                    bt.logging.error(
+                        f"Error closing InfluxDB client during cleanup: {close_e}"
+                    )
             self.influx_client = None
             self.influx_write_api = None
 

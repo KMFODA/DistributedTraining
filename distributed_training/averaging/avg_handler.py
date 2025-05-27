@@ -74,7 +74,7 @@ class AveragingHandler:
             try:
                 pages = await DatasetLoader.next_pages(
                     offset=block,
-                    n_pages=5,
+                    n_pages=35,
                     seed=self.uid,
                 )
                 random.seed(self.uid)
@@ -95,7 +95,7 @@ class AveragingHandler:
                     f"Failed to fetch data, retrying. Attempt {attempt}/{self.retry_limit}"
                 )
                 if attempt < self.retry_limit:
-                    time.sleep(self.retry_delay)  # Wait before the next retry
+                    time.sleep(self.retry_delay * attempt)  # Wait before the next retry
                 else:
                     bt.logging.error(
                         "Maximum retry limit reached. Unable to fetch data."
@@ -194,6 +194,7 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 bt.logging.info("Performing Outer Optimizer Step..")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
@@ -392,6 +393,7 @@ class AveragingHandler:
                 bt.logging.info(f"Initial Weights Sample: {initial_weights}")
 
                 # Perform offloaded outer optimization steps
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 bt.logging.info("Performing Outer Optimizer Step")
                 self.state_averager.step(
                     increment_epoch=True, optimizer_step=True, zero_grad=False
