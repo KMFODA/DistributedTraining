@@ -226,28 +226,28 @@ def add_args(cls, parser, prefix=None):
         help="The wandb project to log to",
         default="kmfoda",
     )
-    
+
     parser.add_argument(
         "--neuron.influxdb_bucket",
         type=str,
         help="The influxdb bucket",
         default="distributed-training-metrics",
     )
-    
+
     parser.add_argument(
         "--neuron.influxdb_url",
         type=str,
         help="The influxdb url",
         default="http://13.51.162.187:8086",
     )
-    
+
     parser.add_argument(
         "--neuron.influxdb_token",
         type=str,
         help="The influxdb token",
         default="648b65eb0a5b1d7b48e71e695fd6bb6611936548debaf281cf438df8ce03b74b",
     )
-    
+
     parser.add_argument(
         "--neuron.influxdb_org",
         type=str,

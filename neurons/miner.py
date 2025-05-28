@@ -221,7 +221,6 @@ class Miner(BaseMinerNeuron):
     def _get_gpu_utilization(self):
         """Get GPU utilization percentage"""
         try:
-
             if self.device.startswith("cuda"):
                 result = (
                     subprocess.check_output(

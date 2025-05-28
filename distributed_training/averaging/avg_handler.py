@@ -74,7 +74,7 @@ class AveragingHandler:
             try:
                 pages = await DatasetLoader.next_pages(
                     offset=block,
-                    n_pages=35,
+                    n_pages=5,
                     seed=self.uid,
                 )
                 random.seed(self.uid)
@@ -217,7 +217,7 @@ class AveragingHandler:
                     "participating_peers": participating_peers,
                     "modes": modes,
                     "bandwidths": bandwidths,
-                    "duration": end_ar_time - start_ar_time
+                    "duration": end_ar_time - start_ar_time,
                 }
             else:
                 all_reduce_success_status = False
@@ -352,7 +352,12 @@ class AveragingHandler:
         bt.logging.info(f"AllReduce UID Scores: {scores}")
         bt.logging.info(f"AllReduce UID Rewards: {rewards}")
 
-        return rewards, status_dict, event, successful_peers_count, 
+        return (
+            rewards,
+            status_dict,
+            event,
+            successful_peers_count,
+        )
 
     async def run_miner_allreduce(
         self,
