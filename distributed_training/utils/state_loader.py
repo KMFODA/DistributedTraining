@@ -641,6 +641,14 @@ def load_state_from_peer(
             except Exception as e:
                 bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
 
+            if repo_id != self.self.config.neuron.global_model_name:
+                try:
+                    cleanup_old_cache(
+                        self, self.self.config.neuron.global_model_name, revision=None
+                    )
+                except Exception as e:
+                    bt.logging.warning(f"Failed to cleanup cache: {str(e)}")
+
         else:
             bt.logging.debug(f"Model With Tag: {epoch} Does Not Exist")
 
