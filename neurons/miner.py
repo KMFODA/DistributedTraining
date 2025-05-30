@@ -324,7 +324,9 @@ class Miner(BaseMinerNeuron):
         self._setup_training_params()
 
     def _init_tokenizer(self):
-        self.tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=False)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config.neuron.global_model_name, use_fast=True
+        )
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def _setup_model_params(self):
@@ -383,7 +385,7 @@ class Miner(BaseMinerNeuron):
         global_model = AutoModelForCausalLM.from_pretrained(
             self.config.neuron.global_model_name,
             revision=f"{__run__}.{self.global_progress.epoch}.0",
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
 
         if self.config.neuron.global_model_name == self.config.neuron.local_model_name:
@@ -698,9 +700,9 @@ class Miner(BaseMinerNeuron):
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 outputs = self.model(input_ids=inputs, labels=labels)
-                loss = outputs[1] / self.number_of_local_steps
+                loss = outputs.loss / self.number_of_local_steps
 
-            self.scaler.scale(loss).backward()
+            loss.backward()
 
             self.running_loss += loss.item() * self.number_of_local_steps
             self.batch_count += 1
@@ -736,9 +738,7 @@ class Miner(BaseMinerNeuron):
 
     def inner_optimizer_step(self):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.scaler.unscale_(optimizer=self.inner_optimizer)
-        self.scaler.step(self.inner_optimizer)
-        self.scaler.update()
+        self.inner_optimizer.step()
 
         self.scheduler.step()
 
