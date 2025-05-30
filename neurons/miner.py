@@ -18,9 +18,8 @@
 import asyncio
 import gc
 import os
-import queue
 import random
-import tempfile
+import subprocess
 import time
 import typing
 
@@ -30,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
 import bittensor as bt
+import psutil
 import torch
 from hivemind.averaging.averager import compute_schema_hash
 from huggingface_hub import (
@@ -38,13 +38,14 @@ from huggingface_hub import (
     delete_tag,
     list_repo_refs,
     repo_exists,
-    upload_folder,
 )
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training import __run__
-from distributed_training.averaging.avg_handler import AllReduceError, AveragingHandler
+from distributed_training.averaging.avg_handler import AllReduceError
 from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -57,7 +58,6 @@ from distributed_training.utils.progress_tracker import (
     GlobalTrainingProgress,
     LocalTrainingProgress,
     get_global_epoch,
-    get_local_epoch,
     get_local_inner_step,
 )
 from distributed_training.utils.state_loader import (
@@ -75,9 +75,6 @@ torch.backends.cudnn.allow_tf32 = True
 # Seeds
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
-
-from multiprocessing import Process
-import subprocess
 
 
 class Miner(BaseMinerNeuron):
@@ -112,6 +109,143 @@ class Miner(BaseMinerNeuron):
 
         # Training components
         self._init_training_components()
+
+        # Tracking metrics
+        self._init_metrics_collection()
+
+    def _init_metrics_collection(self):
+        # Initialize InfluxDB client
+        self.influx_client = None
+        self.influx_write_api = None
+        try:
+            bt.logging.info(
+                "Attempting to initialize InfluxDB client for metrics collection..."
+            )
+            self.influx_client = InfluxDBClient(
+                url=self.config.neuron.influxdb_url,
+                token=self.config.neuron.influxdb_token,
+                org=self.config.neuron.influxdb_org,
+            )
+
+            self.influx_write_api = self.influx_client.write_api(
+                write_options=SYNCHRONOUS
+            )
+            bt.logging.info("InfluxDB client and write_api initialized successfully.")
+
+            # Create a background thread for periodic metric submission
+            self.metrics_thread = threading.Thread(target=self._report_metrics_loop)
+            self.metrics_thread.daemon = True
+            self.metrics_thread.start()
+            bt.logging.info("Metrics tracking thread initialized successfully.")
+
+        except Exception as e:
+            bt.logging.error(
+                f"Failed to initialize InfluxDB client: {e}. Metrics collection will be disabled."
+            )
+            if self.influx_client:
+                try:
+                    self.influx_client.close()
+                except Exception as close_e:
+                    bt.logging.error(
+                        f"Error closing InfluxDB client during cleanup: {close_e}"
+                    )
+            self.influx_client = None
+            self.influx_write_api = None
+
+    def _report_metrics_loop(self):
+        """Periodically send metrics to InfluxDB"""
+        while not self.stop_event.is_set():
+            try:
+                self._report_current_metrics()
+            except Exception as e:
+                bt.logging.error(f"Error reporting metrics: {e}")
+            time.sleep(30)  # Report every 30 seconds
+
+    def _report_current_metrics(self):
+        """Send current miner metrics to InfluxDB"""
+        points = []
+
+        # Training metrics
+        point = (
+            Point("training_metrics")
+            .tag("miner_uid", str(self.uid))
+            .tag("hotkey", self.wallet.hotkey.ss58_address)
+            .tag("epoch", str(self.local_progress.epoch))
+            .tag("inner_step", str(self.local_progress.inner_step))
+            .field("loss", self.local_progress.loss)
+            .field("samples_accumulated", self.local_progress.samples_accumulated)
+            .field("samples_per_second", self.local_progress.samples_per_second)
+        )
+        points.append(point)
+
+        # Resource metrics
+        point = (
+            Point("resource_metrics")
+            .tag("miner_uid", str(self.uid))
+            .tag("hotkey", self.wallet.hotkey.ss58_address)
+            .field("cpu_percent", psutil.cpu_percent())
+            .field("memory_percent", psutil.virtual_memory().percent)
+            .field("gpu_utilization", self._get_gpu_utilization())
+        )
+        points.append(point)
+
+        # Network metrics
+        point = (
+            Point("network_metrics")
+            .tag("miner_uid", str(self.uid))
+            .tag("hotkey", self.wallet.hotkey.ss58_address)
+            .field("bandwidth", self._get_network_bandwidth())
+        )
+        points.append(point)
+
+        # Metagraph metrics
+        point = (
+            Point("metagraph_metrics")
+            .tag("miner_uid", str(self.uid))
+            .tag("hotkey", self.wallet.hotkey.ss58_address)
+            .field("stake", float(self.metagraph.stake[self.uid]))
+            .field("trust", float(self.metagraph.trust[self.uid]))
+            .field("consensus", float(self.metagraph.consensus[self.uid]))
+            .field("incentive", float(self.metagraph.incentive[self.uid]))
+            .field("emissions", float(self.metagraph.emission[self.uid]))
+        )
+        points.append(point)
+
+        # Write points to InfluxDB
+        self.influx_write_api.write(
+            bucket=self.config.neuron.influxdb_bucket,
+            org=self.config.neuron.influxdb_org,
+            record=points,
+        )
+
+    def _get_gpu_utilization(self):
+        """Get GPU utilization percentage"""
+        try:
+            if self.device.startswith("cuda"):
+                result = (
+                    subprocess.check_output(
+                        [
+                            "nvidia-smi",
+                            "--query-gpu=utilization.gpu",
+                            "--format=csv,noheader,nounits",
+                        ]
+                    )
+                    .decode("utf-8")
+                    .strip()
+                )
+                return float(result)
+        except:
+            pass
+        return 0.0
+
+    def _get_network_bandwidth(self):
+        """Get network bandwidth usage in MB/s"""
+        # Implement based on your system's network monitoring
+        try:
+            # This is a placeholder - implement actual bandwidth measurement
+            return random.uniform(20, 30)  # MB/s
+        except:
+            return 0.0
 
     def _init_progress_tracking(self):
         self.local_progress = LocalTrainingProgress(

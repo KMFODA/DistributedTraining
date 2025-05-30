@@ -74,7 +74,7 @@ class AveragingHandler:
             try:
                 pages = await DatasetLoader.next_pages(
                     offset=block,
-                    n_pages=35,
+                    n_pages=5,
                     seed=self.uid,
                 )
                 random.seed(self.uid)
@@ -144,6 +144,7 @@ class AveragingHandler:
 
             bt.logging.info(":wait: Starting Pseudo Gradient Averaging..")
             # Start gradient averaging without waiting
+            start_ar_time = time.perf_counter()
             gradient_averaging_step = self.grad_averager.step(
                 timeout=timeout,
                 wait=False,
@@ -174,6 +175,8 @@ class AveragingHandler:
                 await asyncio.sleep(1)
 
             if gradient_averaging_step.done():
+                end_ar_time = time.perf_counter()
+
                 bt.logging.info(
                     ":white_heavy_check_mark: Finished Averaging Pseudo Gradients"
                 )
@@ -214,6 +217,7 @@ class AveragingHandler:
                     "participating_peers": participating_peers,
                     "modes": modes,
                     "bandwidths": bandwidths,
+                    "duration": end_ar_time - start_ar_time,
                 }
             else:
                 all_reduce_success_status = False
@@ -348,7 +352,12 @@ class AveragingHandler:
         bt.logging.info(f"AllReduce UID Scores: {scores}")
         bt.logging.info(f"AllReduce UID Rewards: {rewards}")
 
-        return rewards, status_dict, event
+        return (
+            rewards,
+            status_dict,
+            event,
+            successful_peers_count,
+        )
 
     async def run_miner_allreduce(
         self,
