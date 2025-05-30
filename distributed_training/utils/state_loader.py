@@ -1,6 +1,7 @@
 import copy
 import gc
 import os
+import requests
 import subprocess
 import pytz
 import sys
@@ -900,6 +901,12 @@ def get_top_uid(self):
         for k, v in self.allreduce_status_dict.items()
         if (v == "SUCCESS")
         and (self.uid_tracker[int(k)]["model_huggingface_id"] is not None)
+        and (
+            requests.head(
+                f"https://huggingface.co/api/models/{self.uid_tracker[int(k)]['model_huggingface_id']}"
+            ).status_code
+            == 200
+        )
         and (
             (
                 datetime.now(pytz.utc)

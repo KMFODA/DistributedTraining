@@ -450,17 +450,17 @@ def update_total_scores(self):
     train_scores_normalised = (
         np.linalg.norm(train_scores, ord=1, axis=0, keepdims=True)
         if any(train_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
     all_reduce_scores_normalised = (
         np.linalg.norm(all_reduce_scores, ord=1, axis=0, keepdims=True)
         if any(all_reduce_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
     repo_valid_scores_normalised = (
         np.linalg.norm(repo_valid_scores, ord=1, axis=0, keepdims=True)
         if any(repo_valid_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
 
     # Catch 0 and NaN norms to avoid division by zero
