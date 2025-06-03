@@ -22,6 +22,7 @@ import bittensor as bt
 import numpy as np
 import torch
 
+from distributed_training import __run__
 from distributed_training.averaging.exceptions import GradientAveragingError
 from distributed_training.utils.misc import get_bandwidth
 from distributed_training.utils.progress_tracker import (
@@ -30,19 +31,20 @@ from distributed_training.utils.progress_tracker import (
     get_local_inner_step,
 )
 from distributed_training.utils.state_loader import (
-    upload_new_state,
-    load_state_from_peer,
     get_top_uid,
+    load_state_from_peer,
+    upload_new_state,
 )
-from distributed_training.utils.uids import get_hf_validation_uid, get_random_uids
+from distributed_training.utils.uids import (
+    get_hf_validation_uid,
+    get_random_uids,
+    map_uid_to_peerid,
+)
 from distributed_training.validator.reward import (
-    score_uid,
     benchmark_untested_uids,
-    update_all_reduce_scores,
+    score_uid,
     update_total_scores,
 )
-from distributed_training.utils.uids import map_uid_to_peerid
-from distributed_training import __run__
 
 
 async def forward(self):
@@ -144,6 +146,7 @@ async def forward(self):
                     self.allreduce_scores,
                     self.allreduce_status_dict,
                     self.event,
+                    successful_peers_count,
                 ) = self.avg_handler.calculate_allreduce_scores(
                     participating_peers=results["participating_peers"],
                     failed_peers=results["failed_peers"],
@@ -163,6 +166,31 @@ async def forward(self):
                     )
 
                 update_total_scores(self)
+
+                # ---- Report allreduce metrics to dashboard ---
+                participating_count = len(results["participating_peers"])
+                success_rate = 0.0
+                if participating_count > 0:
+                    success_rate = successful_peers_count / participating_count
+
+                avg_bandwidth = None
+                if results["bandwidths"]:
+                    valid_bandwidths = [
+                        b for b in results["bandwidths"] if b is not None
+                    ]
+                    if valid_bandwidths:
+                        avg_bandwidth = sum(valid_bandwidths) / len(valid_bandwidths)
+
+                self.report_allreduce_operation(
+                    op_id=self.current_block,
+                    epoch=self.local_progress.epoch,
+                    validator_uid=self.uid,
+                    success_rate=success_rate,
+                    duration=results["duration"],
+                    participating_miners_count=len(results["participating_peers"]),
+                    bandwidth=avg_bandwidth,
+                )
+                # -------
 
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")

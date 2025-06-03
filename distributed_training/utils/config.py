@@ -140,7 +140,7 @@ def add_args(cls, parser, prefix=None):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWLiyHyX4SX7KP2bWrm24wg7AgMn5uPGotEKNpk8JxMNMR",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWLrvRTkLxPHTnzA4WWXkCeTphYu1rkqV8yxnWqXkYfr3P",
         ],
     )
     parser.add_argument(
@@ -225,6 +225,34 @@ def add_args(cls, parser, prefix=None):
         type=str,
         help="The wandb project to log to",
         default="kmfoda",
+    )
+
+    parser.add_argument(
+        "--neuron.influxdb_bucket",
+        type=str,
+        help="The influxdb bucket",
+        default="distributed-training-metrics",
+    )
+
+    parser.add_argument(
+        "--neuron.influxdb_url",
+        type=str,
+        help="The influxdb url",
+        default="http://13.51.162.187:8086",
+    )
+
+    parser.add_argument(
+        "--neuron.influxdb_token",
+        type=str,
+        help="The influxdb token",
+        default="648b65eb0a5b1d7b48e71e695fd6bb6611936548debaf281cf438df8ce03b74b",
+    )
+
+    parser.add_argument(
+        "--neuron.influxdb_org",
+        type=str,
+        help="The influxdb org",
+        default="distributed-training",
     )
 
     if neuron_type == "validator":

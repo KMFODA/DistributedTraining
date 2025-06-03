@@ -17,38 +17,33 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import json
 import math
 import random
 import time
-from typing import List
+from datetime import datetime
 
 import base58
 import bittensor as bt
 import numpy as np
+import pytz
 import torch
 import torch.nn.functional as F
 from hivemind.p2p import PeerID
-from huggingface_hub import list_repo_commits
-from transformers import AutoModelForCausalLM
+from huggingface_hub import hf_hub_download, list_repo_commits, list_repo_files
+from transformers import AutoConfig, AutoModelForCausalLM
 
+from distributed_training import __run__
 from distributed_training.data.dataset import DatasetLoader
+from distributed_training.utils.progress_tracker import (
+    get_local_epoch,
+    get_local_inner_step,
+)
 from distributed_training.utils.state_loader import (
     check_model_exists,
     cleanup_old_cache,
     load_state_from_peer,
 )
-from distributed_training.utils.progress_tracker import (
-    get_local_epoch,
-    get_local_inner_step,
-)
-from distributed_training import __run__
-
-from datetime import datetime
-import pytz
-from huggingface_hub import list_repo_commits
-from transformers import AutoConfig
-from huggingface_hub import hf_hub_download, list_repo_files
-import json
 
 # GPU optimizations.
 torch.backends.cudnn.benchmark = True
@@ -276,12 +271,22 @@ async def score_uid(self, uid: int):
         model_final = AutoModelForCausalLM.from_pretrained(
             model_huggingface_id, revision=latest_commit, trust_remote_code=True
         )
+        inner_step_t1 = (
+            model_final.config.inner_step
+            if "inner_step" in model_final.config.__dict__
+            else 0
+        )
         if ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
         ):
             scores = 0
             bt.logging.info(
                 f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
+            )
+        elif inner_step_t0 == inner_step_t1:
+            scores = 0
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Inner Step T0 {inner_step_t0} == Inner Step T1 {inner_step_t1}"
             )
         else:
             blocks = model_final.config.block_list
@@ -417,7 +422,7 @@ def score_repo(self, repo_id: str) -> bool:
         ):
             return False
         return True
-    except Exception as e:
+    except Exception:
         return False
 
 
@@ -435,7 +440,7 @@ def benchmark_uids(self):
                     self.uid_tracker[uid]["repo_valid_score"] = 0
                 else:
                     self.uid_tracker[uid]["repo_valid_score"] = 1
-            except Exception as e:
+            except Exception:
                 self.uid_tracker[uid]["repo_valid_score"] = 0
         else:
             self.uid_tracker[uid]["repo_valid_score"] = 0
@@ -446,7 +451,7 @@ def benchmark_untested_uids(self):
     for uid in self.uid_tracker:
         try:
             if (self.uid_tracker[uid]["train_validation_count"] == 0) and (
-                self.uid_tracker[uid]["all_reduce_counts"] == 0
+                self.uid_tracker[uid]["all_reduce_count"] == 0
             ):
                 self.uid_tracker[uid]["repo_valid_sum"] += score_repo(
                     self, self.uid_tracker[uid]["model_huggingface_id"]
@@ -470,10 +475,12 @@ def update_all_reduce_scores(self):
         if self.allreduce_status_dict != {}:
             for uid in self.allreduce_status_dict.keys():
                 if self.allreduce_status_dict[uid] == "SUCCESS":
-                    self.uid_tracker[int(uid)]["all_reduce_score"] = 1
+                    score = 1
                 else:
-                    self.uid_tracker[int(uid)]["all_reduce_score"] = 0
-
+                    score = 0
+                if self.uid_tracker[int(uid)]["all_reduce_score"] != score:
+                    self.uid_tracker[int(uid)]["all_reduce_count"] += 1
+                self.uid_tracker[int(uid)]["all_reduce_score"] = score
     except Exception as e:
         bt.logging.info(f"Error {e} updating all_reduce scores")
 
@@ -528,7 +535,9 @@ def update_total_scores(self):
         all_reduce_score = uid_data.get("all_reduce_score", 0.0)
         repo_valid_score = uid_data.get("repo_valid_score", 0.0)
 
-        if train_score == 0 and all_reduce_score == 0:
+        if (uid_data["train_validation_count"] == 0) and (
+            uid_data["all_reduce_count"] == 0
+        ):
             uid_data["total_score"] = repo_valid_score / repo_valid_scores_normalised
         else:
             normalized_train_score = (0.5 * train_score) / train_scores_normalised
@@ -538,3 +547,6 @@ def update_total_scores(self):
             uid_data["total_score"] = (
                 normalized_train_score + normalized_all_reduce_score
             )
+
+    # Add metrics reporting
+    self.report_scoring_metrics()

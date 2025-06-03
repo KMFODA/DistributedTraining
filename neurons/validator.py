@@ -18,7 +18,6 @@
 
 
 import os
-import time
 
 os.environ["NEST_ASYNCIO"] = "0"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -26,8 +25,9 @@ import math
 import threading
 
 import bittensor as bt
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 from transformers import AutoTokenizer
-
 
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -65,6 +65,109 @@ class Validator(BaseValidatorNeuron):
         suffix = "_validators" if self.neuron_type == "ValidatorNeuron" else "_miners"
         self.config.neuron.wandb_project += suffix
 
+    def report_allreduce_operation(
+        self,
+        op_id,
+        epoch,
+        validator_uid,
+        success_rate,
+        duration,
+        participating_miners_count,
+        bandwidth=None,
+    ):
+        """Report AllReduce operation metrics to InfluxDB"""
+        try:
+            point = (
+                Point("allreduce_operations")
+                .tag("operation_id", str(op_id))
+                .tag("epoch", str(epoch))
+                .tag("validator_uid", str(validator_uid))
+                .field("success_rate", float(success_rate))
+                .field("duration", float(duration))
+                .field("participating_miners", int(participating_miners_count))
+            )
+
+            if bandwidth is not None:
+                point = point.field("bandwidth", float(bandwidth))
+
+            self.influx_write_api.write(
+                bucket=self.config.neuron.influxdb_bucket,
+                org=self.config.neuron.influxdb_org,
+                record=point,
+            )
+            bt.logging.info(
+                f"Validator {validator_uid} reported AllReduce operation {op_id} metrics to InfluxDB"
+            )
+        except Exception as e:
+            bt.logging.error(f"Error reporting AllReduce metrics: {e}")
+
+    def report_scoring_metrics(self):
+        """Send validator scoring metrics to InfluxDB"""
+        try:
+            points = []
+
+            for uid, data in self.uid_tracker.items():
+                point = (
+                    Point("miner_scores")
+                    .tag("validator_uid", str(self.uid))
+                    .tag("miner_uid", str(uid))
+                    .field("train_score", float(data["train_score"] or 0))
+                    .field("all_reduce_score", float(data["all_reduce_score"] or 0))
+                    .field("repo_valid_score", float(data["repo_valid_score"] or 0))
+                    .field("total_score", float(data["total_score"] or 0))
+                )
+                points.append(point)
+
+                if "loss" in data:
+                    point = (
+                        Point("miner_loss")
+                        .tag("validator_uid", str(self.uid))
+                        .tag("miner_uid", str(uid))
+                        .field("loss", float(data["loss"] or 0))
+                    )
+                    points.append(point)
+
+            # Write points to InfluxDB
+            self.influx_write_api.write(
+                bucket=self.config.neuron.influxdb_bucket,
+                org=self.config.neuron.influxdb_org,
+                record=points,
+            )
+        except Exception as e:
+            bt.logging.error(f"Error reporting scoring metrics: {e}")
+
+    def _init_metrics_collection(self):
+        # Initialize InfluxDB client
+        self.influx_client = None
+        self.influx_write_api = None
+        try:
+            bt.logging.info(
+                "Attempting to initialize InfluxDB client for metrics collection..."
+            )
+            self.influx_client = InfluxDBClient(
+                url=self.config.neuron.influxdb_url,
+                token=self.config.neuron.influxdb_token,
+                org=self.config.neuron.influxdb_org,
+            )
+            self.influx_write_api = self.influx_client.write_api(
+                write_options=SYNCHRONOUS
+            )
+            bt.logging.info("InfluxDB client and write_api initialized successfully.")
+
+        except Exception as e:
+            bt.logging.error(
+                f"Failed to initialize InfluxDB client: {e}. Metrics collection will be disabled."
+            )
+            if self.influx_client:
+                try:
+                    self.influx_client.close()
+                except Exception as close_e:
+                    bt.logging.error(
+                        f"Error closing InfluxDB client during cleanup: {close_e}"
+                    )
+            self.influx_client = None
+            self.influx_write_api = None
+
     def _init_basic_components(self):
         """Initialize basic validator components"""
         setup_logging(config=self.config)
@@ -85,6 +188,9 @@ class Validator(BaseValidatorNeuron):
             self.wandb = load_wandb(
                 self, self.config, self.wallet, "validator", str(self.dht.peer_id)
             )
+
+        # Tracking metrics
+        self._init_metrics_collection()
 
     def _init_progress_tracking(self):
         self.local_progress = LocalTrainingProgress(
