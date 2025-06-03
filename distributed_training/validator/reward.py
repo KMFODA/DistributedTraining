@@ -167,17 +167,6 @@ async def score_uid(self, uid: int):
     self.local_progress.inner_step = get_local_inner_step(self, model_huggingface_id)
     revision = f"{__run__}.{local_epoch}.{self.local_progress.inner_step}"
 
-    accepted_files = [
-        "README.md",
-        ".gitattributes",
-        "config.json",
-        "model.safetensors",
-        "inner_optimizer.pt",
-        "inner_optimizer.npz",
-        "outer_optimizer.pt",
-        "outer_optimizer.npz",
-    ]
-
     blocks = []
     time_delta = 0
     try:
@@ -205,49 +194,6 @@ async def score_uid(self, uid: int):
         latest_commit = commits[0].commit_id
         previous_commit = commits[1].commit_id
         time_delta = (commits[0].created_at - commits[1].created_at).seconds
-
-        # Check current model configs haven't been altered
-        config_path = hf_hub_download(
-            repo_id=model_huggingface_id,
-            filename="config.json",
-            revision=commits[0].commit_id,
-        )
-        with open(config_path) as config_data:
-            config = json.load(config_data)
-
-        if config["auto_map"] != self.global_model_config.auto_map:
-            raise Exception(
-                f"Score 0 for UID {uid}: Commit {commits[0].commit_id} config differs from the global model config"
-            )
-
-        for file in list_repo_files(
-            repo_id=model_huggingface_id, revision=commits[0].commit_id
-        ):
-            if file not in accepted_files:
-                raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commit {commits[0].commit_id} not in list of accepted files {accepted_files}"
-                )
-
-        config_final_path = hf_hub_download(
-            repo_id=model_huggingface_id,
-            filename="config.json",
-            revision=commits[1].commit_id,
-        )
-        with open(config_final_path) as config_final_data:
-            config_final = json.load(config_final_data)
-
-        if config_final["auto_map"] != self.global_model_config.auto_map:
-            raise Exception(
-                f"Score 0 for UID {uid}: Commit {commits[1].commit_id} config differs from the global model config"
-            )
-
-        for file in list_repo_files(
-            repo_id=model_huggingface_id, revision=commits[1].commit_id
-        ):
-            if file not in accepted_files:
-                raise Exception(
-                    f"Score 0 for UID {uid}: File {file} for commi {commits[1].commit_id} not in list of accepted files {accepted_files}"
-                )
 
         load_state_from_peer(
             self,
@@ -302,12 +248,12 @@ async def score_uid(self, uid: int):
 
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         outputs = self.model(input_ids=inputs, labels=labels)
-                        loss = outputs[1] / self.number_of_local_steps
+                        loss = outputs.loss / self.number_of_local_steps
 
                     if math.isnan(loss.item()):
                         raise Exception(f"Score 0 for UID {uid}: NaN detected in Loss")
 
-                    self.scaler.scale(loss).backward()
+                    loss.backward()
 
                     self.running_loss += loss.item() * self.number_of_local_steps
                     self.batch_count += 1
@@ -330,9 +276,7 @@ async def score_uid(self, uid: int):
                         )
 
                         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                        self.scaler.unscale_(optimizer=self.inner_optimizer)
-                        self.scaler.step(self.inner_optimizer)
-                        self.scaler.update()
+                        self.inner_optimizer.step()
 
                         self.scheduler.step()
 
@@ -506,17 +450,17 @@ def update_total_scores(self):
     train_scores_normalised = (
         np.linalg.norm(train_scores, ord=1, axis=0, keepdims=True)
         if any(train_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
     all_reduce_scores_normalised = (
         np.linalg.norm(all_reduce_scores, ord=1, axis=0, keepdims=True)
         if any(all_reduce_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
     repo_valid_scores_normalised = (
         np.linalg.norm(repo_valid_scores, ord=1, axis=0, keepdims=True)
         if any(repo_valid_scores)
-        else 1.0
+        else np.array(1.0)
     ).item()
 
     # Catch 0 and NaN norms to avoid division by zero

@@ -3,7 +3,7 @@ bitarray==3.0.0
 datasets==3.0.2
 memory-profiler==0.61.0
 transformers==4.39.3
-wandb==0.17.7
+wandb==0.19.11
 python-dotenv==1.0.1
 python-logging-loki==0.3.1
 speedtest-cli==2.1.3

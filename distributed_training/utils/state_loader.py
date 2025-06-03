@@ -1,6 +1,7 @@
 import copy
 import gc
 import os
+import requests
 import subprocess
 import pytz
 import sys
@@ -271,7 +272,7 @@ def load_model_optimizer_gradient_averager(
     )
     global_model_name = self.config.neuron.global_model_name
     self.global_model_config = AutoConfig.from_pretrained(
-        global_model_name, trust_remote_code=True
+        global_model_name, trust_remote_code=False
     )
     if use_fallback_model:
         model_name_list = [local_model_name, global_model_name]
@@ -333,30 +334,10 @@ def load_model_optimizer_gradient_averager(
             ):
                 continue
 
-            # Delete existing model
-            if hasattr(self, "model"):
-                transformer = self.model.model.transformer
-                for component in ["wte", "wpe"]:
-                    if hasattr(transformer, component):
-                        comp = getattr(transformer, component)
-                        if hasattr(comp, "weight"):
-                            del comp.weight
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        if hasattr(comp, "norm"):
-                            del comp.norm
-                            gc.collect()
-                            torch.cuda.empty_cache()
-                        delattr(transformer, component)
-                del self.model
-                gc.collect()
-                torch.cuda.empty_cache()
-                bt.logging.info("Deleted Model")
-
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 revision=revision,
-                trust_remote_code=True,
+                trust_remote_code=False,
             )
             bt.logging.info(
                 f"Successfully Loaded Model From {model_name} With Revision {revision}"
@@ -920,6 +901,12 @@ def get_top_uid(self):
         for k, v in self.allreduce_status_dict.items()
         if (v == "SUCCESS")
         and (self.uid_tracker[int(k)]["model_huggingface_id"] is not None)
+        and (
+            requests.head(
+                f"https://huggingface.co/api/models/{self.uid_tracker[int(k)]['model_huggingface_id']}"
+            ).status_code
+            == 200
+        )
         and (
             (
                 datetime.now(pytz.utc)
