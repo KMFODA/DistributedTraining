@@ -104,15 +104,14 @@ async def forward(self):
             self.last_allreduce_block = self.block
             return responses
 
-        self.miner_uids = np.array([n for n in range(self.metagraph.n)])
+        # self.miner_uids = np.array([n for n in range(self.metagraph.n)])
+        # self.miner_uids = np.array([n for n in range(255,-1,-1)])
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
         try:
             top_uid = get_top_uid(self)
-            self.local_progress.epoch = get_local_epoch(
-                self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
-            )
+            self.local_progress.epoch = self.global_progress.epoch
             self.local_progress.inner_step = get_local_inner_step(
                 self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
             )
@@ -122,12 +121,25 @@ async def forward(self):
                 repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
                 revision=top_uid_revision,
             )
+            if self.scheduler.__dict__["_step_count"] == 0:
+                top_uid = 145
+                self.local_progress.epoch = self.global_progress.epoch
+                self.local_progress.inner_step = get_local_inner_step(
+                    self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
+                )
+                top_uid_revision = f"{__run__}.{self.local_progress.epoch}.{self.local_progress.inner_step}"
+                load_state_from_peer(
+                    self,
+                    repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"],
+                    revision=top_uid_revision,
+                )
             (
                 all_reduce_success_status,
                 results,
             ) = await self.avg_handler.run_validator_allreduce(
                 timeout=self.allreduce_timeout,
-                dendrite_pool=self.dendrite_pool,
+                wallet=self.wallet,
+                metagraph=self.metagraph,
                 peerids_to_uids=self.peerids_to_uids,
                 miner_uids=self.miner_uids,
                 master=self.uid == self.master_uid,
@@ -156,6 +168,7 @@ async def forward(self):
                     event=self.event,
                     metagraph=self.metagraph,
                 )
+                # breakpoint()
 
                 self.model.config.all_reduce_scores = self.allreduce_status_dict
 
@@ -167,31 +180,38 @@ async def forward(self):
 
                 update_total_scores(self)
 
-                # ---- Report allreduce metrics to dashboard ---
-                participating_count = len(results["participating_peers"])
-                success_rate = 0.0
-                if participating_count > 0:
-                    success_rate = successful_peers_count / participating_count
+                try:
+                    # ---- Report allreduce metrics to dashboard ---
+                    participating_count = len(results["participating_peers"])
+                    success_rate = 0.0
+                    if participating_count > 0:
+                        success_rate = successful_peers_count / participating_count
 
-                avg_bandwidth = None
-                if results["bandwidths"]:
-                    valid_bandwidths = [
-                        b for b in results["bandwidths"] if b is not None
-                    ]
-                    if valid_bandwidths:
-                        avg_bandwidth = sum(valid_bandwidths) / len(valid_bandwidths)
+                    avg_bandwidth = None
+                    if results["bandwidths"]:
+                        valid_bandwidths = [
+                            b for b in results["bandwidths"] if b is not None
+                        ]
+                        if valid_bandwidths:
+                            avg_bandwidth = sum(valid_bandwidths) / len(
+                                valid_bandwidths
+                            )
 
-                self.report_allreduce_operation(
-                    op_id=self.current_block,
-                    epoch=self.local_progress.epoch,
-                    validator_uid=self.uid,
-                    success_rate=success_rate,
-                    duration=results["duration"],
-                    participating_miners_count=len(results["participating_peers"]),
-                    bandwidth=avg_bandwidth,
-                )
-                # -------
-
+                    self.report_allreduce_operation(
+                        op_id=self.current_block,
+                        epoch=self.local_progress.epoch,
+                        validator_uid=self.uid,
+                        success_rate=success_rate,
+                        duration=results["duration"],
+                        participating_miners_count=len(results["participating_peers"]),
+                        bandwidth=avg_bandwidth,
+                    )
+                    # -------
+                except Exception as e:
+                    bt.logging.info(
+                        f"Error reporting allreduce metrics to dashboard {e}"
+                    )
+                self.config.neuron.blocks_per_allreduce = 1000
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")
 

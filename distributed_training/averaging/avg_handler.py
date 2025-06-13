@@ -11,6 +11,7 @@ import distributed_training
 from distributed_training.averaging.exceptions import AllReduceError, ModelStateError
 from distributed_training.protocol import AllReduce
 from distributed_training.data.dataset import DatasetLoader
+from distributed_training.utils.dendrite import async_dednrite_forward
 import random
 
 
@@ -115,7 +116,8 @@ class AveragingHandler:
     async def run_validator_allreduce(
         self,
         timeout: int,
-        dendrite_pool,
+        wallet,
+        metagraph,
         peerids_to_uids,
         miner_uids,
         master,
@@ -154,17 +156,16 @@ class AveragingHandler:
 
             if master:
                 # Send AllReduce query to pause miner training and perform global sync
-                query_tasks.append(
-                    dendrite_pool.async_forward(
-                        miner_uids,
-                        [AllReduce(completion=False) for _ in miner_uids],
-                        timeout=timeout,
-                    )
-                )
                 bt.logging.info(
                     ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
                 )
-                await asyncio.gather(*query_tasks)
+                await async_dednrite_forward(
+                    wallet=wallet,
+                    axons=[metagraph.axons[uid] for uid in miner_uids],
+                    synapse=AllReduce(),
+                    connection_limit=len(miner_uids),
+                    timeout=timeout,
+                )
                 bt.logging.info("AllReduce Query Responses Received..")
 
             start_time = time.perf_counter()
