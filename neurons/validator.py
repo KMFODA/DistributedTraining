@@ -32,7 +32,6 @@ from transformers import AutoTokenizer
 from distributed_training.base.validator import BaseValidatorNeuron
 from distributed_training.utils.chain import log_peerid_to_chain
 from distributed_training.utils.misc import (
-    AsyncDendritePool,
     init_dht,
     load_wandb,
     setup_logging,
@@ -175,9 +174,6 @@ class Validator(BaseValidatorNeuron):
         # Core setup
         self.device = self.config.neuron.device
         self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        self.dendrite_pool = AsyncDendritePool(
-            wallet=self.wallet, metagraph=self.metagraph
-        )
         init_dht(self)
 
         # Progress tracking

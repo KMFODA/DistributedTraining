@@ -104,8 +104,7 @@ async def forward(self):
             self.last_allreduce_block = self.block
             return responses
 
-        # self.miner_uids = np.array([n for n in range(self.metagraph.n)])
-        # self.miner_uids = np.array([n for n in range(255,-1,-1)])
+        self.miner_uids = np.array([n for n in range(self.metagraph.n)])
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 

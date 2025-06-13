@@ -7,7 +7,7 @@ from typing import Optional, Union, List
 from bittensor_wallet import Keypair, Wallet
 
 
-class PatchedDendriteMixin(DendriteMixin):
+class DTDendriteMixin(DendriteMixin):
     def __init__(self, wallet, connection_limit=100):
         self._connection_limit = connection_limit
         super().__init__(wallet)
@@ -57,7 +57,7 @@ class PatchedDendriteMixin(DendriteMixin):
 BaseModel: Union["torch.nn.Module", object] = torch.nn.Module if use_torch() else object
 
 
-class PatchedDendrite(PatchedDendriteMixin, BaseModel):  # type: ignore
+class DTDendrite(DTDendriteMixin, BaseModel):  # type: ignore
     def __init__(
         self,
         wallet: Optional[Union["Wallet", "Keypair"]] = None,
@@ -65,7 +65,7 @@ class PatchedDendrite(PatchedDendriteMixin, BaseModel):  # type: ignore
     ):
         if use_torch():
             torch.nn.Module.__init__(self)
-        PatchedDendriteMixin.__init__(self, wallet, connection_limit)
+        DTDendriteMixin.__init__(self, wallet, connection_limit)
 
 
 if not use_torch():
@@ -73,7 +73,7 @@ if not use_torch():
     async def call(self, *args, **kwargs):
         return await self.forward(*args, **kwargs)
 
-    PatchedDendrite.__call__ = call
+    DTDendrite.__call__ = call
 
 
 async def async_dednrite_forward(
@@ -83,5 +83,5 @@ async def async_dednrite_forward(
     connection_limit: int = 100,
     timeout: float = 30.0,
 ):
-    async with PatchedDendrite(wallet, connection_limit=connection_limit) as d:
+    async with DTDendrite(wallet, connection_limit=connection_limit) as d:
         await d(axons, synapse=synapse, timeout=timeout)

@@ -162,7 +162,7 @@ class AveragingHandler:
                 await async_dednrite_forward(
                     wallet=wallet,
                     axons=[metagraph.axons[uid] for uid in miner_uids],
-                    synapse=AllReduce(),
+                    synapse=AllReduce(completion=False),
                     connection_limit=len(miner_uids),
                     timeout=timeout,
                 )
