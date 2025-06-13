@@ -134,28 +134,6 @@ def ttl_get_block(self) -> int:
     return self.subtensor.get_current_block()
 
 
-class AsyncDendritePool:
-    def __init__(self, wallet, metagraph):
-        self.metagraph = metagraph
-        self.dendrite = bt.dendrite(wallet=wallet)
-
-    async def async_forward(
-        self, uids: List[int], queries: List[AllReduce], timeout: float = 150.0
-    ):
-        def call_single_uid(uid, query):
-            return self.dendrite(
-                self.metagraph.axons[uid], synapse=query, timeout=timeout
-            )
-
-        async def query_async():
-            corutines = [
-                call_single_uid(uid, query) for uid, query in zip(uids, queries)
-            ]
-            return await asyncio.gather(*corutines)
-
-        return await query_async()
-
-
 def load_wandb(self, config, wallet, neuron_type, peer_id):
     run_name = f"{neuron_type[0].upper()}{'{:03}'.format(self.uid)}"
 

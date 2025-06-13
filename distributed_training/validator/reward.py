@@ -54,6 +54,10 @@ torch.backends.cudnn.allow_tf32 = True
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
+# Set scoring weights
+TRAIN_SCORE_WEIGHT = 0.75
+ALL_REDUCE_SCORE_WEIGHT = 0.25
+
 
 async def score_blacklist(self, uids):
     scores = torch.FloatTensor([1 for _ in uids]).to(self.device)
@@ -222,14 +226,27 @@ async def score_uid(self, uid: int):
             if "inner_step" in model_final.config.__dict__
             else 0
         )
-        if ("block_list" in self.model.config.__dict__) and (
+
+        if time_delta < (30 * target_blocks):
+            scores = 0
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Time Delta {time_delta} > 30 * Target Blocks {target_blocks}"
+            )
+        elif (sum(p.numel() for p in model_final.parameters()) > 1100048384) or (
+            sum(p.numel() for p in self.model.parameters()) > 1100048384
+        ):
+            scores = 0
+            bt.logging.info(
+                f"Score 0 for UID {uid}: Repo {model_huggingface_id} Failed Model Size Validation"
+            )
+        elif ("block_list" in self.model.config.__dict__) and (
             len(self.model.config.block_list) > target_blocks
         ):
             scores = 0
             bt.logging.info(
                 f"Score 0 for UID {uid}: Block List Length {len(self.model.config.block_list)} > Target Blocks {target_blocks}"
             )
-        elif inner_step_t0 == inner_step_t1:
+        elif inner_step_t0 >= inner_step_t1:
             scores = 0
             bt.logging.info(
                 f"Score 0 for UID {uid}: Inner Step T0 {inner_step_t0} == Inner Step T1 {inner_step_t1}"
@@ -354,9 +371,19 @@ def score_repo(self, repo_id: str) -> bool:
     try:
         local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
         if (
-            (self.global_model_config.n_embd != local_config.n_embd)
-            or (self.global_model_config.n_head != local_config.n_head)
-            or (self.global_model_config.n_layer != local_config.n_layer)
+            (self.global_model_config.hidden_size != local_config.hidden_size)
+            or (
+                self.global_model_config.num_attention_heads
+                != local_config.num_attention_heads
+            )
+            or (
+                self.global_model_config.num_hidden_layers
+                != local_config.num_hidden_layers
+            )
+            or (
+                self.global_model_config.num_key_value_heads
+                != local_config.num_key_value_heads
+            )
         ):
             return False
         latest_commit = list_repo_commits(repo_id)[0]
@@ -484,9 +511,11 @@ def update_total_scores(self):
         ):
             uid_data["total_score"] = repo_valid_score / repo_valid_scores_normalised
         else:
-            normalized_train_score = (0.5 * train_score) / train_scores_normalised
+            normalized_train_score = (
+                TRAIN_SCORE_WEIGHT * train_score
+            ) / train_scores_normalised
             normalized_all_reduce_score = (
-                0.5 * all_reduce_score
+                ALL_REDUCE_SCORE_WEIGHT * all_reduce_score
             ) / all_reduce_scores_normalised
             uid_data["total_score"] = (
                 normalized_train_score + normalized_all_reduce_score
