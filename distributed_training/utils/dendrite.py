@@ -85,11 +85,3 @@ async def async_dednrite_forward(
 ):
     async with PatchedDendrite(wallet, connection_limit=connection_limit) as d:
         await d(axons, synapse=synapse, timeout=timeout)
-
-
-# dendrite2 = PatchedDendrite(bt.wallet(name = "polkadot_wallet_7",hotkey="polkadot_wallet_7_hotkey_3803"), connection_limit=400)
-
-# # loop = asyncio.new_event_loop()
-# loop.run_until_complete(dendrite([metagraph.axons[220] for i in range(0, 400)], synapse=distributed_training.protocol.IsAlive(), timeout=100.0)) # 10 seconds
-# loop.run_until_complete(dendrite2([metagraph.axons[220] for i in range(0, 400)], synapse=distributed_training.protocol.IsAlive(), timeout=100.0)) # 9 seconds
-# loop.run_until_complete(run_dendrite_call())
