@@ -168,7 +168,6 @@ async def forward(self):
                     event=self.event,
                     metagraph=self.metagraph,
                 )
-                # breakpoint()
 
                 self.model.config.all_reduce_scores = self.allreduce_status_dict
 
