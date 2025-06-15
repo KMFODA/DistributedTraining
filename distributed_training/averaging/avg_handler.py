@@ -11,6 +11,9 @@ import distributed_training
 from distributed_training.averaging.exceptions import AllReduceError, ModelStateError
 from distributed_training.protocol import AllReduce
 from distributed_training.data.dataset import DatasetLoader
+from distributed_training.utils.dendrite import (
+    async_dendrite_forward,
+)
 import random
 
 
@@ -81,7 +84,7 @@ class AveragingHandler:
                 random.shuffle(pages)
 
                 dataset = await DatasetLoader.create(
-                    batch_size=self.local_batch_size_train,
+                    batch_size=4,
                     sequence_length=1024,
                     pages_info=pages,
                     tokenizer=self.tokenizer,
@@ -115,12 +118,18 @@ class AveragingHandler:
     async def run_validator_allreduce(
         self,
         timeout: int,
-        dendrite_pool,
+        wallet,
+        metagraph,
         peerids_to_uids,
         miner_uids,
         master,
         block,
         bandwidth=None,
+        min_group_size: int = None,
+        request_timeout: float = None,
+        allreduce_timeout: float = None,
+        next_chunk_timeout: float = None,
+        min_matchmaking_time: float = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Process allreduce specifically for validator.
@@ -154,17 +163,23 @@ class AveragingHandler:
 
             if master:
                 # Send AllReduce query to pause miner training and perform global sync
-                query_tasks.append(
-                    dendrite_pool.async_forward(
-                        miner_uids,
-                        [AllReduce(completion=False) for _ in miner_uids],
-                        timeout=timeout,
-                    )
-                )
                 bt.logging.info(
                     ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
                 )
-                await asyncio.gather(*query_tasks)
+                await async_dendrite_forward(
+                    wallet=wallet,
+                    axons=[metagraph.axons[uid] for uid in miner_uids],
+                    synapse=AllReduce(
+                        completion=False,
+                        min_group_size=min_group_size,
+                        request_timeout=request_timeout,
+                        allreduce_timeout=allreduce_timeout,
+                        next_chunk_timeout=next_chunk_timeout,
+                        min_matchmaking_time=min_matchmaking_time,
+                    ),
+                    connection_limit=len(miner_uids),
+                    timeout=timeout,
+                )
                 bt.logging.info("AllReduce Query Responses Received..")
 
             start_time = time.perf_counter()
