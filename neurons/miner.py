@@ -45,7 +45,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import distributed_training
 from distributed_training import __run__
-from distributed_training.averaging.avg_handler import AllReduceError
+
+# from distributed_training.averaging.avg_handler import AllReduceError
 from distributed_training.base.miner import BaseMinerNeuron, TrainingStatus
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.chain import log_peerid_to_chain
@@ -802,14 +803,14 @@ class Miner(BaseMinerNeuron):
                         # bandwidth
                     )
                     if not synapse.completion:
-                        raise AllReduceError("AllReduce Failed, Loading Latest State")
+                        raise Exception("AllReduce Failed, Loading Latest State")
                 except Exception as e:
                     bt.logging.info(f"All Reduce Failed with error: {e}")
                     synapse.completion = False
 
         except Exception as e:
             synapse.completion = False
-            raise AllReduceError(f"Unexpected error during AllReduce: {str(e)}") from e
+            raise Exception(f"Unexpected error during AllReduce: {str(e)}") from e
 
         finally:
             # Update epoch if all_reduce was succsefull
