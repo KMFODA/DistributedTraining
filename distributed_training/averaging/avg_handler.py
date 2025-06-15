@@ -12,7 +12,7 @@ from distributed_training.averaging.exceptions import AllReduceError, ModelState
 from distributed_training.protocol import AllReduce
 from distributed_training.data.dataset import DatasetLoader
 from distributed_training.utils.dendrite import (
-    async_dednrite_forward,
+    async_dendrite_forward,
 )
 import random
 
@@ -166,7 +166,7 @@ class AveragingHandler:
                 bt.logging.info(
                     ":wait: AllReduce Query Sent Out. Waiting for AllReduce to finish.."
                 )
-                await async_dednrite_forward(
+                await async_dendrite_forward(
                     wallet=wallet,
                     axons=[metagraph.axons[uid] for uid in miner_uids],
                     synapse=AllReduce(

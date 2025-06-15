@@ -76,7 +76,7 @@ if not use_torch():
     DTDendrite.__call__ = call
 
 
-async def async_dednrite_forward(
+async def async_dendrite_forward(
     wallet: "Wallet" = None,
     axons: List["Axon"] = [],
     synapse=None,
