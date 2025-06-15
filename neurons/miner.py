@@ -772,6 +772,26 @@ class Miner(BaseMinerNeuron):
                 # Run inner optimizer step
                 self.inner_optimizer_step()
 
+                # Update gradient averager params to latest synapse values
+                if synapse.min_group_size is not None:
+                    self.grad_averager.matchmaking_kwargs[
+                        "min_group_size"
+                    ] = synapse.min_group_size
+                if synapse.request_timeout is not None:
+                    self.grad_averager.matchmaking_kwargs[
+                        "request_timeout"
+                    ] = synapse.request_timeout
+                if synapse.allreduce_timeout is not None:
+                    self.grad_averager._allreduce_timeout = (
+                        synapse.synapse.allreduce_timeout
+                    )
+                if synapse.next_chunk_timeout is not None:
+                    self.grad_averager.next_chunk_timeout = synapse.next_chunk_timeout
+                if synapse.min_matchmaking_time is not None:
+                    self.grad_averager.matchmaking_kwargs[
+                        "min_matchmaking_time"
+                    ] = synapse.min_matchmaking_time
+
                 try:
                     # Run allreduce with proper timeout
                     synapse = await self.avg_handler.run_miner_allreduce(

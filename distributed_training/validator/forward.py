@@ -143,6 +143,7 @@ async def forward(self):
                 miner_uids=self.miner_uids,
                 master=self.uid == self.master_uid,
                 block=self.current_block,
+                min_group_size=self.config.neuron.min_group_size,
             )
 
             if all_reduce_success_status:

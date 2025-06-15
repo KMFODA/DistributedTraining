@@ -11,7 +11,9 @@ import distributed_training
 from distributed_training.averaging.exceptions import AllReduceError, ModelStateError
 from distributed_training.protocol import AllReduce
 from distributed_training.data.dataset import DatasetLoader
-from distributed_training.utils.dendrite import async_dednrite_forward
+from distributed_training.utils.dendrite import (
+    async_dednrite_forward,
+)
 import random
 
 
@@ -82,7 +84,7 @@ class AveragingHandler:
                 random.shuffle(pages)
 
                 dataset = await DatasetLoader.create(
-                    batch_size=self.local_batch_size_train,
+                    batch_size=4,
                     sequence_length=1024,
                     pages_info=pages,
                     tokenizer=self.tokenizer,
@@ -123,6 +125,11 @@ class AveragingHandler:
         master,
         block,
         bandwidth=None,
+        min_group_size: int = None,
+        request_timeout: float = None,
+        allreduce_timeout: float = None,
+        next_chunk_timeout: float = None,
+        min_matchmaking_time: float = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Process allreduce specifically for validator.
@@ -162,7 +169,14 @@ class AveragingHandler:
                 await async_dednrite_forward(
                     wallet=wallet,
                     axons=[metagraph.axons[uid] for uid in miner_uids],
-                    synapse=AllReduce(completion=False),
+                    synapse=AllReduce(
+                        completion=False,
+                        min_group_size=min_group_size,
+                        request_timeout=request_timeout,
+                        allreduce_timeout=allreduce_timeout,
+                        next_chunk_timeout=next_chunk_timeout,
+                        min_matchmaking_time=min_matchmaking_time,
+                    ),
                     connection_limit=len(miner_uids),
                     timeout=timeout,
                 )
