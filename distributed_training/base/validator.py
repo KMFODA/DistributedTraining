@@ -34,8 +34,6 @@ from distributed_training.utils.weight_utils import (
     process_weights_for_netuid,
 )
 from distributed_training.validator.reward import (
-    score_uid,
-    update_all_reduce_scores,
     update_total_scores,
 )
 from distributed_training.utils.progress_tracker import get_global_epoch
@@ -497,7 +495,6 @@ class BaseValidatorNeuron(BaseNeuron):
                             f"Failed to load saved uid_tracker for UID: {uid} with error: {e}"
                         )
                         self.uid_tracker[uid] = self.uid_tracker_initial_state.copy()
-
         elif os.path.isfile(self.config.neuron.full_path + "/state.pt"):
             bt.logging.info(
                 "Pre-saved validator state found in .pt format. Loading validator state."

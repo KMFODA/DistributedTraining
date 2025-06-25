@@ -116,7 +116,7 @@ async def forward(self):
             k: v for k, v in sorted(miner_uid_dict.items(), key=lambda item: item[1])
         }.keys()
         self.miner_uids = np.array(
-            [n.item() for n in alive_uids][: self.config.neuron.min_group_size + 50]
+            [n.item() for n in alive_uids][: self.config.neuron.min_group_size + 10]
         )
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
@@ -254,7 +254,8 @@ async def forward(self):
 
         await score_uid(self, uid)
 
-        post_next_uid_api(self)
+        if self.uid == self.master_uid:
+            post_next_uid_api(self)
 
         # Benchmark any untested uids
         benchmark_uids(self)

@@ -8,7 +8,6 @@ from typing import List
 import bittensor as bt
 import distributed_training
 import numpy as np
-from random import randrange
 from bittensor.core.chain_data import decode_account_id
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
