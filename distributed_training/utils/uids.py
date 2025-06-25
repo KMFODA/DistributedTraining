@@ -141,8 +141,6 @@ async def get_random_uids(
 def get_next_uid_manual(self):
     uids = []
     try:
-        # Randomly reset the train_similarity_score_last_updated for one miner
-        self.uid_tracker[randrange(256)]["train_similarity_score_last_updated"] = 0
         # Rank miners based off train_similarity_score_last_updated
         self.uid_tracker = dict(
             sorted(
