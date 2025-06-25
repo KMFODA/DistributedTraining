@@ -2,13 +2,13 @@ import asyncio
 import datetime as dt
 import random
 import requests
-import time
 import traceback
 from typing import List
 
 import bittensor as bt
 import distributed_training
 import numpy as np
+from random import randrange
 from bittensor.core.chain_data import decode_account_id
 from hivemind.p2p import PeerID
 from hivemind.utils.timed_storage import ValueWithExpiration
@@ -141,6 +141,9 @@ async def get_random_uids(
 def get_next_uid_manual(self):
     uids = []
     try:
+        # Randomly reset the train_similarity_score_last_updated for one miner
+        self.uid_tracker[randrange(256)]["train_similarity_score_last_updated"] = 0
+        # Rank miners based off train_similarity_score_last_updated
         self.uid_tracker = dict(
             sorted(
                 self.uid_tracker.items(),
@@ -153,7 +156,6 @@ def get_next_uid_manual(self):
                 for k, v in self.uid_tracker.items()
             }
         )
-        breakpoint()
         for uid in self.uid_tracker.keys():
             if (
                 (self.uid_tracker[uid]["model_huggingface_id"] is not None)
