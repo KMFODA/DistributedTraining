@@ -30,7 +30,8 @@ import pytz
 import torch
 import torch.nn.functional as F
 from hivemind.p2p import PeerID
-from huggingface_hub import hf_hub_download, list_repo_commits, list_repo_files
+from huggingface_hub import list_repo_commits, HfApi
+from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from distributed_training import __run__
@@ -57,6 +58,8 @@ torch.cuda.manual_seed(42)
 # Set scoring weights
 TRAIN_SCORE_WEIGHT = 0.75
 ALL_REDUCE_SCORE_WEIGHT = 0.25
+
+api = HfApi()
 
 
 async def score_blacklist(self, uids):
@@ -368,84 +371,57 @@ def score_models(model_1, model_2):
 
 
 def score_repo(self, repo_id: str) -> bool:
-    try:
-        local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
-        if (
-            (self.global_model_config.hidden_size != local_config.hidden_size)
-            or (
-                self.global_model_config.num_attention_heads
-                != local_config.num_attention_heads
-            )
-            or (
-                self.global_model_config.num_hidden_layers
-                != local_config.num_hidden_layers
-            )
-            or (
-                self.global_model_config.num_key_value_heads
-                != local_config.num_key_value_heads
-            )
-        ):
-            return False
-        latest_commit = list_repo_commits(repo_id)[0]
-
-        if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
-            self.config.neuron.target_n_blocks * 60 * 3
-        ):
-            return False
-        return True
-    except Exception:
+    local_config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
+    if (
+        (self.global_model_config.hidden_size != local_config.hidden_size)
+        or (
+            self.global_model_config.num_attention_heads
+            != local_config.num_attention_heads
+        )
+        or (
+            self.global_model_config.num_hidden_layers != local_config.num_hidden_layers
+        )
+        or (
+            self.global_model_config.num_key_value_heads
+            != local_config.num_key_value_heads
+        )
+    ):
         return False
+    latest_commit = api.repo_info(repo_id).lastModified
+
+    if (datetime.now(pytz.utc) - latest_commit).seconds > (
+        self.config.neuron.target_n_blocks * 60 * 10
+    ):
+        return False
+    return True
 
 
 def benchmark_uids(self):
     for uid in self.uid_tracker:
-        if self.uid_tracker[uid]["model_huggingface_id"] is not None:
-            try:
-                latest_commit = list_repo_commits(
-                    self.uid_tracker[uid]["model_huggingface_id"]
-                )[0]
-
-                if (datetime.now(pytz.utc) - latest_commit.created_at).seconds > (
-                    self.config.neuron.target_n_blocks * 60 * 3
-                ):
-                    self.uid_tracker[uid]["repo_valid_score"] = 0
-                else:
-                    self.uid_tracker[uid]["repo_valid_score"] = 1
-            except Exception:
-                self.uid_tracker[uid]["repo_valid_score"] = 0
-        else:
-            self.uid_tracker[uid]["repo_valid_score"] = 0
-        bt.logging.info(f"{uid} score {self.uid_tracker[uid]['repo_valid_score']}")
-
-
-def benchmark_untested_uids(self):
-    for uid in self.uid_tracker:
         try:
-            if (self.uid_tracker[uid]["train_validation_count"] == 0) and (
-                self.uid_tracker[uid]["all_reduce_count"] == 0
-            ):
-                self.uid_tracker[uid]["repo_valid_sum"] += score_repo(
-                    self, self.uid_tracker[uid]["model_huggingface_id"]
-                )
-                self.uid_tracker[uid]["repo_valid_count"] += 1
-                self.uid_tracker[uid]["repo_valid_score"] = (
-                    self.uid_tracker[uid]["repo_valid_sum"]
-                    / self.uid_tracker[uid]["repo_valid_count"]
-                )
-                bt.logging.info(
-                    f"UID {uid} identifies as untested. Benchmarking with score {self.uid_tracker[uid]['repo_valid_score']}"
-                )
-        except Exception as e:
-            bt.logging.info(
-                f"UID {uid} identifies as untested. Benchmarking failed with error {e}"
+            self.uid_tracker[uid]["repo_valid_score"] = score_repo(
+                self, self.uid_tracker[uid]["model_huggingface_id"]
             )
+        except (RepositoryNotFoundError, RevisionNotFoundError, OSError) as e:
+            # bt.logging.info(f"UID {uid} benchmarking failed with error {e}. Updating score to 0.")
+            self.uid_tracker[uid]["repo_valid_score"] = False
+        except Exception as e:
+            breakpoint()
+            bt.logging.info(
+                f"UID {uid} benchmarking failed with error {e}. Keeping score as is."
+            )
+    bt.logging.info(
+        {uid: self.uid_tracker[uid]["repo_valid_score"] for uid in self.uid_tracker}
+    )
 
 
 def update_all_reduce_scores(self):
     try:
         if self.allreduce_status_dict != {}:
             for uid in self.allreduce_status_dict.keys():
-                if self.allreduce_status_dict[uid] == "SUCCESS":
+                if (self.allreduce_status_dict[uid] == "SUCCESS") or (
+                    self.allreduce_status_dict[uid] == "NON_PARTICIPATING"
+                ):
                     score = 1
                 else:
                     score = 0
@@ -502,14 +478,17 @@ def update_total_scores(self):
     # Otherwise score using weighted train_score and all_reduce_score
     for uid_key in self.uid_tracker:
         uid_data = self.uid_tracker[uid_key]
-        train_score = uid_data.get("train_score", 0.0)  # using .get for safety
+        train_score = uid_data.get("train_score", 0.0)
         all_reduce_score = uid_data.get("all_reduce_score", 0.0)
         repo_valid_score = uid_data.get("repo_valid_score", 0.0)
 
         if (uid_data["train_validation_count"] == 0) and (
             uid_data["all_reduce_count"] == 0
         ):
-            uid_data["total_score"] = repo_valid_score / repo_valid_scores_normalised
+            normalized_repo_valid_score = (
+                repo_valid_score / repo_valid_scores_normalised
+            )
+            uid_data["total_score"] = normalized_repo_valid_score
         else:
             normalized_train_score = (
                 TRAIN_SCORE_WEIGHT * train_score
@@ -519,7 +498,7 @@ def update_total_scores(self):
             ) / all_reduce_scores_normalised
             uid_data["total_score"] = (
                 normalized_train_score + normalized_all_reduce_score
-            )
+            ) * repo_valid_score
 
     # Add metrics reporting
     self.report_scoring_metrics()

@@ -41,6 +41,7 @@ from distributed_training.utils.progress_tracker import (
     LocalTrainingProgress,
     get_global_epoch,
 )
+from random import randrange
 from distributed_training.utils.state_loader import (
     FastModelLoader,
     cleanup_old_cache,
@@ -59,6 +60,7 @@ class Validator(BaseValidatorNeuron):
         self._init_model_components()
         self._init_network_components()
         self._init_uid_components()
+        self._randomly_reset_uid_tracker()
 
     def _update_wandb_project(self):
         suffix = "_validators" if self.neuron_type == "ValidatorNeuron" else "_miners"
@@ -214,6 +216,7 @@ class Validator(BaseValidatorNeuron):
         self._init_tokenizer()
         self._setup_model_state()
         self._setup_training_params()
+        self._setup_uid_api()
 
     def _setup_model_params(self):
         # Timeouts
@@ -281,6 +284,10 @@ class Validator(BaseValidatorNeuron):
         )
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
 
+    def _randomly_reset_uid_tracker(self):
+        if self.uid == self.master_uid:
+            self.uid_tracker[randrange(256)]["train_similarity_score_last_updated"] = 0
+
     def _init_peer_mapping(self):
         self.stop_event = threading.Event()
         map_uid_to_peerid(self)
@@ -293,6 +300,11 @@ class Validator(BaseValidatorNeuron):
             self.last_allreduce_block = self.block
         else:
             self.last_allreduce_block = self.model.config.last_allreduce_block
+
+    def _setup_uid_api(self):
+        self.uid_api_url = self.config.neuron.uid_api_url
+        self.uid_api_get_token = self.config.neuron.uid_api_get_token
+        self.uid_api_post_token = self.config.neuron.uid_api_post_token
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

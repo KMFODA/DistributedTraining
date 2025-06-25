@@ -253,6 +253,7 @@ class AveragingHandler:
         self,
         participating_peers: list,
         failed_peers: list,
+        alive_uids: list,
         peerids_to_uids: dict,
         event: dict,
         metagraph,
@@ -350,9 +351,13 @@ class AveragingHandler:
             elif uid in failed_uids:
                 scores[str_uid] = 0.0
                 status_dict[str_uid] = "FAIL"
+            elif uid in alive_uids:
+                # If UID is chosen but not participating, assign a score of 0
+                scores[str_uid] = 1.0
+                status_dict[str_uid] = "NON_PARTICIPATING"
             else:
                 scores[str_uid] = 0.0
-                status_dict[str_uid] = "NON_PARTICIPATING"
+                status_dict[str_uid] = "NOT_ALIVE"
 
         # Create rewards tensor
         rewards = torch.tensor([reward for reward in scores.values()])
