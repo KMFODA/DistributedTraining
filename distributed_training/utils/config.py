@@ -278,14 +278,14 @@ def add_args(cls, parser, prefix=None):
             "--neuron.uid_api_get_token",
             type=str,
             help="The token for the UID get api.",
-            default=os.environ["API_GET_TOKEN"],
+            default=os.getenv("API_GET_TOKEN", None),
         )
 
         parser.add_argument(
             "--neuron.uid_api_post_token",
             type=str,
             help="The token for the UID post api.",
-            default=os.environ["API_POST_TOKEN"],
+            default=os.getenv("API_POST_TOKEN", None),
         )
 
         parser.add_argument(
