@@ -36,12 +36,13 @@ from distributed_training.utils.state_loader import (
     upload_new_state,
 )
 from distributed_training.utils.uids import (
-    get_hf_validation_uid,
+    get_next_uid_api,
+    post_next_uid_api,
     get_random_uids,
     map_uid_to_peerid,
 )
 from distributed_training.validator.reward import (
-    benchmark_untested_uids,
+    benchmark_uids,
     score_uid,
     update_total_scores,
 )
@@ -83,9 +84,9 @@ async def forward(self):
             sample_size = int(self.metagraph.n)
 
             # Get active miners
-            while len(self.miner_uids) < (self.config.neuron.min_group_size - 1):
+            while len(self.miner_uids) < (101 - 1):
                 bt.logging.info(
-                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {self.config.neuron.min_group_size - len(self.miner_uids) - 1} more UIDs."
+                    f"Found {len(self.miner_uids)} UIDs. Attempting to find {101 - len(self.miner_uids) - 1} more UIDs."
                 )
                 self.miner_uids = await get_random_uids(
                     self,
@@ -104,7 +105,19 @@ async def forward(self):
             self.last_allreduce_block = self.block
             return responses
 
-        self.miner_uids = np.array([n for n in range(self.metagraph.n)])
+        self.miner_uids.sort()
+        miner_uid_dict = {
+            uid: self.uid_tracker[uid]["train_duration"]
+            if self.uid_tracker[uid]["train_duration"] != 0
+            else 1000
+            for uid in self.miner_uids
+        }
+        alive_uids = {
+            k: v for k, v in sorted(miner_uid_dict.items(), key=lambda item: item[1])
+        }.keys()
+        self.miner_uids = np.array(
+            [n.item() for n in alive_uids][: self.config.neuron.min_group_size + 50]
+        )
         self.event.update({"UIDs": self.miner_uids})
         bt.logging.info(f"UIDs:  {self.miner_uids}")
 
@@ -121,7 +134,7 @@ async def forward(self):
                 revision=top_uid_revision,
             )
             if self.scheduler.__dict__["_step_count"] == 0:
-                top_uid = 145
+                top_uid = 22
                 self.local_progress.epoch = self.global_progress.epoch
                 self.local_progress.inner_step = get_local_inner_step(
                     self, repo_id=self.uid_tracker[int(top_uid)]["model_huggingface_id"]
@@ -162,6 +175,7 @@ async def forward(self):
                 ) = self.avg_handler.calculate_allreduce_scores(
                     participating_peers=results["participating_peers"],
                     failed_peers=results["failed_peers"],
+                    alive_uids=alive_uids,
                     modes=results["modes"],
                     bandwidths=results["bandwidths"],
                     peerids_to_uids=self.peerids_to_uids,
@@ -211,6 +225,7 @@ async def forward(self):
                         f"Error reporting allreduce metrics to dashboard {e}"
                     )
                 self.config.neuron.blocks_per_allreduce = 1000
+                time.sleep(360)
             else:
                 raise GradientAveragingError("Unsuccessful AllReduce Step")
 
@@ -223,8 +238,7 @@ async def forward(self):
     else:
         # If running HF validation round, only call one UID each step
         self.event.update({"synapse_type": "train"})
-
-        self.miner_uids = await get_hf_validation_uid(
+        self.miner_uids = get_next_uid_api(
             self,
         )
 
@@ -240,8 +254,10 @@ async def forward(self):
 
         await score_uid(self, uid)
 
+        post_next_uid_api(self)
+
         # Benchmark any untested uids
-        benchmark_untested_uids(self)
+        benchmark_uids(self)
 
         # Update total_scores
         update_total_scores(self)

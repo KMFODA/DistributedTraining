@@ -22,6 +22,9 @@ import os
 import bittensor as bt
 import torch
 from distributed_training import __run__, __version__
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def check_config(cls, config: "bt.Config"):
@@ -140,7 +143,7 @@ def add_args(cls, parser, prefix=None):
         nargs="+",
         help="The addresses for the DHT",
         default=[
-            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWLrvRTkLxPHTnzA4WWXkCeTphYu1rkqV8yxnWqXkYfr3P",
+            "/ip4/161.97.156.125/tcp/8000/p2p/12D3KooWRXATj82cqk2zi7uZ2Q1soPuML8ietJXM6RdGnMHGB73U",
         ],
     )
     parser.add_argument(
@@ -155,6 +158,14 @@ def add_args(cls, parser, prefix=None):
         type=str,
         help="The model to be trained",
         default="distributed/llama-1b",
+    )
+
+    parser.add_argument(
+        "--neuron.local_model_name",
+        type=str,
+        help="The model to be trained",
+        default=None,
+        required=True,
     )
 
     parser.add_argument(
@@ -238,7 +249,7 @@ def add_args(cls, parser, prefix=None):
         "--neuron.influxdb_url",
         type=str,
         help="The influxdb url",
-        default="http://13.51.162.187:8086",
+        default="http://161.97.156.125:8086",
     )
 
     parser.add_argument(
@@ -256,6 +267,27 @@ def add_args(cls, parser, prefix=None):
     )
 
     if neuron_type == "validator":
+        parser.add_argument(
+            "--neuron.uid_api_url",
+            type=str,
+            help="The url for the UID api.",
+            default="http://161.97.156.125:8002/uid",
+        )
+
+        parser.add_argument(
+            "--neuron.uid_api_get_token",
+            type=str,
+            help="The token for the UID get api.",
+            default=os.environ["API_GET_TOKEN"],
+        )
+
+        parser.add_argument(
+            "--neuron.uid_api_post_token",
+            type=str,
+            help="The token for the UID post api.",
+            default=os.environ["API_POST_TOKEN"],
+        )
+
         parser.add_argument(
             "--neuron.uid_isalive_limit",
             type=int,
@@ -316,14 +348,6 @@ def add_args(cls, parser, prefix=None):
         )
 
     else:
-        parser.add_argument(
-            "--neuron.local_model_name",
-            type=str,
-            help="The model to be trained",
-            default=None,
-            required=True,
-        )
-
         parser.add_argument(
             "--blacklist.force_validator_permit",
             action="store_true",

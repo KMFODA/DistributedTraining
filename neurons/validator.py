@@ -214,6 +214,7 @@ class Validator(BaseValidatorNeuron):
         self._init_tokenizer()
         self._setup_model_state()
         self._setup_training_params()
+        self._setup_uid_api()
 
     def _setup_model_params(self):
         # Timeouts
@@ -293,6 +294,11 @@ class Validator(BaseValidatorNeuron):
             self.last_allreduce_block = self.block
         else:
             self.last_allreduce_block = self.model.config.last_allreduce_block
+
+    def _setup_uid_api(self):
+        self.uid_api_url = self.config.neuron.uid_api_url
+        self.uid_api_get_token = self.config.neuron.uid_api_get_token
+        self.uid_api_post_token = self.config.neuron.uid_api_post_token
 
     def update_local_tracker_state(self, rewards, responses):
         for reward, response in zip(rewards, responses[0]):

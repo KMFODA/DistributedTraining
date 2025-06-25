@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import random
+import requests
 import time
 import traceback
 from typing import List
@@ -137,7 +138,7 @@ async def get_random_uids(
     return uids
 
 
-async def get_hf_validation_uid(self, outer_step: int = None):
+def get_next_uid_manual(self):
     uids = []
     try:
         self.uid_tracker = dict(
@@ -152,6 +153,7 @@ async def get_hf_validation_uid(self, outer_step: int = None):
                 for k, v in self.uid_tracker.items()
             }
         )
+        breakpoint()
         for uid in self.uid_tracker.keys():
             if (
                 (self.uid_tracker[uid]["model_huggingface_id"] is not None)
@@ -168,87 +170,46 @@ async def get_hf_validation_uid(self, outer_step: int = None):
                 )
             ):
                 uids.append(uid)
-                return uids
             else:
                 continue
+            return uids
     except Exception as e:
-        bt.logging.info(f"Error getting UIDs: {e}")
+        bt.logging.info(f"Error getting UID manually: {e}")
+
+
+def get_next_uid_api(self):
+    uids = []
+    try:
+        response = requests.get(
+            url=self.uid_api_url, headers={"Authorization": self.uid_api_get_token}
+        )
+        uid = response.json()["uids"]
+        uids.append(uid)
+        assert uids != self.miner_uids
+        return uids
+    except Exception as e:
+        bt.logging.info(
+            f"Error {e} getting UID from: {self.uid_api_url}. Attempting to get UID manually."
+        )
+        uids = get_next_uid_manual(self)
 
     return uids
 
 
-async def map_uid_to_peerid_archive(self, uids):
-    # Get all peers connected to our DHT, their ips and their ports
-    peer_list_dht = await self._p2p.list_peers()
-    peer_list_dht_addrs = [
-        str(peer.addrs[0]).split("/ip4/")[1].split("/")[0] for peer in peer_list_dht
-    ]
-    peer_list_dht_ports = [str(peer.addrs[0]).split("/")[-1] for peer in peer_list_dht]
-
-    # Get only peers connected to the current run id
-    prefix = self.grad_averager.matchmaking_kwargs["prefix"]
-    metadata, _ = self.dht.get(f"{prefix}.all_averagers", latest=True) or (
-        {},
-        None,
-    )
-
-    uids_to_peerids = {}
-    for uid in uids:
-        miner_ip = self.metagraph.axons[uid].ip
-        miner_port = self.metagraph.axons[uid].port
-
-        if metadata is None:
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-
-        run_peer_id_list = [
-            str(PeerID(peer_id))
-            for peer_id, info in metadata.items()
-            if isinstance(info, ValueWithExpiration)
-            and isinstance(info.value, (float, int))
-        ]
-
-        # If the UIDs ip address is not in the list of peer addrs then it is not connected to our DHT
-        if miner_ip not in peer_list_dht_addrs:
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
-            # if peer_list_dht_addrs.count(miner_ip) > 1:
-            #     indices = [
-            #         i
-            #         for i in range(len(peer_list_dht_addrs))
-            #         if peer_list_dht_addrs[i] == miner_ip
-            #     ]
-            #     peer_id = None
-            #     for index in indices:
-            #         if abs(miner_port - int(peer_list_dht_ports[index])) < 10:
-            #             peer_id = peer_list_dht[index].peer_id
-            #             break
-            #         elif index == indices[-1]:
-            #             break
-            #         else:
-            #             continue
-
-            #     if peer_id is None:
-            #         uids_to_peerids[uid] = None
-            #         continue
-            # else:
-            #     peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-            peer_id = peer_list_dht[peer_list_dht_addrs.index(miner_ip)].peer_id
-
-        # If peer_id is not in the list of peer ids for our run then it is not connected to our run ID
-        if str(peer_id) not in run_peer_id_list:
-            # return None
-            uids_to_peerids[uid] = None
-            continue
-        else:
-            # return peer_id
-            uids_to_peerids[uid] = peer_id
-            continue
-
-    return uids_to_peerids
+def post_next_uid_api(self):
+    uids = get_next_uid_manual(self)
+    try:
+        response = requests.post(
+            url=self.uid_api_url,
+            json={"uids": uids},
+            headers={"Authorization": self.uid_api_post_token},
+        )
+        if response.status_code != 200:
+            raise Exception(f"UID post request failed with error: {e}")
+    except Exception as e:
+        bt.logging.info(
+            f"Error {e} getting UID from: {self.uid_api_url}. Attempting to get UID manually."
+        )
 
 
 def update_run_peerid_list(self):
@@ -263,83 +224,6 @@ def update_run_peerid_list(self):
         if isinstance(info, ValueWithExpiration)
         and isinstance(info.value, (float, int))
     ]
-
-
-def map_uid_to_peerid_background_task(self):
-    # Track how recently we updated each uid
-    uid_last_checked = dict()
-    while not self.stop_event.is_set():
-        # The below loop iterates across all miner uids and checks to see
-        # if they should be updated.
-        try:
-            # Get the next uid to check
-            next_uid = next(self.uid_iterator)
-            # Confirm that we haven't checked it in the last 5 minutes.
-            time_diff = (
-                dt.datetime.now() - uid_last_checked[next_uid]
-                if next_uid in uid_last_checked
-                else None
-            )
-            if time_diff and time_diff < dt.timedelta(minutes=5):
-                # If we have seen it within 5 minutes then sleep until it has been at least 5 minutes.
-                time_to_sleep = (dt.timedelta(minutes=5) - time_diff).total_seconds()
-                bt.logging.trace(
-                    f"Update loop has already processed all UIDs in the last 5 minutes. Sleeping {time_to_sleep} seconds."
-                )
-                time.sleep(time_to_sleep)
-
-            uid_last_checked[next_uid] = dt.datetime.now()
-            # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-            metadata = bt.core.extrinsics.serving.get_metadata(
-                self.subtensor, self.config.netuid, self.metagraph.hotkeys[next_uid]
-            )
-            if metadata is not None:
-                commitment = metadata["info"]["fields"][0]
-                hex_data = commitment[list(commitment.keys())[0]][2:]
-                chain_str = bytes.fromhex(hex_data).decode()
-                updated = (chain_str, metadata["block"])
-            else:
-                updated = (None, None)
-
-            if (self.uids_to_peerids[next_uid][0] != updated[0]) and (
-                updated[0]
-                not in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
-            ):
-                bt.logging.info(
-                    f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                )
-                self.uids_to_peerids[next_uid] = updated
-            elif (self.uids_to_peerids[next_uid][0] != updated[0]) and (
-                updated[0]
-                in [peerid_info[0] for peerid_info in self.uids_to_peerids.values()]
-            ):
-                indices = [
-                    index
-                    for index, peerid_info in enumerate(self.uids_to_peerids.values())
-                    if peerid_info[0] == updated[0]
-                ]
-                for index in indices:
-                    if self.uids_to_peerids[index][1] > updated[1]:
-                        self.uids_to_peerids[index] = (None, None)
-                        bt.logging.info(
-                            f"The same peerID was found for UID={index} with a later commit message. Setting the peerID for that UID={index} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        self.uids_to_peerids[next_uid] = updated
-                        bt.logging.info(
-                            f"Updated peerID for UID={next_uid}. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        break
-                    else:
-                        updated = (None, None)
-                        bt.logging.info(
-                            f"The same peerID was found for UID={index} with an earlier commit message. Setting the peerID for UID={next_uid} to None. Previous = {self.uids_to_peerids[next_uid][0]}. Current = {updated[0]}"
-                        )
-                        self.uids_to_peerids[next_uid] = updated
-
-        except Exception as e:
-            bt.logging.error(f"Error in update loop: {e} \n {traceback.format_exc()}")
-
-    bt.logging.info("Exiting update models loop.")
 
 
 def decode_metadata(encoded_ss58: tuple, metadata: dict) -> tuple[str, str]:
