@@ -165,7 +165,7 @@ def add_args(cls, parser, prefix=None):
         type=str,
         help="The model to be trained",
         default=None,
-        required=True,
+        required=neuron_type != "validator",
     )
 
     parser.add_argument(
