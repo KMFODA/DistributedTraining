@@ -386,25 +386,15 @@ def load_model_optimizer_gradient_averager(
                     num_training_steps=88000,
                 )
 
-                try:
-                    optimizer_state = torch.load(
-                        os.path.join(
-                            model_name.split("/")[-1],
-                            "inner_optimizer.pt",
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
-                except:
-                    optimizer_state = torch.load(
-                        hf_hub_download(
-                            repo_id=model_name,
-                            filename="inner_optimizer.pt",
-                            revision=revision,
-                        ),
-                        weights_only=True,
-                        map_location="cpu",
-                    )
+                optimizer_state = torch.load(
+                    hf_hub_download(
+                        repo_id=model_name,
+                        filename="inner_optimizer.pt",
+                        revision=revision,
+                    ),
+                    weights_only=True,
+                    map_location="cpu",
+                )
 
                 # Load optimizer state if available
                 if "optimizer_state_dict" in optimizer_state:

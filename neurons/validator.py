@@ -283,6 +283,7 @@ class Validator(BaseValidatorNeuron):
             self.config.neuron.master_ss58_address,
         )
         self.failed_is_alive_counter = {uid: 0 for uid in self.metagraph.uids.tolist()}
+        self.miner_uids = []
 
     def _randomly_reset_uid_tracker(self):
         if self.uid == self.master_uid:

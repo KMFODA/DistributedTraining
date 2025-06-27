@@ -70,7 +70,6 @@ async def forward(self):
     )
 
     responses = [[]]
-    self.miner_uids = []
     rewards = torch.tensor([])
 
     if self.should_all_reduce:
