@@ -372,10 +372,11 @@ class BaseValidatorNeuron(BaseNeuron):
                     for uid in self.uid_tracker.keys()
                     if self.uid_tracker[uid]["train_similarity_score_last_updated"] != 0
                 ]
-                train_similarity_score_last_updated_list.sort()
-                self.uid_tracker[uid][
-                    "train_similarity_score_last_updated"
-                ] = train_similarity_score_last_updated_list[2]
+                if len(train_similarity_score_last_updated_list) >= 2:
+                    train_similarity_score_last_updated_list.sort()
+                    self.uid_tracker[uid][
+                        "train_similarity_score_last_updated"
+                    ] = train_similarity_score_last_updated_list[1] + (60 * 60)
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
