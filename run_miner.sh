@@ -231,7 +231,7 @@ if [ "$?" -eq 1 ]; then
         if [ -d "./.git" ]; then
 
             # check value on github remotely
-            latest_version=$(check_variable_value_on_github "KMFODA/DistributedTraining" "distributed_training/__init__.py" "__version__ ")
+            latest_version=$(check_variable_value_on_github "dstrbtd/DistributedTraining" "distributed_training/__init__.py" "__version__ ")
 
             # If the file has been updated
             if version_less_than $current_version $latest_version; then

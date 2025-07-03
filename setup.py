@@ -107,7 +107,7 @@ setup(
     description="distributed_training",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/KMFODA/DistributedTraining",
+    url="https://github.com/dstrbtd/DistributedTraining",
     author="KMFODA",
     packages=find_packages(),
     include_package_data=True,
